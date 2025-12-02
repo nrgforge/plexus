@@ -19,10 +19,12 @@
 //! ```
 
 mod graph;
+pub mod storage;
 
 pub use graph::{
     Context, ContextId, Edge, EdgeId, Node, NodeId, PlexusEngine, PropertyValue,
 };
+pub use storage::{GraphStore, SqliteStore, StorageError, StorageResult};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
