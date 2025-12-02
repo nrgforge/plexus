@@ -19,12 +19,14 @@
 //! ```
 
 mod graph;
+pub mod query;
 pub mod storage;
 
 pub use graph::{
-    Context, ContextId, Edge, EdgeId, Node, NodeId, PlexusEngine, PlexusError, PlexusResult,
-    PropertyValue,
+    ContentType, Context, ContextId, Edge, EdgeId, Node, NodeId, PlexusEngine, PlexusError,
+    PlexusResult, PropertyValue,
 };
+pub use query::{Direction, FindQuery, PathQuery, PathResult, QueryResult, TraversalResult, TraverseQuery};
 pub use storage::{GraphStore, OpenStore, SqliteStore, StorageError, StorageResult};
 
 /// Library version
