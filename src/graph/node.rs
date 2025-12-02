@@ -2,21 +2,30 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use uuid::Uuid;
 
 /// Unique identifier for a node
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct NodeId(Uuid);
+///
+/// Serializes as a plain string (UUID or semantic ID like "agent:security-reviewer")
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NodeId(String);
 
 impl NodeId {
-    /// Create a new random NodeId
+    /// Create a new random NodeId (UUID-based)
     pub fn new() -> Self {
-        Self(Uuid::new_v4())
+        Self(Uuid::new_v4().to_string())
     }
 
-    /// Create a NodeId from an existing UUID
-    pub fn from_uuid(uuid: Uuid) -> Self {
-        Self(uuid)
+    /// Create a NodeId from a string (semantic ID)
+    pub fn from_string(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Get the inner string value
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -32,14 +41,29 @@ impl std::fmt::Display for NodeId {
     }
 }
 
+impl From<&str> for NodeId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for NodeId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 /// Content type classification
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
+///
+/// Matches the contract schema: lowercase string enum.
+/// For content types with subtypes (e.g., code language), use properties.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ContentType {
-    /// Source code with language specification
-    Code(String),
+    /// Source code
+    Code,
     /// Movement/gesture data
-    Movement(String),
+    Movement,
     /// Narrative/text content
     Narrative,
     /// Abstract concept
@@ -48,8 +72,22 @@ pub enum ContentType {
     Document,
     /// Agent definition
     Agent,
-    /// Custom content type
-    Custom(String),
+}
+
+impl FromStr for ContentType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "code" => Ok(ContentType::Code),
+            "movement" => Ok(ContentType::Movement),
+            "narrative" => Ok(ContentType::Narrative),
+            "concept" => Ok(ContentType::Concept),
+            "document" => Ok(ContentType::Document),
+            "agent" => Ok(ContentType::Agent),
+            _ => Err(format!("Unknown content type: {}", s)),
+        }
+    }
 }
 
 /// Typed property values

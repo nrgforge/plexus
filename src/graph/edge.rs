@@ -7,13 +7,26 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Unique identifier for an edge
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EdgeId(Uuid);
+///
+/// Serializes as a plain string (UUID or semantic ID)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EdgeId(String);
 
 impl EdgeId {
-    /// Create a new random EdgeId
+    /// Create a new random EdgeId (UUID-based)
     pub fn new() -> Self {
-        Self(Uuid::new_v4())
+        Self(Uuid::new_v4().to_string())
+    }
+
+    /// Create an EdgeId from a string
+    pub fn from_string(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Get the inner string value
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -29,7 +42,21 @@ impl std::fmt::Display for EdgeId {
     }
 }
 
+impl From<&str> for EdgeId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for EdgeId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 /// Types of reinforcement that can strengthen an edge
+///
+/// Matches the contract schema enum values
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReinforcementType {
     /// Nodes appear together frequently
@@ -52,7 +79,7 @@ pub enum ReinforcementType {
     SuccessfulExecution,
 }
 
-/// Source of a reinforcement
+/// Source of a reinforcement (extension, stored in metadata)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReinforcementSource {
     /// From an analyzer
@@ -65,39 +92,76 @@ pub enum ReinforcementSource {
     CrossContext(String),
 }
 
+impl ReinforcementSource {
+    /// Convert to metadata entry
+    pub fn to_metadata(&self) -> (String, String) {
+        match self {
+            ReinforcementSource::Analyzer(name) => ("source".to_string(), format!("analyzer:{}", name)),
+            ReinforcementSource::User(id) => ("source".to_string(), format!("user:{}", id)),
+            ReinforcementSource::System => ("source".to_string(), "system".to_string()),
+            ReinforcementSource::CrossContext(ctx) => ("source".to_string(), format!("context:{}", ctx)),
+        }
+    }
+}
+
 /// Evidence that strengthens an edge
+///
+/// Matches the contract schema:
+/// - `type`: ReinforcementType enum
+/// - `timestamp`: ISO 8601 datetime
+/// - `context_id`: optional string
+/// - `metadata`: optional object
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reinforcement {
-    /// Type of reinforcement
+    /// Type of reinforcement (contract field: "type")
+    #[serde(rename = "type")]
     pub reinforcement_type: ReinforcementType,
     /// When this reinforcement occurred
     pub timestamp: DateTime<Utc>,
     /// Which context reinforced this
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_id: Option<String>,
-    /// Source of the reinforcement
-    pub source: ReinforcementSource,
-    /// Additional metadata
+    /// Additional metadata (source info stored here per contract)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, String>>,
 }
 
 impl Reinforcement {
     /// Create a new reinforcement
-    pub fn new(
-        reinforcement_type: ReinforcementType,
-        source: ReinforcementSource,
-    ) -> Self {
+    pub fn new(reinforcement_type: ReinforcementType) -> Self {
         Self {
             reinforcement_type,
             timestamp: Utc::now(),
             context_id: None,
-            source,
             metadata: None,
         }
     }
 
+    /// Create a new reinforcement with source (stored in metadata)
+    pub fn with_source(reinforcement_type: ReinforcementType, source: ReinforcementSource) -> Self {
+        let (key, value) = source.to_metadata();
+        let mut metadata = HashMap::new();
+        metadata.insert(key, value);
+
+        Self {
+            reinforcement_type,
+            timestamp: Utc::now(),
+            context_id: None,
+            metadata: Some(metadata),
+        }
+    }
+
     /// Set the context ID
-    pub fn with_context(mut self, context_id: impl Into<String>) -> Self {
+    pub fn in_context(mut self, context_id: impl Into<String>) -> Self {
         self.context_id = Some(context_id.into());
+        self
+    }
+
+    /// Add metadata
+    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata
+            .get_or_insert_with(HashMap::new)
+            .insert(key.into(), value.into());
         self
     }
 }
@@ -173,15 +237,15 @@ impl Edge {
             return 0.0;
         }
 
-        // Count unique source types
-        let unique_sources: std::collections::HashSet<_> = self
+        // Count unique reinforcement types
+        let unique_types: std::collections::HashSet<_> = self
             .reinforcements
             .iter()
-            .map(|r| std::mem::discriminant(&r.source))
+            .map(|r| std::mem::discriminant(&r.reinforcement_type))
             .collect();
 
-        // More diverse sources = higher confidence
-        (unique_sources.len() as f32 * 0.25).min(1.0)
+        // More diverse reinforcement types = higher confidence
+        (unique_types.len() as f32 * 0.25).min(1.0)
     }
 
     /// Calculate recency factor (exponential decay)

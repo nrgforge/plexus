@@ -48,8 +48,8 @@ impl PlexusEngine {
     /// If a context with the same ID already exists, it will be replaced.
     /// Returns the context ID.
     pub fn upsert_context(&self, context: Context) -> ContextId {
-        let id = context.id;
-        self.contexts.insert(id, context);
+        let id = context.id.clone();
+        self.contexts.insert(id.clone(), context);
         id
     }
 
@@ -65,7 +65,7 @@ impl PlexusEngine {
 
     /// List all context IDs
     pub fn list_contexts(&self) -> Vec<ContextId> {
-        self.contexts.iter().map(|r| *r.key()).collect()
+        self.contexts.iter().map(|r| r.key().clone()).collect()
     }
 
     /// Get the number of contexts
@@ -93,7 +93,7 @@ mod tests {
     fn test_upsert_context() {
         let engine = PlexusEngine::new();
         let context = Context::new("test-context");
-        let id = context.id;
+        let id = context.id.clone();
 
         let returned_id = engine.upsert_context(context);
         assert_eq!(id, returned_id);
@@ -105,7 +105,7 @@ mod tests {
     fn test_get_context() {
         let engine = PlexusEngine::new();
         let context = Context::new("test-context");
-        let id = context.id;
+        let id = context.id.clone();
 
         engine.upsert_context(context);
 
@@ -118,7 +118,7 @@ mod tests {
     fn test_remove_context() {
         let engine = PlexusEngine::new();
         let context = Context::new("test-context");
-        let id = context.id;
+        let id = context.id.clone();
 
         engine.upsert_context(context);
         assert_eq!(engine.context_count(), 1);

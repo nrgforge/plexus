@@ -5,6 +5,9 @@ mod edge;
 mod engine;
 mod node;
 
+#[cfg(test)]
+mod tests;
+
 pub use context::{Context, ContextId};
 pub use edge::{Edge, EdgeId};
 pub use engine::PlexusEngine;

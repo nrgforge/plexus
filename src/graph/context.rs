@@ -8,18 +8,26 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Unique identifier for a context
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ContextId(Uuid);
+///
+/// Serializes as a plain string (UUID or semantic ID like "ctx:workspace-name")
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ContextId(String);
 
 impl ContextId {
-    /// Create a new random ContextId
+    /// Create a new random ContextId (UUID-based)
     pub fn new() -> Self {
-        Self(Uuid::new_v4())
+        Self(Uuid::new_v4().to_string())
     }
 
-    /// Create a ContextId from a UUID
-    pub fn from_uuid(uuid: Uuid) -> Self {
-        Self(uuid)
+    /// Create a ContextId from a string (semantic ID)
+    pub fn from_string(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Get the inner string value
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -32,6 +40,18 @@ impl Default for ContextId {
 impl std::fmt::Display for ContextId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for ContextId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for ContextId {
+    fn from(s: String) -> Self {
+        Self(s)
     }
 }
 
@@ -95,8 +115,8 @@ impl Context {
 
     /// Add a node to the context
     pub fn add_node(&mut self, node: Node) -> NodeId {
-        let id = node.id;
-        self.nodes.insert(id, node);
+        let id = node.id.clone();
+        self.nodes.insert(id.clone(), node);
         self.touch();
         id
     }
