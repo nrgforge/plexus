@@ -1,0 +1,18 @@
+[package]
+name = "plexus"
+description = "Network-aware knowledge graph engine with self-reinforcing edges"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+petgraph = { workspace = true }
+dashmap = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
