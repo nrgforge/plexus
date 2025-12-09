@@ -36,6 +36,8 @@ pub struct NodeFilter {
     pub node_type: Option<String>,
     /// Filter by content type (e.g., "code", "agent")
     pub content_type: Option<String>,
+    /// Filter by dimension (e.g., "structure", "semantic", "relational")
+    pub dimension: Option<String>,
     /// Maximum number of results
     pub limit: Option<usize>,
 }
@@ -55,6 +57,11 @@ impl NodeFilter {
         self
     }
 
+    pub fn with_dimension(mut self, dimension: impl Into<String>) -> Self {
+        self.dimension = Some(dimension.into());
+        self
+    }
+
     pub fn with_limit(mut self, limit: usize) -> Self {
         self.limit = Some(limit);
         self
@@ -68,6 +75,12 @@ pub struct EdgeFilter {
     pub relationship: Option<String>,
     /// Filter by minimum strength
     pub min_strength: Option<f32>,
+    /// Filter by source dimension
+    pub source_dimension: Option<String>,
+    /// Filter by target dimension
+    pub target_dimension: Option<String>,
+    /// If true, only return cross-dimensional edges
+    pub cross_dimensional_only: Option<bool>,
     /// Maximum number of results
     pub limit: Option<usize>,
 }

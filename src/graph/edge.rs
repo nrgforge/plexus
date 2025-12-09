@@ -1,6 +1,6 @@
 //! Edge representation with self-reinforcing strength
 
-use super::node::{NodeId, Properties};
+use super::node::{dimension, NodeId, Properties};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -170,6 +170,10 @@ impl Reinforcement {
 const DECAY_HALF_LIFE_HOURS: f32 = 168.0; // 1 week
 
 /// A directed edge with self-reinforcing strength
+///
+/// Cross-dimensional edges connect nodes in different dimensions,
+/// enabling insights like "function X implements concept Y".
+/// See ADR-009: Multi-Dimensional Knowledge Graph Architecture
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edge {
     /// Unique identifier
@@ -178,6 +182,14 @@ pub struct Edge {
     pub source: NodeId,
     /// Target node
     pub target: NodeId,
+    /// Dimension of the source node
+    /// See ADR-009: Multi-Dimensional Knowledge Graph Architecture
+    #[serde(default = "default_dimension")]
+    pub source_dimension: String,
+    /// Dimension of the target node
+    /// See ADR-009: Multi-Dimensional Knowledge Graph Architecture
+    #[serde(default = "default_dimension")]
+    pub target_dimension: String,
     /// Type of relationship (e.g., "calls", "depends_on", "transitions_to")
     pub relationship: String,
     /// Base relationship strength (0.0 - 1.0)
@@ -196,14 +208,21 @@ pub struct Edge {
     pub properties: Properties,
 }
 
+/// Default dimension for backwards compatibility with existing edges
+fn default_dimension() -> String {
+    dimension::DEFAULT.to_string()
+}
+
 impl Edge {
-    /// Create a new edge
+    /// Create a new edge within the default dimension
     pub fn new(source: NodeId, target: NodeId, relationship: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
             id: EdgeId::new(),
             source,
             target,
+            source_dimension: dimension::DEFAULT.to_string(),
+            target_dimension: dimension::DEFAULT.to_string(),
             relationship: relationship.into(),
             weight: 1.0,
             strength: 1.0,
@@ -213,6 +232,86 @@ impl Edge {
             last_reinforced: now,
             properties: HashMap::new(),
         }
+    }
+
+    /// Create a new edge within a specific dimension (both endpoints in same dimension)
+    pub fn new_in_dimension(
+        source: NodeId,
+        target: NodeId,
+        relationship: impl Into<String>,
+        dim: impl Into<String>,
+    ) -> Self {
+        let dim_str = dim.into();
+        let now = Utc::now();
+        Self {
+            id: EdgeId::new(),
+            source,
+            target,
+            source_dimension: dim_str.clone(),
+            target_dimension: dim_str,
+            relationship: relationship.into(),
+            weight: 1.0,
+            strength: 1.0,
+            confidence: 0.0,
+            reinforcements: Vec::new(),
+            created_at: now,
+            last_reinforced: now,
+            properties: HashMap::new(),
+        }
+    }
+
+    /// Create a cross-dimensional edge (connects nodes in different dimensions)
+    ///
+    /// Cross-dimensional edges are the key to compositional intelligence,
+    /// enabling insights like "function X implements concept Y".
+    pub fn new_cross_dimensional(
+        source: NodeId,
+        source_dim: impl Into<String>,
+        target: NodeId,
+        target_dim: impl Into<String>,
+        relationship: impl Into<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: EdgeId::new(),
+            source,
+            target,
+            source_dimension: source_dim.into(),
+            target_dimension: target_dim.into(),
+            relationship: relationship.into(),
+            weight: 1.0,
+            strength: 1.0,
+            confidence: 0.0,
+            reinforcements: Vec::new(),
+            created_at: now,
+            last_reinforced: now,
+            properties: HashMap::new(),
+        }
+    }
+
+    /// Check if this edge crosses dimension boundaries
+    pub fn is_cross_dimensional(&self) -> bool {
+        self.source_dimension != self.target_dimension
+    }
+
+    /// Set source dimension (builder pattern)
+    pub fn with_source_dimension(mut self, dim: impl Into<String>) -> Self {
+        self.source_dimension = dim.into();
+        self
+    }
+
+    /// Set target dimension (builder pattern)
+    pub fn with_target_dimension(mut self, dim: impl Into<String>) -> Self {
+        self.target_dimension = dim.into();
+        self
+    }
+
+    /// Set both dimensions (same dimension for both endpoints)
+    pub fn with_dimension(mut self, dim: impl Into<String>) -> Self {
+        let d = dim.into();
+        self.source_dimension = d.clone();
+        self.target_dimension = d;
+        self
     }
 
     /// Reinforce this edge with new evidence

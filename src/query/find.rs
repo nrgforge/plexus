@@ -10,6 +10,8 @@ pub struct FindQuery {
     pub node_type: Option<String>,
     /// Filter by content type
     pub content_type: Option<ContentType>,
+    /// Filter by dimension (e.g., "structure", "semantic")
+    pub dimension: Option<String>,
     /// Filter by property key existence
     pub has_property: Option<String>,
     /// Filter by property key-value match
@@ -35,6 +37,12 @@ impl FindQuery {
     /// Filter by content type
     pub fn with_content_type(mut self, content_type: ContentType) -> Self {
         self.content_type = Some(content_type);
+        self
+    }
+
+    /// Filter by dimension (e.g., "structure", "semantic")
+    pub fn with_dimension(mut self, dimension: impl Into<String>) -> Self {
+        self.dimension = Some(dimension.into());
         self
     }
 
@@ -102,6 +110,13 @@ impl FindQuery {
         // Check content type
         if let Some(expected_content) = self.content_type {
             if node.content_type != expected_content {
+                return false;
+            }
+        }
+
+        // Check dimension
+        if let Some(ref expected_dimension) = self.dimension {
+            if &node.dimension != expected_dimension {
                 return false;
             }
         }

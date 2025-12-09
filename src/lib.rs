@@ -18,10 +18,16 @@
 //! // Engine is ready for use
 //! ```
 
+pub mod analysis;
 mod graph;
 pub mod query;
 pub mod storage;
 
+pub use analysis::{
+    AnalysisCapability, AnalysisConfig, AnalysisError, AnalysisOrchestrator, AnalysisResult,
+    AnalysisScope, AnalyzerRegistry, ConflictStrategy, ContentAnalyzer, ContentId, ContentItem,
+    GraphMutation, ResultMerger, SubGraph,
+};
 pub use graph::{
     ContentType, Context, ContextId, Edge, EdgeId, Node, NodeId, PlexusEngine, PlexusError,
     PlexusResult, PropertyValue,

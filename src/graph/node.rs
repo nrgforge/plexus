@@ -5,6 +5,29 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use uuid::Uuid;
 
+/// Core dimensions for the multi-dimensional knowledge graph
+///
+/// See ADR-009: Multi-Dimensional Knowledge Graph Architecture
+/// These constants are staged for Phase 5.1+ (Analyzer Framework)
+#[allow(dead_code)]
+pub mod dimension {
+    /// Structure dimension: AST, headers, sections, code blocks
+    pub const STRUCTURE: &str = "structure";
+    /// Semantic dimension: concepts, meanings, topics (LLM-populated)
+    pub const SEMANTIC: &str = "semantic";
+    /// Relational dimension: links, dependencies, references
+    pub const RELATIONAL: &str = "relational";
+    /// Temporal dimension: git history, evolution
+    pub const TEMPORAL: &str = "temporal";
+    /// Default dimension for backwards compatibility
+    pub const DEFAULT: &str = "default";
+
+    /// Check if a dimension string is a known core dimension
+    pub fn is_core_dimension(dim: &str) -> bool {
+        matches!(dim, STRUCTURE | SEMANTIC | RELATIONAL | TEMPORAL | DEFAULT)
+    }
+}
+
 /// Unique identifier for a node
 ///
 /// Serializes as a plain string (UUID or semantic ID like "agent:security-reviewer")
@@ -57,7 +80,7 @@ impl From<String> for NodeId {
 ///
 /// Matches the contract schema: lowercase string enum.
 /// For content types with subtypes (e.g., code language), use properties.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContentType {
     /// Source code
@@ -127,10 +150,19 @@ pub struct Node {
     pub node_type: String,
     /// Primary content domain
     pub content_type: ContentType,
+    /// Dimension this node belongs to (structure, semantic, relational, temporal)
+    /// See ADR-009: Multi-Dimensional Knowledge Graph Architecture
+    #[serde(default = "default_dimension")]
+    pub dimension: String,
     /// Domain-specific properties
     pub properties: Properties,
     /// Node metadata
     pub metadata: NodeMetadata,
+}
+
+/// Default dimension for backwards compatibility with existing nodes
+fn default_dimension() -> String {
+    dimension::DEFAULT.to_string()
 }
 
 impl Node {
@@ -140,12 +172,38 @@ impl Node {
             id: NodeId::new(),
             node_type: node_type.into(),
             content_type,
+            dimension: dimension::DEFAULT.to_string(),
             properties: HashMap::new(),
             metadata: NodeMetadata {
                 created_at: Some(chrono::Utc::now()),
                 ..Default::default()
             },
         }
+    }
+
+    /// Create a new node in a specific dimension
+    pub fn new_in_dimension(
+        node_type: impl Into<String>,
+        content_type: ContentType,
+        dimension: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: NodeId::new(),
+            node_type: node_type.into(),
+            content_type,
+            dimension: dimension.into(),
+            properties: HashMap::new(),
+            metadata: NodeMetadata {
+                created_at: Some(chrono::Utc::now()),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Set the dimension (builder pattern)
+    pub fn with_dimension(mut self, dimension: impl Into<String>) -> Self {
+        self.dimension = dimension.into();
+        self
     }
 
     /// Add a property to the node

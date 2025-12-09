@@ -17,7 +17,15 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     /// Initialize the database schema
+    ///
+    /// Uses a two-phase approach for migration compatibility:
+    /// 1. Create base tables (without new dimension columns) - safe for existing DBs
+    /// 2. Run migrations to add dimension columns to existing tables
+    /// 3. Create dimension indexes (now columns exist)
     fn init_schema(conn: &Connection) -> StorageResult<()> {
+        // Phase 1: Create base tables (compatible with pre-Phase 5.0 databases)
+        // Note: CREATE TABLE IF NOT EXISTS won't modify existing tables,
+        // so we use the minimal schema here and add columns via migration.
         conn.execute_batch(
             r#"
             -- Contexts table
@@ -28,7 +36,7 @@ impl SqliteStore {
                 metadata_json TEXT NOT NULL
             );
 
-            -- Nodes table
+            -- Nodes table (base schema - dimension added via migration)
             CREATE TABLE IF NOT EXISTS nodes (
                 id TEXT NOT NULL,
                 context_id TEXT NOT NULL,
@@ -40,13 +48,13 @@ impl SqliteStore {
                 FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE CASCADE
             );
 
-            -- Indexes for node queries
+            -- Base indexes for node queries (non-dimension)
             CREATE INDEX IF NOT EXISTS idx_nodes_type
                 ON nodes(context_id, node_type);
             CREATE INDEX IF NOT EXISTS idx_nodes_content_type
                 ON nodes(context_id, content_type);
 
-            -- Edges table
+            -- Edges table (base schema - dimensions added via migration)
             CREATE TABLE IF NOT EXISTS edges (
                 id TEXT NOT NULL,
                 context_id TEXT NOT NULL,
@@ -64,7 +72,7 @@ impl SqliteStore {
                 FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE CASCADE
             );
 
-            -- Indexes for edge traversal
+            -- Base indexes for edge traversal (non-dimension)
             CREATE INDEX IF NOT EXISTS idx_edges_source
                 ON edges(context_id, source_id);
             CREATE INDEX IF NOT EXISTS idx_edges_target
@@ -76,25 +84,105 @@ impl SqliteStore {
             PRAGMA foreign_keys = ON;
             "#,
         )?;
+
+        // Phase 2: Run migrations to add dimension columns (Phase 5.0)
+        Self::migrate_add_dimensions(conn)?;
+
+        // Phase 3: Create dimension indexes (now that columns exist)
+        Self::create_dimension_indexes(conn)?;
+
         Ok(())
     }
 
-    /// Serialize a node to database columns
-    fn node_to_row(node: &Node) -> StorageResult<(String, String, String, String, String)> {
+    /// Create indexes for dimension columns (Phase 5.0)
+    ///
+    /// Called after migration ensures dimension columns exist.
+    fn create_dimension_indexes(conn: &Connection) -> StorageResult<()> {
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_nodes_dimension ON nodes(context_id, dimension)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_edges_cross_dimensional ON edges(context_id, source_dimension, target_dimension)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Migration: Add dimension columns to existing databases (Phase 5.0)
+    ///
+    /// SQLite doesn't support ALTER TABLE ADD COLUMN IF NOT EXISTS,
+    /// so we check if columns exist first using table_info pragma.
+    fn migrate_add_dimensions(conn: &Connection) -> StorageResult<()> {
+        // Check if nodes table has dimension column
+        let has_node_dimension: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('nodes') WHERE name = 'dimension'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_node_dimension {
+            // Add dimension column to nodes
+            conn.execute(
+                "ALTER TABLE nodes ADD COLUMN dimension TEXT NOT NULL DEFAULT 'default'",
+                [],
+            )?;
+            // Create index
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_nodes_dimension ON nodes(context_id, dimension)",
+                [],
+            )?;
+        }
+
+        // Check if edges table has dimension columns
+        let has_edge_source_dim: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('edges') WHERE name = 'source_dimension'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_edge_source_dim {
+            // Add dimension columns to edges
+            conn.execute(
+                "ALTER TABLE edges ADD COLUMN source_dimension TEXT NOT NULL DEFAULT 'default'",
+                [],
+            )?;
+            conn.execute(
+                "ALTER TABLE edges ADD COLUMN target_dimension TEXT NOT NULL DEFAULT 'default'",
+                [],
+            )?;
+            // Create index
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_edges_cross_dimensional ON edges(context_id, source_dimension, target_dimension)",
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Serialize a node to database columns (includes dimension field)
+    fn node_to_row(node: &Node) -> StorageResult<(String, String, String, String, String, String)> {
         Ok((
             node.id.as_str().to_string(),
             node.node_type.clone(),
             serde_json::to_string(&node.content_type)?,
+            node.dimension.clone(),
             serde_json::to_string(&node.properties)?,
             serde_json::to_string(&node.metadata)?,
         ))
     }
 
-    /// Deserialize a node from database columns
+    /// Deserialize a node from database columns (includes dimension field)
     fn row_to_node(
         id: String,
         node_type: String,
         content_type_json: String,
+        dimension: String,
         properties_json: String,
         metadata_json: String,
     ) -> StorageResult<Node> {
@@ -102,16 +190,19 @@ impl SqliteStore {
             id: NodeId::from_string(id),
             node_type,
             content_type: serde_json::from_str(&content_type_json)?,
+            dimension,
             properties: serde_json::from_str(&properties_json)?,
             metadata: serde_json::from_str(&metadata_json)?,
         })
     }
 
-    /// Serialize an edge to database columns
+    /// Serialize an edge to database columns (includes dimension fields)
     #[allow(clippy::type_complexity)]
     fn edge_to_row(
         edge: &Edge,
     ) -> StorageResult<(
+        String,
+        String,
         String,
         String,
         String,
@@ -128,6 +219,8 @@ impl SqliteStore {
             edge.id.as_str().to_string(),
             edge.source.as_str().to_string(),
             edge.target.as_str().to_string(),
+            edge.source_dimension.clone(),
+            edge.target_dimension.clone(),
             edge.relationship.clone(),
             edge.weight,
             edge.strength,
@@ -139,12 +232,14 @@ impl SqliteStore {
         ))
     }
 
-    /// Deserialize an edge from database columns
+    /// Deserialize an edge from database columns (includes dimension fields)
     #[allow(clippy::too_many_arguments)]
     fn row_to_edge(
         id: String,
         source_id: String,
         target_id: String,
+        source_dimension: String,
+        target_dimension: String,
         relationship: String,
         weight: f64,
         strength: f64,
@@ -161,6 +256,8 @@ impl SqliteStore {
             id: EdgeId::from_string(id),
             source: NodeId::from_string(source_id),
             target: NodeId::from_string(target_id),
+            source_dimension,
+            target_dimension,
             relationship,
             weight: weight as f32,
             strength: strength as f32,
@@ -228,35 +325,38 @@ impl GraphStore for SqliteStore {
 
         // Save all nodes (inline to avoid lock issues)
         for node in context.nodes.values() {
-            let (id, node_type, content_type, properties, metadata) = Self::node_to_row(node)?;
+            let (id, node_type, content_type, dimension, properties, metadata) = Self::node_to_row(node)?;
             conn.execute(
                 r#"
-                INSERT INTO nodes (id, context_id, node_type, content_type, properties_json, metadata_json)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                INSERT INTO nodes (id, context_id, node_type, content_type, dimension, properties_json, metadata_json)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 ON CONFLICT(context_id, id) DO UPDATE SET
                     node_type = excluded.node_type,
                     content_type = excluded.content_type,
+                    dimension = excluded.dimension,
                     properties_json = excluded.properties_json,
                     metadata_json = excluded.metadata_json
                 "#,
-                params![id, context.id.as_str(), node_type, content_type, properties, metadata],
+                params![id, context.id.as_str(), node_type, content_type, dimension, properties, metadata],
             )?;
         }
 
         // Save all edges
         for edge in &context.edges {
-            let (id, source, target, rel, weight, strength, conf, reinf, created, last, props) =
+            let (id, source, target, source_dim, target_dim, rel, weight, strength, conf, reinf, created, last, props) =
                 Self::edge_to_row(edge)?;
 
             conn.execute(
                 r#"
-                INSERT INTO edges (id, context_id, source_id, target_id, relationship,
-                                   weight, strength, confidence, reinforcements_json,
+                INSERT INTO edges (id, context_id, source_id, target_id, source_dimension, target_dimension,
+                                   relationship, weight, strength, confidence, reinforcements_json,
                                    created_at, last_reinforced, properties_json)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 ON CONFLICT(context_id, id) DO UPDATE SET
                     source_id = excluded.source_id,
                     target_id = excluded.target_id,
+                    source_dimension = excluded.source_dimension,
+                    target_dimension = excluded.target_dimension,
                     relationship = excluded.relationship,
                     weight = excluded.weight,
                     strength = excluded.strength,
@@ -265,7 +365,7 @@ impl GraphStore for SqliteStore {
                     last_reinforced = excluded.last_reinforced,
                     properties_json = excluded.properties_json
                 "#,
-                params![id, context.id.as_str(), source, target, rel, weight, strength, conf, reinf, created, last, props],
+                params![id, context.id.as_str(), source, target, source_dim, target_dim, rel, weight, strength, conf, reinf, created, last, props],
             )?;
         }
 
@@ -290,7 +390,7 @@ impl GraphStore for SqliteStore {
 
         // Load nodes
         let mut stmt = conn.prepare(
-            "SELECT id, node_type, content_type, properties_json, metadata_json
+            "SELECT id, node_type, content_type, dimension, properties_json, metadata_json
              FROM nodes WHERE context_id = ?1",
         )?;
         let nodes_iter = stmt.query_map(params![id.as_str()], |row| {
@@ -300,20 +400,22 @@ impl GraphStore for SqliteStore {
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })?;
 
         let mut nodes = HashMap::new();
         for row in nodes_iter {
-            let (node_id, node_type, content_type, properties, metadata) = row?;
-            let node = Self::row_to_node(node_id, node_type, content_type, properties, metadata)?;
+            let (node_id, node_type, content_type, dimension, properties, metadata) = row?;
+            let node = Self::row_to_node(node_id, node_type, content_type, dimension, properties, metadata)?;
             nodes.insert(node.id.clone(), node);
         }
 
         // Load edges
         let mut stmt = conn.prepare(
-            "SELECT id, source_id, target_id, relationship, weight, strength, confidence,
-                    reinforcements_json, created_at, last_reinforced, properties_json
+            "SELECT id, source_id, target_id, source_dimension, target_dimension, relationship,
+                    weight, strength, confidence, reinforcements_json, created_at, last_reinforced,
+                    properties_json
              FROM edges WHERE context_id = ?1",
         )?;
         let edges_iter = stmt.query_map(params![id.as_str()], |row| {
@@ -322,20 +424,22 @@ impl GraphStore for SqliteStore {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, f64>(4)?,
-                row.get::<_, f64>(5)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
                 row.get::<_, f64>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
+                row.get::<_, f64>(7)?,
+                row.get::<_, f64>(8)?,
                 row.get::<_, String>(9)?,
                 row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, String>(12)?,
             ))
         })?;
 
         let mut edges = Vec::new();
         for row in edges_iter {
-            let (id, source, target, rel, w, s, c, reinf, created, last, props) = row?;
-            let edge = Self::row_to_edge(id, source, target, rel, w, s, c, reinf, created, last, props)?;
+            let (id, source, target, source_dim, target_dim, rel, w, s, c, reinf, created, last, props) = row?;
+            let edge = Self::row_to_edge(id, source, target, source_dim, target_dim, rel, w, s, c, reinf, created, last, props)?;
             edges.push(edge);
         }
 
@@ -369,19 +473,20 @@ impl GraphStore for SqliteStore {
 
     fn save_node(&self, context_id: &ContextId, node: &Node) -> StorageResult<()> {
         let conn = self.conn.lock().unwrap();
-        let (id, node_type, content_type, properties, metadata) = Self::node_to_row(node)?;
+        let (id, node_type, content_type, dimension, properties, metadata) = Self::node_to_row(node)?;
 
         conn.execute(
             r#"
-            INSERT INTO nodes (id, context_id, node_type, content_type, properties_json, metadata_json)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO nodes (id, context_id, node_type, content_type, dimension, properties_json, metadata_json)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(context_id, id) DO UPDATE SET
                 node_type = excluded.node_type,
                 content_type = excluded.content_type,
+                dimension = excluded.dimension,
                 properties_json = excluded.properties_json,
                 metadata_json = excluded.metadata_json
             "#,
-            params![id, context_id.as_str(), node_type, content_type, properties, metadata],
+            params![id, context_id.as_str(), node_type, content_type, dimension, properties, metadata],
         )?;
 
         Ok(())
@@ -390,9 +495,9 @@ impl GraphStore for SqliteStore {
     fn load_node(&self, context_id: &ContextId, node_id: &NodeId) -> StorageResult<Option<Node>> {
         let conn = self.conn.lock().unwrap();
 
-        let row: Option<(String, String, String, String, String)> = conn
+        let row: Option<(String, String, String, String, String, String)> = conn
             .query_row(
-                "SELECT id, node_type, content_type, properties_json, metadata_json
+                "SELECT id, node_type, content_type, dimension, properties_json, metadata_json
                  FROM nodes WHERE context_id = ?1 AND id = ?2",
                 params![context_id.as_str(), node_id.as_str()],
                 |row| {
@@ -402,14 +507,15 @@ impl GraphStore for SqliteStore {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 },
             )
             .optional()?;
 
         match row {
-            Some((id, node_type, content_type, properties, metadata)) => {
-                Ok(Some(Self::row_to_node(id, node_type, content_type, properties, metadata)?))
+            Some((id, node_type, content_type, dimension, properties, metadata)) => {
+                Ok(Some(Self::row_to_node(id, node_type, content_type, dimension, properties, metadata)?))
             }
             None => Ok(None),
         }
@@ -437,7 +543,7 @@ impl GraphStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
 
         let mut sql = String::from(
-            "SELECT id, node_type, content_type, properties_json, metadata_json FROM nodes WHERE context_id = ?1",
+            "SELECT id, node_type, content_type, dimension, properties_json, metadata_json FROM nodes WHERE context_id = ?1",
         );
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(context_id.as_str().to_string())];
 
@@ -450,6 +556,11 @@ impl GraphStore for SqliteStore {
             // content_type is stored as JSON string like "\"code\""
             sql.push_str(" AND content_type = ?");
             params_vec.push(Box::new(format!("\"{}\"", content_type)));
+        }
+
+        if let Some(ref dimension) = filter.dimension {
+            sql.push_str(" AND dimension = ?");
+            params_vec.push(Box::new(dimension.clone()));
         }
 
         if let Some(limit) = filter.limit {
@@ -466,13 +577,14 @@ impl GraphStore for SqliteStore {
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })?;
 
         let mut nodes = Vec::new();
         for row in nodes_iter {
-            let (id, node_type, content_type, properties, metadata) = row?;
-            nodes.push(Self::row_to_node(id, node_type, content_type, properties, metadata)?);
+            let (id, node_type, content_type, dimension, properties, metadata) = row?;
+            nodes.push(Self::row_to_node(id, node_type, content_type, dimension, properties, metadata)?);
         }
 
         Ok(nodes)
@@ -482,18 +594,20 @@ impl GraphStore for SqliteStore {
 
     fn save_edge(&self, context_id: &ContextId, edge: &Edge) -> StorageResult<()> {
         let conn = self.conn.lock().unwrap();
-        let (id, source, target, rel, weight, strength, conf, reinf, created, last, props) =
+        let (id, source, target, source_dim, target_dim, rel, weight, strength, conf, reinf, created, last, props) =
             Self::edge_to_row(edge)?;
 
         conn.execute(
             r#"
-            INSERT INTO edges (id, context_id, source_id, target_id, relationship,
-                               weight, strength, confidence, reinforcements_json,
+            INSERT INTO edges (id, context_id, source_id, target_id, source_dimension, target_dimension,
+                               relationship, weight, strength, confidence, reinforcements_json,
                                created_at, last_reinforced, properties_json)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ON CONFLICT(context_id, id) DO UPDATE SET
                 source_id = excluded.source_id,
                 target_id = excluded.target_id,
+                source_dimension = excluded.source_dimension,
+                target_dimension = excluded.target_dimension,
                 relationship = excluded.relationship,
                 weight = excluded.weight,
                 strength = excluded.strength,
@@ -502,7 +616,7 @@ impl GraphStore for SqliteStore {
                 last_reinforced = excluded.last_reinforced,
                 properties_json = excluded.properties_json
             "#,
-            params![id, context_id.as_str(), source, target, rel, weight, strength, conf, reinf, created, last, props],
+            params![id, context_id.as_str(), source, target, source_dim, target_dim, rel, weight, strength, conf, reinf, created, last, props],
         )?;
 
         Ok(())
@@ -512,8 +626,9 @@ impl GraphStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
 
         let mut stmt = conn.prepare(
-            "SELECT id, source_id, target_id, relationship, weight, strength, confidence,
-                    reinforcements_json, created_at, last_reinforced, properties_json
+            "SELECT id, source_id, target_id, source_dimension, target_dimension, relationship,
+                    weight, strength, confidence, reinforcements_json, created_at, last_reinforced,
+                    properties_json
              FROM edges WHERE context_id = ?1 AND source_id = ?2",
         )?;
 
@@ -523,20 +638,22 @@ impl GraphStore for SqliteStore {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, f64>(4)?,
-                row.get::<_, f64>(5)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
                 row.get::<_, f64>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
+                row.get::<_, f64>(7)?,
+                row.get::<_, f64>(8)?,
                 row.get::<_, String>(9)?,
                 row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, String>(12)?,
             ))
         })?;
 
         let mut edges = Vec::new();
         for row in edges_iter {
-            let (id, source, target, rel, w, s, c, reinf, created, last, props) = row?;
-            edges.push(Self::row_to_edge(id, source, target, rel, w, s, c, reinf, created, last, props)?);
+            let (id, source, target, source_dim, target_dim, rel, w, s, c, reinf, created, last, props) = row?;
+            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, w, s, c, reinf, created, last, props)?);
         }
 
         Ok(edges)
@@ -546,8 +663,9 @@ impl GraphStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
 
         let mut stmt = conn.prepare(
-            "SELECT id, source_id, target_id, relationship, weight, strength, confidence,
-                    reinforcements_json, created_at, last_reinforced, properties_json
+            "SELECT id, source_id, target_id, source_dimension, target_dimension, relationship,
+                    weight, strength, confidence, reinforcements_json, created_at, last_reinforced,
+                    properties_json
              FROM edges WHERE context_id = ?1 AND target_id = ?2",
         )?;
 
@@ -557,20 +675,22 @@ impl GraphStore for SqliteStore {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, f64>(4)?,
-                row.get::<_, f64>(5)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
                 row.get::<_, f64>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
+                row.get::<_, f64>(7)?,
+                row.get::<_, f64>(8)?,
                 row.get::<_, String>(9)?,
                 row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, String>(12)?,
             ))
         })?;
 
         let mut edges = Vec::new();
         for row in edges_iter {
-            let (id, source, target, rel, w, s, c, reinf, created, last, props) = row?;
-            edges.push(Self::row_to_edge(id, source, target, rel, w, s, c, reinf, created, last, props)?);
+            let (id, source, target, source_dim, target_dim, rel, w, s, c, reinf, created, last, props) = row?;
+            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, w, s, c, reinf, created, last, props)?);
         }
 
         Ok(edges)
@@ -657,9 +777,9 @@ impl GraphStore for SqliteStore {
         // Load all visited nodes
         let mut nodes = Vec::new();
         for node_id in &visited {
-            let row: Option<(String, String, String, String, String)> = conn
+            let row: Option<(String, String, String, String, String, String)> = conn
                 .query_row(
-                    "SELECT id, node_type, content_type, properties_json, metadata_json
+                    "SELECT id, node_type, content_type, dimension, properties_json, metadata_json
                      FROM nodes WHERE context_id = ?1 AND id = ?2",
                     params![context_id.as_str(), node_id],
                     |row| {
@@ -669,13 +789,14 @@ impl GraphStore for SqliteStore {
                             row.get(2)?,
                             row.get(3)?,
                             row.get(4)?,
+                            row.get(5)?,
                         ))
                     },
                 )
                 .optional()?;
 
-            if let Some((id, node_type, content_type, properties, metadata)) = row {
-                nodes.push(Self::row_to_node(id, node_type, content_type, properties, metadata)?);
+            if let Some((id, node_type, content_type, dimension, properties, metadata)) = row {
+                nodes.push(Self::row_to_node(id, node_type, content_type, dimension, properties, metadata)?);
             }
         }
 
@@ -684,8 +805,9 @@ impl GraphStore for SqliteStore {
         let in_clause = placeholders.join(",");
 
         let sql = format!(
-            "SELECT id, source_id, target_id, relationship, weight, strength, confidence,
-                    reinforcements_json, created_at, last_reinforced, properties_json
+            "SELECT id, source_id, target_id, source_dimension, target_dimension, relationship,
+                    weight, strength, confidence, reinforcements_json, created_at, last_reinforced,
+                    properties_json
              FROM edges
              WHERE context_id = ?1
                AND source_id IN ({})
@@ -709,20 +831,22 @@ impl GraphStore for SqliteStore {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, f64>(4)?,
-                row.get::<_, f64>(5)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
                 row.get::<_, f64>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
+                row.get::<_, f64>(7)?,
+                row.get::<_, f64>(8)?,
                 row.get::<_, String>(9)?,
                 row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, String>(12)?,
             ))
         })?;
 
         let mut edges = Vec::new();
         for row in edges_iter {
-            let (id, source, target, rel, w, s, c, reinf, created, last, props) = row?;
-            edges.push(Self::row_to_edge(id, source, target, rel, w, s, c, reinf, created, last, props)?);
+            let (id, source, target, source_dim, target_dim, rel, w, s, c, reinf, created, last, props) = row?;
+            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, w, s, c, reinf, created, last, props)?);
         }
 
         Ok(Subgraph { nodes, edges })
@@ -732,7 +856,7 @@ impl GraphStore for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{ContentType, Edge, Node, PropertyValue};
+    use crate::graph::{dimension, ContentType, Edge, Node, PropertyValue};
 
     fn create_test_store() -> SqliteStore {
         SqliteStore::open_in_memory().unwrap()
@@ -746,6 +870,151 @@ mod tests {
         let mut node = Node::new(node_type, ContentType::Code);
         node.id = NodeId::from_string(id);
         node
+    }
+
+    // ========================================================================
+    // Phase 5.0 Migration Tests - Dimension Fields
+    // ========================================================================
+
+    #[test]
+    fn test_node_dimension_persistence() {
+        let store = create_test_store();
+        let ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+        store.save_context(&ctx).unwrap();
+
+        // Create node in structure dimension
+        let mut node = create_test_node("node:structure-test", "heading");
+        node.dimension = dimension::STRUCTURE.to_string();
+
+        store.save_node(&ctx_id, &node).unwrap();
+
+        // Load and verify dimension is preserved
+        let loaded = store.load_node(&ctx_id, &node.id).unwrap().unwrap();
+        assert_eq!(loaded.dimension, dimension::STRUCTURE);
+    }
+
+    #[test]
+    fn test_node_default_dimension() {
+        let store = create_test_store();
+        let ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+        store.save_context(&ctx).unwrap();
+
+        // Create node without specifying dimension
+        let node = create_test_node("node:default-dim", "function");
+        store.save_node(&ctx_id, &node).unwrap();
+
+        // Verify default dimension
+        let loaded = store.load_node(&ctx_id, &node.id).unwrap().unwrap();
+        assert_eq!(loaded.dimension, dimension::DEFAULT);
+    }
+
+    #[test]
+    fn test_edge_dimension_persistence() {
+        let store = create_test_store();
+        let ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+        store.save_context(&ctx).unwrap();
+
+        // Create cross-dimensional edge
+        let node_a = create_test_node("node:a", "function");
+        let node_b = create_test_node("node:b", "concept");
+        store.save_node(&ctx_id, &node_a).unwrap();
+        store.save_node(&ctx_id, &node_b).unwrap();
+
+        let edge = Edge::new_cross_dimensional(
+            node_a.id.clone(),
+            dimension::STRUCTURE,
+            node_b.id.clone(),
+            dimension::SEMANTIC,
+            "implements",
+        );
+        store.save_edge(&ctx_id, &edge).unwrap();
+
+        // Load and verify dimensions
+        let edges = store.get_edges_from(&ctx_id, &node_a.id).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].source_dimension, dimension::STRUCTURE);
+        assert_eq!(edges[0].target_dimension, dimension::SEMANTIC);
+        assert!(edges[0].is_cross_dimensional());
+    }
+
+    #[test]
+    fn test_find_nodes_by_dimension() {
+        let store = create_test_store();
+        let ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+        store.save_context(&ctx).unwrap();
+
+        // Create nodes in different dimensions
+        let mut node1 = create_test_node("node:struct1", "heading");
+        node1.dimension = dimension::STRUCTURE.to_string();
+
+        let mut node2 = create_test_node("node:struct2", "section");
+        node2.dimension = dimension::STRUCTURE.to_string();
+
+        let mut node3 = create_test_node("node:semantic1", "concept");
+        node3.dimension = dimension::SEMANTIC.to_string();
+
+        store.save_node(&ctx_id, &node1).unwrap();
+        store.save_node(&ctx_id, &node2).unwrap();
+        store.save_node(&ctx_id, &node3).unwrap();
+
+        // Find nodes in structure dimension
+        let filter = NodeFilter::new().with_dimension(dimension::STRUCTURE);
+        let structure_nodes = store.find_nodes(&ctx_id, &filter).unwrap();
+        assert_eq!(structure_nodes.len(), 2);
+
+        // Find nodes in semantic dimension
+        let filter = NodeFilter::new().with_dimension(dimension::SEMANTIC);
+        let semantic_nodes = store.find_nodes(&ctx_id, &filter).unwrap();
+        assert_eq!(semantic_nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_context_with_dimensional_data() {
+        let store = create_test_store();
+
+        // Create context with dimensional nodes and edges
+        let mut ctx = create_test_context();
+
+        let mut struct_node = Node::new("heading", ContentType::Document);
+        struct_node.dimension = dimension::STRUCTURE.to_string();
+        struct_node.id = NodeId::from_string("heading:intro");
+
+        let mut semantic_node = Node::new("concept", ContentType::Concept);
+        semantic_node.dimension = dimension::SEMANTIC.to_string();
+        semantic_node.id = NodeId::from_string("concept:auth");
+
+        let cross_edge = Edge::new_cross_dimensional(
+            struct_node.id.clone(),
+            dimension::STRUCTURE,
+            semantic_node.id.clone(),
+            dimension::SEMANTIC,
+            "discusses",
+        );
+
+        ctx.add_node(struct_node);
+        ctx.add_node(semantic_node);
+        ctx.add_edge(cross_edge);
+
+        let ctx_id = ctx.id.clone();
+        store.save_context(&ctx).unwrap();
+
+        // Load and verify
+        let loaded = store.load_context(&ctx_id).unwrap().unwrap();
+        assert_eq!(loaded.nodes.len(), 2);
+        assert_eq!(loaded.edges.len(), 1);
+
+        // Verify dimensions
+        let heading = loaded.nodes.get(&NodeId::from_string("heading:intro")).unwrap();
+        assert_eq!(heading.dimension, dimension::STRUCTURE);
+
+        let concept = loaded.nodes.get(&NodeId::from_string("concept:auth")).unwrap();
+        assert_eq!(concept.dimension, dimension::SEMANTIC);
+
+        assert!(loaded.edges[0].is_cross_dimensional());
     }
 
     #[test]
