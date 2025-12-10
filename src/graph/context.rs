@@ -101,6 +101,21 @@ impl Context {
         }
     }
 
+    /// Create a new context with a specific ID and name
+    pub fn with_id(id: ContextId, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            description: None,
+            nodes: HashMap::new(),
+            edges: Vec::new(),
+            metadata: ContextMetadata {
+                created_at: Some(Utc::now()),
+                ..Default::default()
+            },
+        }
+    }
+
     /// Set the description
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
