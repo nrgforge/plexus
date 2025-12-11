@@ -323,6 +323,18 @@ impl GraphStore for SqliteStore {
             ],
         )?;
 
+        // Delete existing nodes and edges for this context before saving new ones.
+        // This ensures that when we save an empty context (after clearing),
+        // the old nodes/edges don't linger in the database.
+        conn.execute(
+            "DELETE FROM edges WHERE context_id = ?1",
+            params![context.id.as_str()],
+        )?;
+        conn.execute(
+            "DELETE FROM nodes WHERE context_id = ?1",
+            params![context.id.as_str()],
+        )?;
+
         // Save all nodes (inline to avoid lock issues)
         for node in context.nodes.values() {
             let (id, node_type, content_type, dimension, properties, metadata) = Self::node_to_row(node)?;
