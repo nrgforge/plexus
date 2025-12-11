@@ -137,8 +137,78 @@ impl Context {
     }
 
     /// Add an edge to the context
+    ///
+    /// Uses a hybrid deduplication strategy:
+    /// - **Dimension-distinct**: Edges with same source/target/relationship but different
+    ///   dimensions are stored as separate edges (preserves multi-dimensional richness)
+    /// - **Cross-dimensional reinforcement**: When the same logical edge (source/target/relationship)
+    ///   appears in multiple dimensions, all instances get a boosted confidence score
+    ///   (Hebbian learning: evidence from multiple perspectives reinforces the connection)
+    ///
+    /// Properties set on edges:
+    /// - `_cross_dim_count`: Number of dimensions this edge appears in (1 = single dimension)
+    /// - When count > 1, confidence is boosted by 0.1 per additional dimension (capped at 1.0)
     pub fn add_edge(&mut self, edge: Edge) {
-        self.edges.push(edge);
+        use super::PropertyValue;
+
+        // Check if an exact duplicate exists (same source, target, relationship, AND dimensions)
+        let exact_match = self.edges.iter_mut().find(|e| {
+            e.source == edge.source
+                && e.target == edge.target
+                && e.relationship == edge.relationship
+                && e.source_dimension == edge.source_dimension
+                && e.target_dimension == edge.target_dimension
+        });
+
+        if let Some(existing) = exact_match {
+            // Exact duplicate - update existing edge
+            existing.strength = existing.strength.max(edge.strength);
+            existing.last_reinforced = edge.last_reinforced;
+            for (k, v) in edge.properties {
+                existing.properties.insert(k, v);
+            }
+        } else {
+            // Check for same logical edge in OTHER dimensions (cross-dimensional reinforcement)
+            let cross_dim_count = self
+                .edges
+                .iter()
+                .filter(|e| {
+                    e.source == edge.source
+                        && e.target == edge.target
+                        && e.relationship == edge.relationship
+                })
+                .count();
+
+            let mut new_edge = edge;
+
+            if cross_dim_count > 0 {
+                // This logical edge exists in other dimensions - apply Hebbian reinforcement
+                // Boost confidence for all instances of this logical edge
+                let reinforcement_bonus = 0.1 * (cross_dim_count as f32);
+
+                // Update existing edges with this logical relationship
+                for existing in self.edges.iter_mut().filter(|e| {
+                    e.source == new_edge.source
+                        && e.target == new_edge.target
+                        && e.relationship == new_edge.relationship
+                }) {
+                    existing.confidence = (existing.confidence + 0.1).min(1.0);
+                    existing.properties.insert(
+                        "_cross_dim_count".to_string(),
+                        PropertyValue::Int((cross_dim_count + 1) as i64),
+                    );
+                }
+
+                // Set properties on new edge
+                new_edge.confidence = (new_edge.confidence + reinforcement_bonus).min(1.0);
+                new_edge.properties.insert(
+                    "_cross_dim_count".to_string(),
+                    PropertyValue::Int((cross_dim_count + 1) as i64),
+                );
+            }
+
+            self.edges.push(new_edge);
+        }
         self.touch();
     }
 
@@ -175,5 +245,106 @@ impl Context {
     /// Update the last modified timestamp
     fn touch(&mut self) {
         self.metadata.updated_at = Some(Utc::now());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::{ContentType, Edge, Node, PropertyValue};
+
+    #[test]
+    fn test_add_edge_exact_duplicate_updates_existing() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new("node", ContentType::Code));
+        let id_b = ctx.add_node(Node::new("node", ContentType::Code));
+
+        // Add first edge
+        let mut edge1 = Edge::new(id_a.clone(), id_b.clone(), "calls");
+        edge1.strength = 0.5;
+        ctx.add_edge(edge1);
+
+        // Add exact duplicate with higher strength
+        let mut edge2 = Edge::new(id_a.clone(), id_b.clone(), "calls");
+        edge2.strength = 0.8;
+        ctx.add_edge(edge2);
+
+        // Should only have one edge, with the higher strength
+        assert_eq!(ctx.edge_count(), 1);
+        assert_eq!(ctx.edges[0].strength, 0.8);
+    }
+
+    #[test]
+    fn test_add_edge_different_dimensions_creates_multiple() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new("node", ContentType::Code));
+        let id_b = ctx.add_node(Node::new("node", ContentType::Code));
+
+        // Add edge in structure dimension
+        let edge1 = Edge::new_in_dimension(id_a.clone(), id_b.clone(), "calls", "structure");
+        ctx.add_edge(edge1);
+
+        // Add same logical edge in semantic dimension
+        let edge2 = Edge::new_in_dimension(id_a.clone(), id_b.clone(), "calls", "semantic");
+        ctx.add_edge(edge2);
+
+        // Should have two distinct edges
+        assert_eq!(ctx.edge_count(), 2);
+    }
+
+    #[test]
+    fn test_cross_dimensional_reinforcement_boosts_confidence() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new("node", ContentType::Code));
+        let id_b = ctx.add_node(Node::new("node", ContentType::Code));
+
+        // Add edge in structure dimension (confidence starts at 0)
+        let edge1 = Edge::new_in_dimension(id_a.clone(), id_b.clone(), "calls", "structure");
+        ctx.add_edge(edge1);
+        assert_eq!(ctx.edges[0].confidence, 0.0);
+
+        // Add same logical edge in semantic dimension
+        let edge2 = Edge::new_in_dimension(id_a.clone(), id_b.clone(), "calls", "semantic");
+        ctx.add_edge(edge2);
+
+        // Both edges should now have boosted confidence and cross_dim_count
+        assert_eq!(ctx.edge_count(), 2);
+
+        // First edge should have been updated with +0.1 confidence
+        assert!(ctx.edges[0].confidence > 0.0, "First edge should have boosted confidence");
+
+        // Second edge should have cross_dim_count = 2
+        let count = ctx.edges[1].properties.get("_cross_dim_count");
+        assert!(count.is_some(), "Should have _cross_dim_count property");
+        if let Some(PropertyValue::Int(n)) = count {
+            assert_eq!(*n, 2, "cross_dim_count should be 2");
+        }
+    }
+
+    #[test]
+    fn test_cross_dimensional_reinforcement_increments_with_more_dimensions() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new("node", ContentType::Code));
+        let id_b = ctx.add_node(Node::new("node", ContentType::Code));
+
+        // Add edge in structure dimension
+        ctx.add_edge(Edge::new_in_dimension(id_a.clone(), id_b.clone(), "calls", "structure"));
+
+        // Add in semantic dimension
+        ctx.add_edge(Edge::new_in_dimension(id_a.clone(), id_b.clone(), "calls", "semantic"));
+
+        // Add in relational dimension
+        ctx.add_edge(Edge::new_in_dimension(id_a.clone(), id_b.clone(), "calls", "relational"));
+
+        assert_eq!(ctx.edge_count(), 3);
+
+        // The third edge should have cross_dim_count = 3
+        let count = ctx.edges[2].properties.get("_cross_dim_count");
+        if let Some(PropertyValue::Int(n)) = count {
+            assert_eq!(*n, 3, "cross_dim_count should be 3 for third dimension");
+        }
+
+        // Confidence should be boosted (0.1 * 2 = 0.2 for third edge)
+        assert!(ctx.edges[2].confidence >= 0.2, "Third edge should have 0.2 confidence boost");
     }
 }
