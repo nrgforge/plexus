@@ -151,47 +151,47 @@ impl Context {
     pub fn add_edge(&mut self, edge: Edge) {
         use super::PropertyValue;
 
-        // Check if an exact duplicate exists (same source, target, relationship, AND dimensions)
-        let exact_match = self.edges.iter_mut().find(|e| {
-            e.source == edge.source
-                && e.target == edge.target
-                && e.relationship == edge.relationship
-                && e.source_dimension == edge.source_dimension
-                && e.target_dimension == edge.target_dimension
-        });
+        // Single-pass scan: find exact match index and count cross-dimensional matches
+        let mut exact_match_idx: Option<usize> = None;
+        let mut cross_dim_indices: Vec<usize> = Vec::new();
 
-        if let Some(existing) = exact_match {
+        for (i, e) in self.edges.iter().enumerate() {
+            let same_logical = e.source == edge.source
+                && e.target == edge.target
+                && e.relationship == edge.relationship;
+
+            if same_logical {
+                let same_dimensions = e.source_dimension == edge.source_dimension
+                    && e.target_dimension == edge.target_dimension;
+
+                if same_dimensions {
+                    exact_match_idx = Some(i);
+                    break; // Found exact match, no need to continue
+                } else {
+                    cross_dim_indices.push(i);
+                }
+            }
+        }
+
+        if let Some(idx) = exact_match_idx {
             // Exact duplicate - update existing edge
+            let existing = &mut self.edges[idx];
             existing.strength = existing.strength.max(edge.strength);
             existing.last_reinforced = edge.last_reinforced;
             for (k, v) in edge.properties {
                 existing.properties.insert(k, v);
             }
         } else {
-            // Check for same logical edge in OTHER dimensions (cross-dimensional reinforcement)
-            let cross_dim_count = self
-                .edges
-                .iter()
-                .filter(|e| {
-                    e.source == edge.source
-                        && e.target == edge.target
-                        && e.relationship == edge.relationship
-                })
-                .count();
-
+            let cross_dim_count = cross_dim_indices.len();
             let mut new_edge = edge;
 
             if cross_dim_count > 0 {
                 // This logical edge exists in other dimensions - apply Hebbian reinforcement
-                // Boost confidence for all instances of this logical edge
                 let reinforcement_bonus = 0.1 * (cross_dim_count as f32);
 
                 // Update existing edges with this logical relationship
-                for existing in self.edges.iter_mut().filter(|e| {
-                    e.source == new_edge.source
-                        && e.target == new_edge.target
-                        && e.relationship == new_edge.relationship
-                }) {
+                for &idx in &cross_dim_indices {
+                    let existing = &mut self.edges[idx];
                     existing.confidence = (existing.confidence + 0.1).min(1.0);
                     existing.properties.insert(
                         "_cross_dim_count".to_string(),

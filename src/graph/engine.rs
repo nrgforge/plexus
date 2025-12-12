@@ -310,6 +310,39 @@ impl PlexusEngine {
 
         Ok(())
     }
+
+    /// Apply a batch mutation to a context (single persist at end)
+    ///
+    /// This is more efficient than calling add_node/add_edge individually
+    /// when you have multiple changes to make, as it only persists once.
+    pub fn apply_mutation(
+        &self,
+        context_id: &ContextId,
+        nodes: Vec<super::node::Node>,
+        edges: Vec<Edge>,
+    ) -> PlexusResult<(usize, usize)> {
+        let mut context = self.contexts.get_mut(context_id)
+            .ok_or_else(|| PlexusError::ContextNotFound(context_id.clone()))?;
+
+        // Apply all node changes in memory
+        let node_count = nodes.len();
+        for node in nodes {
+            context.add_node(node);
+        }
+
+        // Apply all edge changes in memory
+        let edge_count = edges.len();
+        for edge in edges {
+            context.add_edge(edge);
+        }
+
+        // Persist once at the end
+        if let Some(ref store) = self.store {
+            store.save_context(&context)?;
+        }
+
+        Ok((node_count, edge_count))
+    }
 }
 
 #[cfg(test)]
