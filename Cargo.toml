@@ -6,6 +6,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+# Enable real LLM calls for spike tests; when disabled, tests use mock responses
+real_llm = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -21,3 +26,6 @@ pulldown-cmark = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.10"
+walkdir = "2.4"
+tokio-test = "0.4"
+regex-lite = "0.1"
