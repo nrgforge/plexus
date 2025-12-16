@@ -78,9 +78,70 @@ async fn test_connectivity_pkm_webdev() {
     let components = connected_components(&graph.context);
     println!("Connected components: {}", components.len());
     if components.len() > 1 {
-        let mut sizes: Vec<_> = components.iter().map(|c| c.len()).collect();
-        sizes.sort_by(|a, b| b.cmp(a));
+        let mut sized_components: Vec<_> = components.iter().map(|c| (c.len(), c)).collect();
+        sized_components.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let sizes: Vec<_> = sized_components.iter().map(|(s, _)| *s).collect();
         println!("  Top 5 component sizes: {:?}", &sizes[..sizes.len().min(5)]);
+
+        // Analyze small disconnected components (size <= 10)
+        let small_components: Vec<_> = sized_components.iter()
+            .filter(|(size, _)| *size <= 10)
+            .collect();
+
+        if !small_components.is_empty() {
+            println!("\n=== Disconnected Component Analysis ===");
+            println!("Small components (≤10 nodes): {}", small_components.len());
+
+            // Sample up to 5 small components
+            for (i, (size, component)) in small_components.iter().take(5).enumerate() {
+                println!("\nComponent {} ({} nodes):", i + 1, size);
+
+                // Get node types in this component
+                let mut comp_types: HashMap<&str, usize> = HashMap::new();
+                let mut sample_docs: Vec<String> = Vec::new();
+
+                for node_id in component.iter() {
+                    if let Some(node) = graph.context.nodes.get(node_id) {
+                        *comp_types.entry(&node.node_type).or_default() += 1;
+
+                        // Collect document names
+                        if node.node_type == "document" {
+                            if let Some(plexus::PropertyValue::String(source)) = node.properties.get("source") {
+                                sample_docs.push(source.clone());
+                            }
+                        }
+                    }
+                }
+
+                println!("  Types: {:?}", comp_types);
+                if !sample_docs.is_empty() {
+                    println!("  Documents: {:?}", sample_docs);
+                }
+            }
+
+            // Summary of all small component types
+            println!("\n=== Small Component Summary ===");
+            let mut all_small_types: HashMap<&str, usize> = HashMap::new();
+            let mut orphan_doc_count = 0;
+
+            for (size, component) in &small_components {
+                let mut has_doc = false;
+                for node_id in component.iter() {
+                    if let Some(node) = graph.context.nodes.get(node_id) {
+                        *all_small_types.entry(&node.node_type).or_default() += 1;
+                        if node.node_type == "document" {
+                            has_doc = true;
+                        }
+                    }
+                }
+                if has_doc && *size <= 5 {
+                    orphan_doc_count += 1;
+                }
+            }
+            println!("Node types in small components: {:?}", all_small_types);
+            println!("Likely orphan documents (small doc-containing components): {}", orphan_doc_count);
+        }
     }
 
     // Calculate PageRank to find seed nodes
@@ -116,6 +177,9 @@ async fn test_connectivity_pkm_webdev() {
         graph.node_count(),
         reachability * 100.0
     );
+
+    // Note: With LinkAnalyzer fix, link/url nodes are now connected to their parent docs
+    // The raw reachability metric is now accurate
 
     // Evaluate result
     if reachability >= TARGET_REACHABILITY {

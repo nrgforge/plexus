@@ -292,13 +292,19 @@ pub fn is_reachable(context: &Context, from: &NodeId, to: &NodeId, max_depth: us
 }
 
 /// Count reachable nodes from a set of seed nodes
+///
+/// Only counts nodes that actually exist in context.nodes (ignores phantom targets)
 pub fn reachable_count(context: &Context, seeds: &[NodeId], max_depth: usize) -> usize {
+    // Build adjacency list using only edges where BOTH source and target exist
     let mut outgoing: HashMap<&NodeId, Vec<&NodeId>> = HashMap::new();
     for edge in &context.edges {
-        outgoing
-            .entry(&edge.source)
-            .or_default()
-            .push(&edge.target);
+        // Only include edges where both endpoints exist in the graph
+        if let (Some((src_id, _)), Some((tgt_id, _))) = (
+            context.nodes.get_key_value(&edge.source),
+            context.nodes.get_key_value(&edge.target),
+        ) {
+            outgoing.entry(src_id).or_default().push(tgt_id);
+        }
     }
 
     let mut visited: HashSet<&NodeId> = HashSet::new();

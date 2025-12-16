@@ -200,6 +200,15 @@ impl LinkAnalyzer {
         // Create source document node reference
         let source_doc_id = NodeId::from_string(format!("{}:document", source_id));
 
+        // Connect link node to its parent document (prevents orphaned link nodes)
+        let contains_edge = Edge::new_in_dimension(
+            source_doc_id.clone(),
+            link_node_id.clone(),
+            "contains",
+            "structure",
+        );
+        result.edges.push(contains_edge);
+
         // Create edge based on link type
         match link_type {
             LinkType::Internal | LinkType::WikiLink => {
@@ -211,14 +220,23 @@ impl LinkAnalyzer {
                 };
                 let target_doc_id = NodeId::from_string(format!("{}:document", target_path));
 
-                // Create links_to edge
+                // Create links_to edge from source doc to target doc
                 let edge = Edge::new_in_dimension(
                     source_doc_id,
-                    target_doc_id,
+                    target_doc_id.clone(),
                     "links_to",
                     "relational",
                 );
                 result.edges.push(edge);
+
+                // Also connect link node to target doc
+                let link_to_target = Edge::new_in_dimension(
+                    link_node_id,
+                    target_doc_id,
+                    "links_to",
+                    "relational",
+                );
+                result.edges.push(link_to_target);
             }
             LinkType::External => {
                 // Create URL node as target
@@ -232,14 +250,23 @@ impl LinkAnalyzer {
 
                 result.nodes.push(url_node);
 
-                // Create references edge
+                // Create references edge from document to URL
                 let edge = Edge::new_in_dimension(
-                    source_doc_id,
-                    url_node_id,
+                    source_doc_id.clone(),
+                    url_node_id.clone(),
                     "references",
                     "relational",
                 );
                 result.edges.push(edge);
+
+                // Also connect link node to URL node
+                let link_to_url = Edge::new_in_dimension(
+                    link_node_id,
+                    url_node_id,
+                    "links_to",
+                    "relational",
+                );
+                result.edges.push(link_to_url);
             }
             LinkType::Anchor => {
                 // Create edge to anchor within same document
@@ -385,7 +412,16 @@ Also see [external](https://example.com) and [anchor](#section).
             .iter()
             .filter(|e| e.relationship == "links_to")
             .collect();
-        assert_eq!(links_to.len(), 1);
+        // 2 edges: source_doc -> target_doc AND link_node -> target_doc
+        assert_eq!(links_to.len(), 2);
+
+        // Should also have contains edge: source_doc -> link_node
+        let contains: Vec<_> = result
+            .edges
+            .iter()
+            .filter(|e| e.relationship == "contains")
+            .collect();
+        assert_eq!(contains.len(), 1);
     }
 
     #[tokio::test]
