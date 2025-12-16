@@ -14,7 +14,8 @@
 
 mod common;
 
-use common::{build_structure_graph, pagerank, reachable_count, TestCorpus};
+use common::{build_structure_graph, connected_components, pagerank, reachable_count, TestCorpus};
+use std::collections::HashMap;
 
 /// Target reachability percentage for GO criteria
 const TARGET_REACHABILITY: f64 = 0.80;
@@ -43,6 +44,45 @@ async fn test_connectivity_pkm_webdev() {
     println!("Nodes: {}", graph.node_count());
     println!("Edges: {}", graph.edge_count());
 
+    // Edge type breakdown
+    let mut edge_types: HashMap<&str, usize> = HashMap::new();
+    for edge in &graph.context.edges {
+        *edge_types.entry(&edge.relationship).or_default() += 1;
+    }
+    println!("Edge types:");
+    for (rel, count) in &edge_types {
+        println!("  {}: {}", rel, count);
+    }
+
+    // Node type breakdown
+    let mut node_types: HashMap<&str, usize> = HashMap::new();
+    for node in graph.context.nodes.values() {
+        *node_types.entry(&node.node_type).or_default() += 1;
+    }
+    println!("Node types:");
+    for (nt, count) in &node_types {
+        println!("  {}: {}", nt, count);
+    }
+
+    // Check document nodes for source property
+    let docs_with_source: usize = graph.context.nodes.values()
+        .filter(|n| n.node_type == "document")
+        .filter(|n| n.properties.contains_key("source"))
+        .count();
+    let doc_count = graph.context.nodes.values()
+        .filter(|n| n.node_type == "document")
+        .count();
+    println!("Documents with source: {}/{}", docs_with_source, doc_count);
+
+    // Connected components analysis
+    let components = connected_components(&graph.context);
+    println!("Connected components: {}", components.len());
+    if components.len() > 1 {
+        let mut sizes: Vec<_> = components.iter().map(|c| c.len()).collect();
+        sizes.sort_by(|a, b| b.cmp(a));
+        println!("  Top 5 component sizes: {:?}", &sizes[..sizes.len().min(5)]);
+    }
+
     // Calculate PageRank to find seed nodes
     let pr = pagerank(&graph.context, 0.85, 100, 1e-6);
     println!("PageRank converged in {} iterations", pr.iterations);
@@ -55,6 +95,15 @@ async fn test_connectivity_pkm_webdev() {
     let seeds: Vec<_> = top_nodes.iter().map(|(id, _)| id.clone()).collect();
 
     println!("Seeds (top {}%): {} nodes", SEED_PERCENTAGE * 100.0, seeds.len());
+
+    // Check what types of nodes are seeds
+    let mut seed_types: HashMap<&str, usize> = HashMap::new();
+    for seed_id in &seeds {
+        if let Some(node) = graph.context.nodes.get(seed_id) {
+            *seed_types.entry(&node.node_type).or_default() += 1;
+        }
+    }
+    println!("Seed node types: {:?}", seed_types);
 
     // Calculate reachability from seeds
     let reachable = reachable_count(&graph.context, &seeds, MAX_HOPS);
