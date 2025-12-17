@@ -107,7 +107,7 @@ pub fn corpus_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-corpora")
 }
 
-/// Load all markdown files recursively from a directory
+/// Load all text files (markdown and plain text) recursively from a directory
 fn load_markdown_files(root: &Path) -> Result<Vec<ContentItem>, CorpusError> {
     let mut items = Vec::new();
 
@@ -117,7 +117,7 @@ fn load_markdown_files(root: &Path) -> Result<Vec<ContentItem>, CorpusError> {
         .filter(|e| {
             e.path()
                 .extension()
-                .map(|ext| ext == "md")
+                .map(|ext| ext == "md" || ext == "txt")
                 .unwrap_or(false)
         })
     {
