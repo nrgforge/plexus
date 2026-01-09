@@ -1,0 +1,942 @@
+{
+  "Linux/Gnome/Desktop Launchers.md": [
+    {
+      "name": "desktop launcher",
+      "confidence": 0.9
+    },
+    {
+      "name": ".desktop file",
+      "confidence": 0.8
+    },
+    {
+      "name": "app image",
+      "confidence": 0.7
+    },
+    {
+      "name": "icon",
+      "confidence": 0.6
+    },
+    {
+      "name": "dash",
+      "confidence": 0.5
+    }
+  ],
+  "Dart/Misc/Enums.md": [
+    {
+      "name": "enums",
+      "confidence": 0.9
+    },
+    {
+      "name": "dart",
+      "confidence": 0.8
+    }
+  ],
+  "GraphQL/GraphQL.md": [
+    {
+      "name": "graphql",
+      "confidence": 1.0
+    },
+    {
+      "name": "api",
+      "confidence": 0.9
+    },
+    {
+      "name": "query",
+      "confidence": 0.8
+    },
+    {
+      "name": "runtime",
+      "confidence": 0.7
+    }
+  ],
+  "Linux/Linux.md": [
+    {
+      "name": "linux",
+      "confidence": 0.9
+    },
+    {
+      "name": "gnome",
+      "confidence": 0.8
+    },
+    {
+      "name": "ubuntu",
+      "confidence": 0.8
+    },
+    {
+      "name": "canonical",
+      "confidence": 0.7
+    }
+  ],
+  "Mac OS/Code/SSH (Mac OS).md": [
+    {
+      "name": "ssh",
+      "confidence": 0.9
+    },
+    {
+      "name": "mac os",
+      "confidence": 0.8
+    },
+    {
+      "name": "keychain",
+      "confidence": 0.7
+    },
+    {
+      "name": "hosts",
+      "confidence": 0.6
+    },
+    {
+      "name": "identityfile",
+      "confidence": 0.5
+    },
+    {
+      "name": "permissions",
+      "confidence": 0.4
+    }
+  ],
+  "Software/Apps/Obsidian.md": [
+    {
+      "name": "obsidian",
+      "confidence": 0.9
+    },
+    {
+      "name": "dictionary",
+      "confidence": 0.8
+    },
+    {
+      "name": "callouts",
+      "confidence": 0.7
+    },
+    {
+      "name": "key symbols",
+      "confidence": 0.6
+    },
+    {
+      "name": "links",
+      "confidence": 0.5
+    },
+    {
+      "name": "plugins",
+      "confidence": 0.4
+    },
+    {
+      "name": "tables",
+      "confidence": 0.3
+    },
+    {
+      "name": "git",
+      "confidence": 0.2
+    }
+  ],
+  "VSCode/Settings.md": [
+    {
+      "name": "settings",
+      "confidence": 0.9
+    },
+    {
+      "name": "vscode",
+      "confidence": 0.8
+    }
+  ],
+  "Google/Products/Google Photos.md": [
+    {
+      "name": "google photos",
+      "confidence": 1.0
+    },
+    {
+      "name": "images",
+      "confidence": 0.9
+    },
+    {
+      "name": "upload time",
+      "confidence": 0.8
+    },
+    {
+      "name": "search",
+      "confidence": 0.7
+    }
+  ],
+  "VSCode/VSCode.md": [
+    {
+      "name": "vscode",
+      "confidence": 1.0
+    },
+    {
+      "name": "microsoft",
+      "confidence": 0.9
+    },
+    {
+      "name": "programming editor",
+      "confidence": 0.8
+    },
+    {
+      "name": "extension development",
+      "confidence": 0.7
+    },
+    {
+      "name": "search and replace",
+      "confidence": 0.6
+    }
+  ],
+  "Misc./Misc..md": [
+    {
+      "name": "markdown",
+      "confidence": 0.9
+    }
+  ],
+  "README.md": [
+    {
+      "name": "knowledge base",
+      "confidence": 0.9
+    },
+    {
+      "name": "web development",
+      "confidence": 0.8
+    },
+    {
+      "name": "operating systems",
+      "confidence": 0.7
+    },
+    {
+      "name": "markdown",
+      "confidence": 0.6
+    },
+    {
+      "name": "obsidian",
+      "confidence": 0.5
+    },
+    {
+      "name": "media wiki",
+      "confidence": 0.4
+    }
+  ],
+  "Typescript/Misc/Benefits of Typescript.md": [
+    {
+      "name": "typescript",
+      "confidence": 0.9
+    },
+    {
+      "name": "linting",
+      "confidence": 0.8
+    },
+    {
+      "name": "intellisense",
+      "confidence": 0.7
+    },
+    {
+      "name": "code suggestions",
+      "confidence": 0.6
+    },
+    {
+      "name": "editor",
+      "confidence": 0.5
+    },
+    {
+      "name": "developer experience",
+      "confidence": 0.4
+    }
+  ],
+  "Linux/Gnome/Extension Development (Gnome).md": [
+    {
+      "name": "extension development",
+      "confidence": 0.9
+    },
+    {
+      "name": "gnome",
+      "confidence": 0.8
+    },
+    {
+      "name": "manifest",
+      "confidence": 0.7
+    },
+    {
+      "name": "symlink",
+      "confidence": 0.6
+    }
+  ],
+  "React/React.md": [
+    {
+      "name": "react",
+      "confidence": 0.9
+    },
+    {
+      "name": "javascript",
+      "confidence": 0.8
+    },
+    {
+      "name": "user interface",
+      "confidence": 0.7
+    },
+    {
+      "name": "ui component",
+      "confidence": 0.6
+    }
+  ],
+  "Knowledge Base.md": [
+    {
+      "name": "dart",
+      "confidence": 0.9
+    },
+    {
+      "name": "flutter",
+      "confidence": 0.9
+    },
+    {
+      "name": "git",
+      "confidence": 0.9
+    },
+    {
+      "name": "google",
+      "confidence": 0.8
+    },
+    {
+      "name": "graphql",
+      "confidence": 0.9
+    },
+    {
+      "name": "javascript",
+      "confidence": 0.9
+    },
+    {
+      "name": "linux",
+      "confidence": 0.8
+    },
+    {
+      "name": "mac os",
+      "confidence": 0.8
+    },
+    {
+      "name": "react",
+      "confidence": 0.9
+    },
+    {
+      "name": "typescript",
+      "confidence": 0.9
+    },
+    {
+      "name": "vscode",
+      "confidence": 0.8
+    }
+  ],
+  "Javascript/Code/Events.md": [
+    {
+      "name": "javascript",
+      "confidence": 1.0
+    },
+    {
+      "name": "event binding",
+      "confidence": 1.0
+    },
+    {
+      "name": "window",
+      "confidence": 1.0
+    },
+    {
+      "name": "addeventlistener",
+      "confidence": 1.0
+    },
+    {
+      "name": "unload",
+      "confidence": 1.0
+    },
+    {
+      "name": "element",
+      "confidence": 1.0
+    },
+    {
+      "name": "removeeventlistener",
+      "confidence": 1.0
+    }
+  ],
+  "Git/Git.md": [
+    {
+      "name": "git",
+      "confidence": 0.9
+    },
+    {
+      "name": "code",
+      "confidence": 0.8
+    },
+    {
+      "name": "config",
+      "confidence": 0.7
+    },
+    {
+      "name": "ignore",
+      "confidence": 0.6
+    },
+    {
+      "name": "tags",
+      "confidence": 0.5
+    }
+  ],
+  "Linux/Gnome/App Grid.md": [
+    {
+      "name": "app_grid",
+      "confidence": 0.9
+    },
+    {
+      "name": "gnome",
+      "confidence": 0.8
+    },
+    {
+      "name": "activity_overview",
+      "confidence": 0.7
+    },
+    {
+      "name": "app_folders",
+      "confidence": 0.6
+    }
+  ],
+  "Software/Apps/FFmpeg.md": [
+    {
+      "name": "ffmpeg",
+      "confidence": 1.0
+    },
+    {
+      "name": "cross-platform solution",
+      "confidence": 0.9
+    },
+    {
+      "name": "audio",
+      "confidence": 0.8
+    },
+    {
+      "name": "video",
+      "confidence": 0.8
+    },
+    {
+      "name": "m4a",
+      "confidence": 0.7
+    },
+    {
+      "name": "mp3lame",
+      "confidence": 0.6
+    },
+    {
+      "name": "h264",
+      "confidence": 0.5
+    },
+    {
+      "name": "mp2",
+      "confidence": 0.4
+    },
+    {
+      "name": "webm",
+      "confidence": 0.3
+    }
+  ],
+  "Typescript/Code/Example of different optional components being required.md": [
+    {
+      "name": "typescript",
+      "confidence": 0.9
+    },
+    {
+      "name": "react",
+      "confidence": 0.8
+    },
+    {
+      "name": "interface",
+      "confidence": 0.7
+    },
+    {
+      "name": "props",
+      "confidence": 0.6
+    },
+    {
+      "name": "form",
+      "confidence": 0.5
+    },
+    {
+      "name": "optional",
+      "confidence": 0.4
+    },
+    {
+      "name": "required",
+      "confidence": 0.3
+    }
+  ],
+  "Misc./Markdown.md": [
+    {
+      "name": "markdown",
+      "confidence": 0.9
+    },
+    {
+      "name": "text",
+      "confidence": 0.8
+    },
+    {
+      "name": "documents",
+      "confidence": 0.7
+    }
+  ],
+  "__resources__/templates/Subject.md": [
+    {
+      "name": "plexus",
+      "confidence": 0.9
+    },
+    {
+      "name": "title",
+      "confidence": 0.8
+    },
+    {
+      "name": "page",
+      "confidence": 0.7
+    }
+  ],
+  "Linux/Gnome/Window Management.md": [
+    {
+      "name": "window management",
+      "confidence": 0.8
+    },
+    {
+      "name": "gnome",
+      "confidence": 0.9
+    },
+    {
+      "name": "centre window",
+      "confidence": 0.7
+    },
+    {
+      "name": "keyboard shortcut",
+      "confidence": 0.8
+    }
+  ],
+  "Git/Code/Git Tags.md": [
+    {
+      "name": "git",
+      "confidence": 1.0
+    },
+    {
+      "name": "tag",
+      "confidence": 1.0
+    },
+    {
+      "name": "create",
+      "confidence": 0.9
+    },
+    {
+      "name": "delete",
+      "confidence": 0.9
+    },
+    {
+      "name": "list",
+      "confidence": 0.8
+    }
+  ],
+  "Git/Code/Git Config.md": [
+    {
+      "name": "git",
+      "confidence": 0.9
+    },
+    {
+      "name": "config",
+      "confidence": 0.8
+    },
+    {
+      "name": "branch name",
+      "confidence": 0.7
+    }
+  ],
+  "Software/Apps/NordVPN.md": [
+    {
+      "name": "nordvpn",
+      "confidence": 1.0
+    },
+    {
+      "name": "linux",
+      "confidence": 0.8
+    },
+    {
+      "name": "apt-get",
+      "confidence": 0.9
+    },
+    {
+      "name": "openvpn",
+      "confidence": 0.9
+    },
+    {
+      "name": "gnome",
+      "confidence": 0.8
+    },
+    {
+      "name": "ubuntu",
+      "confidence": 0.8
+    }
+  ],
+  "__resources__/templates/Note.md": [
+    {
+      "name": "plexus",
+      "confidence": 1.0
+    },
+    {
+      "name": "knowledge graph",
+      "confidence": 0.9
+    },
+    {
+      "name": "semantic analyzer",
+      "confidence": 0.8
+    }
+  ],
+  "Javascript/Code/Promises.md": [
+    {
+      "name": "javascript",
+      "confidence": 1.0
+    },
+    {
+      "name": "promise",
+      "confidence": 1.0
+    },
+    {
+      "name": "load-image",
+      "confidence": 1.0
+    },
+    {
+      "name": "image",
+      "confidence": 1.0
+    },
+    {
+      "name": "src",
+      "confidence": 1.0
+    },
+    {
+      "name": "onload",
+      "confidence": 1.0
+    },
+    {
+      "name": "onerror",
+      "confidence": 1.0
+    },
+    {
+      "name": "then",
+      "confidence": 1.0
+    },
+    {
+      "name": "catch",
+      "confidence": 1.0
+    }
+  ],
+  "Dart/Misc/Constructors.md": [
+    {
+      "name": "dart",
+      "confidence": 0.9
+    },
+    {
+      "name": "constructor",
+      "confidence": 0.8
+    },
+    {
+      "name": "named constructor",
+      "confidence": 0.7
+    },
+    {
+      "name": "factory constructor",
+      "confidence": 0.6
+    },
+    {
+      "name": "object-oriented programming",
+      "confidence": 0.5
+    }
+  ],
+  "Software/Apps/uBlock Origin.md": [
+    {
+      "name": "ublock origin",
+      "confidence": 0.9
+    },
+    {
+      "name": "ad blocker",
+      "confidence": 0.8
+    },
+    {
+      "name": "youtube",
+      "confidence": 0.7
+    },
+    {
+      "name": "shorts",
+      "confidence": 0.6
+    },
+    {
+      "name": "grid view",
+      "confidence": 0.5
+    },
+    {
+      "name": "list view",
+      "confidence": 0.4
+    }
+  ],
+  "Software/Apps/Ansible.md": [
+    {
+      "name": "ansible",
+      "confidence": 1.0
+    },
+    {
+      "name": "infrastructure as code",
+      "confidence": 0.9
+    },
+    {
+      "name": "software provisioning",
+      "confidence": 0.8
+    },
+    {
+      "name": "configuration management",
+      "confidence": 0.8
+    },
+    {
+      "name": "application deployment",
+      "confidence": 0.8
+    }
+  ],
+  "Mac OS/Mac OS.md": [
+    {
+      "name": "mac os",
+      "confidence": 0.9
+    },
+    {
+      "name": "ssh",
+      "confidence": 0.8
+    }
+  ],
+  "Dart/Dart.md": [
+    {
+      "name": "dart",
+      "confidence": 0.9
+    },
+    {
+      "name": "flutter",
+      "confidence": 0.8
+    },
+    {
+      "name": "constructors",
+      "confidence": 0.7
+    },
+    {
+      "name": "enums",
+      "confidence": 0.6
+    }
+  ],
+  "Software/Apps/Docker.md": [
+    {
+      "name": "docker",
+      "confidence": 1.0
+    },
+    {
+      "name": "container",
+      "confidence": 1.0
+    },
+    {
+      "name": "shell",
+      "confidence": 0.9
+    },
+    {
+      "name": "systemctl",
+      "confidence": 1.0
+    }
+  ],
+  "Javascript/Misc/Cheat sheets.md": [
+    {
+      "name": "javascript",
+      "confidence": 1.0
+    },
+    {
+      "name": "arrays",
+      "confidence": 0.9
+    },
+    {
+      "name": "dates",
+      "confidence": 0.8
+    },
+    {
+      "name": "destructuring",
+      "confidence": 0.8
+    },
+    {
+      "name": "enumerability",
+      "confidence": 0.7
+    },
+    {
+      "name": "formatting numbers",
+      "confidence": 0.6
+    },
+    {
+      "name": "maps and objects",
+      "confidence": 0.5
+    },
+    {
+      "name": "objects",
+      "confidence": 0.4
+    },
+    {
+      "name": "remove duplicates in an array with a set",
+      "confidence": 0.3
+    }
+  ],
+  "Flutter/Flutter.md": [
+    {
+      "name": "flutter",
+      "confidence": 0.9
+    },
+    {
+      "name": "dart",
+      "confidence": 0.8
+    },
+    {
+      "name": "react",
+      "confidence": 0.7
+    },
+    {
+      "name": "javascript",
+      "confidence": 0.6
+    },
+    {
+      "name": "lcov",
+      "confidence": 0.5
+    }
+  ],
+  "Google/Google.md": [
+    {
+      "name": "google",
+      "confidence": 1.0
+    },
+    {
+      "name": "photos",
+      "confidence": 0.9
+    }
+  ],
+  "Media/Media.md": [
+    {
+      "name": "media",
+      "confidence": 0.9
+    },
+    {
+      "name": "design",
+      "confidence": 0.8
+    },
+    {
+      "name": "imagery",
+      "confidence": 0.8
+    },
+    {
+      "name": "music",
+      "confidence": 0.7
+    },
+    {
+      "name": "sound",
+      "confidence": 0.6
+    }
+  ],
+  "Git/Code/Git Ignore.md": [
+    {
+      "name": "git",
+      "confidence": 0.9
+    },
+    {
+      "name": "ignore",
+      "confidence": 0.8
+    },
+    {
+      "name": "patterns",
+      "confidence": 0.7
+    }
+  ],
+  "Typescript/Typescript.md": [
+    {
+      "name": "typescript",
+      "confidence": 0.9
+    },
+    {
+      "name": "javascript",
+      "confidence": 0.8
+    },
+    {
+      "name": "ts playground",
+      "confidence": 0.7
+    },
+    {
+      "name": "conditional props",
+      "confidence": 0.6
+    },
+    {
+      "name": "optional components",
+      "confidence": 0.5
+    }
+  ],
+  "Typescript/Code/Conditional Props.md": [
+    {
+      "name": "react",
+      "confidence": 0.9
+    },
+    {
+      "name": "typescript",
+      "confidence": 0.9
+    },
+    {
+      "name": "conditional props",
+      "confidence": 0.8
+    },
+    {
+      "name": "props",
+      "confidence": 0.7
+    },
+    {
+      "name": "typescript type shenanigans",
+      "confidence": 0.6
+    }
+  ],
+  "VSCode/Misc/Extension Development (VSCode).md": [
+    {
+      "name": "vscode",
+      "confidence": 0.9
+    },
+    {
+      "name": "extension",
+      "confidence": 0.8
+    },
+    {
+      "name": "github",
+      "confidence": 0.7
+    },
+    {
+      "name": "action",
+      "confidence": 0.6
+    }
+  ],
+  "Software/Software.md": [
+    {
+      "name": "ansible",
+      "confidence": 0.9
+    },
+    {
+      "name": "ffmpeg",
+      "confidence": 0.9
+    },
+    {
+      "name": "nordvpn",
+      "confidence": 0.9
+    },
+    {
+      "name": "obsidian",
+      "confidence": 0.9
+    },
+    {
+      "name": "ublock origin",
+      "confidence": 0.9
+    }
+  ],
+  "Javascript/Javascript.md": [
+    {
+      "name": "javascript",
+      "confidence": 0.9
+    },
+    {
+      "name": "promises",
+      "confidence": 0.8
+    },
+    {
+      "name": "es6",
+      "confidence": 0.7
+    },
+    {
+      "name": "cheatsheets",
+      "confidence": 0.6
+    }
+  ]
+}
