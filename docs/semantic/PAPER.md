@@ -149,48 +149,56 @@ Arenas-Guerrero et al. [26] demonstrate incremental KG construction using declar
 
 ### 2.6 Self-Reinforcing and Memory-Inspired Knowledge Structures
 
-Plexus's self-reinforcing edge model—where edges strengthen through use and decay without reinforcement—is inspired by Hebbian learning ("neurons that fire together wire together"). The closest existing system is **Kairos** [28] (NeurIPS 2025 Workshop), which implements three neuroplasticity operations on knowledge graphs: long-term potentiation (edge strengthening), long-term depression (temporal decay), and emergent connection formation from co-activation. Kairos adds validation-gated learning—consolidation occurs only when reasoning passes quality checks, preventing hallucination reinforcement. This is architecturally similar to our design, but applied to AI agent memory rather than creative composition environments.
+Plexus's self-reinforcing edge model—where edges strengthen through use and decay without reinforcement—draws on Hebbian learning ("neurons that fire together wire together") and memory research. The theoretical basis comes from Bjork and Bjork [28], who distinguish storage strength (permanent) from retrieval strength (decays). Periodic forgetting builds higher storage strength on re-learning—a "desirable difficulty." This maps directly to three neuroplasticity-inspired operations on the knowledge graph:
 
-The theoretical basis for beneficial forgetting comes from Bjork and Bjork [29], who distinguish storage strength (permanent) from retrieval strength (decays). Periodic forgetting builds higher storage strength on re-learning—a "desirable difficulty." In our system, edge decay serves an analogous function: concepts that are re-encountered after fading receive stronger reinforcement than concepts that were never forgotten, naturally surfacing the relationships that recur across the practitioner's work.
+| Operation | Neuroscience Analogue | Graph Behaviour |
+|-----------|----------------------|----------------|
+| Edge strengthening | Long-term potentiation (LTP) | Traversed or validated edges increase in weight |
+| Temporal decay | Long-term depression (LTD) | Unaccessed edges lose retrieval strength over time |
+| Emergent connections | Co-activation | Concepts that appear together across documents form new edges |
 
-Practical implementations of memory-inspired learning include spaced repetition systems. Settles and Meeder [30] develop half-life regression for predicting memory decay in language learning (deployed in Duolingo). Zaidi et al. [31] extend this with adaptive forgetting curves incorporating linguistic complexity. Our temporal decay function (exponential with weekly half-life) is deliberately simpler, but could be refined with similar complexity-aware models.
+In our system, edge decay serves an analogous function to desirable difficulty: concepts that are re-encountered after fading receive stronger reinforcement than concepts that were never forgotten, naturally surfacing the relationships that recur across the practitioner's work.
+
+Practical implementations of memory-inspired learning include spaced repetition systems. Settles and Meeder [29] develop half-life regression for predicting memory decay in language learning (deployed in Duolingo). Zaidi et al. [30] extend this with adaptive forgetting curves incorporating linguistic complexity. Our temporal decay function (exponential with weekly half-life) is deliberately simpler, but could be refined with similar complexity-aware models.
+
+To our knowledge, no existing knowledge graph system applies Hebbian dynamics to a creative composition environment. Spaced repetition systems optimise *recall* of known facts; Plexus optimises *discovery* of emergent structure.
 
 ### 2.7 Computational Movement Analysis and Choreographic Structure
 
 The movement/performance domain (§1.2, §5.3) connects to a body of work on computational Laban Movement Analysis and interactive performance systems.
 
-Fdili Alaoui et al. [32] integrate LMA experts into sensor selection and feature computation, showing that multimodal data (positional, dynamic, physiological) best characterizes Laban Effort qualities—Weight, Time, Space, and Flow. Garcia et al. [33] train HMM models for six Effort qualities, finding equi-affine features highly discriminant. These systems provide the "structural layer" input for a movement knowledge graph: they classify the low-level movement data into Laban-theoretic categories that become graph nodes.
+Fdili Alaoui et al. [31] integrate LMA experts into sensor selection and feature computation, showing that multimodal data (positional, dynamic, physiological) best characterizes Laban Effort qualities—Weight, Time, Space, and Flow. Garcia et al. [32] train HMM models for six Effort qualities, finding equi-affine features highly discriminant. These systems provide the "structural layer" input for a movement knowledge graph: they classify the low-level movement data into Laban-theoretic categories that become graph nodes.
 
-At the knowledge representation level, Raheb et al. [34] develop a dance ontology in OWL-2 based on Labanotation semantics, with Description Logic reasoning to extract new movement knowledge. El Raheb et al. [35] survey ontology-based dance knowledge management comprehensively. These ontologies provide a schema for the *conceptual* layer of a movement knowledge graph, but they are static representations—authored by experts, not emergent from live performance data.
+At the knowledge representation level, Raheb et al. [33] develop a dance ontology in OWL-2 based on Labanotation semantics, with Description Logic reasoning to extract new movement knowledge. El Raheb et al. [34] survey ontology-based dance knowledge management comprehensively. These ontologies provide a schema for the *conceptual* layer of a movement knowledge graph, but they are static representations—authored by experts, not emergent from live performance data.
 
-For real-time performance systems, Camurri et al. [36] describe EyesWeb, a platform for real-time analysis of expressive gesture in dance and music performance. Forsythe's choreographic objects [37] provide the conceptual foundation: choreographic structure as a formal system that can be computationally represented, manipulated, and visualized.
+For real-time performance systems, Camurri et al. [35] describe EyesWeb, a platform for real-time analysis of expressive gesture in dance and music performance. Forsythe's choreographic objects [36] provide the conceptual foundation: choreographic structure as a formal system that can be computationally represented, manipulated, and visualized.
 
 No existing system combines these capabilities into a self-reinforcing graph that evolves through performance. The movement analysis systems classify gestures; the ontologies represent choreographic knowledge; the interactive systems respond in real-time. Plexus proposes unifying these into a single graph where performer-environment couplings strengthen through rehearsal, movement vocabulary clusters emerge from practice, and choreographic structure becomes visible not through notation but through the graph's accumulated memory of what happened and how it connected.
 
 ### 2.8 Multi-Frequency Event Processing
 
-Our tiered update architecture (§5.3) has precedent in stream processing. The Lambda Architecture [38] processes data through parallel batch (high-latency, high-accuracy) and speed (low-latency, approximate) layers. Kreps [39] simplifies this to the Kappa Architecture where all processing is stream-based with replay for recomputation.
+Our tiered update architecture (§5.3) has precedent in stream processing. The Lambda Architecture [37] processes data through parallel batch (high-latency, high-accuracy) and speed (low-latency, approximate) layers. Kreps [38] simplifies this to the Kappa Architecture where all processing is stream-based with replay for recomputation.
 
-Luckham [40] formalizes hierarchical event abstraction in Complex Event Processing: low-level events compose into higher-level complex events across different temporal windows. This is directly analogous to our multi-frequency model where token-level structural events compose into relational patterns, semantic concepts, and conceptual structures at increasing timescales.
+Luckham [39] formalizes hierarchical event abstraction in Complex Event Processing: low-level events compose into higher-level complex events across different temporal windows. This is directly analogous to our multi-frequency model where token-level structural events compose into relational patterns, semantic concepts, and conceptual structures at increasing timescales.
 
-Baresi and Guinea [41] propose multi-layer monitoring with three processor types operating at different frequencies, the closest architectural precedent to our approach. Taylor et al. [42] address the specific challenge of applying semantic reasoning to streaming data—traditionally semantic approaches assume static data, while our semantic layer must operate incrementally on a continuously evolving corpus.
+Baresi and Guinea [40] propose multi-layer monitoring with three processor types operating at different frequencies, the closest architectural precedent to our approach. Keskisärkkä [41] address the specific challenge of applying semantic reasoning to streaming data—traditionally semantic approaches assume static data, while our semantic layer must operate incrementally on a continuously evolving corpus.
 
 ### 2.9 Gap Analysis
 
 No existing system integrates all of these elements:
 
-| Capability | GraphRAG | Graphiti | Kairos | InfraNodus | **Plexus** |
-|------------|----------|----------|--------|------------|-----------|
+| Capability | GraphRAG | Graphiti | Spaced Repetition | InfraNodus | **Plexus** |
+|------------|----------|----------|--------------------|------------|-----------|
 | LLM-based extraction | ✓ | ✓ | — | — | ✓ |
 | Incremental/real-time | — | ✓ | — | — | ✓ |
-| Self-reinforcing edges | — | — | ✓ | — | ✓ |
+| Self-reinforcing edges | — | — | ✓ (recall-only) | — | ✓ |
 | Evidence provenance | — | — | — | — | ✓ |
 | Multi-frequency updates | — | — | — | — | ✓ |
 | Creative composition UX | — | — | — | — | ✓ |
 | Content-agnostic (code, text, movement) | — | — | — | — | ✓ |
 | Flow-preserving ambient display | — | — | — | — | ✓ |
 
-The closest system to Plexus is Kairos, which shares the Hebbian edge model, but targets AI agent memory rather than human creative environments. Graphiti shares the real-time incremental approach but lacks self-reinforcement, provenance, and visualization. No existing system combines live structural feedback with a self-reinforcing knowledge graph in a creative composition environment.
+Graphiti shares the real-time incremental approach but lacks self-reinforcement, provenance, and visualization. Spaced repetition systems implement Hebbian-style dynamics but optimise recall of known facts rather than discovery of emergent structure. No existing system combines live structural feedback with a self-reinforcing knowledge graph in a creative composition environment.
 
 ---
 
@@ -601,39 +609,37 @@ For practitioners building similar systems, the meta-lesson may be more useful t
 
 ### Self-Reinforcing and Memory-Inspired Knowledge Structures
 
-[28] Kairos. (2025). Validation-Gated Hebbian Learning for Adaptive Agent Memory. *NeurIPS 2025 Workshop*. OpenReview: EN9VRTnZbK.
+[28] Bjork, R.A. & Bjork, E.L. (1992). A New Theory of Disuse and an Old Theory of Stimulus Fluctuation. In *From Learning Processes to Cognitive Processes*, Erlbaum.
 
-[29] Bjork, R.A. & Bjork, E.L. (1992). A New Theory of Disuse and an Old Theory of Stimulus Fluctuation. In *From Learning Processes to Cognitive Processes*, Erlbaum.
+[29] Settles, B. & Meeder, B. (2016). A Trainable Spaced Repetition Model for Language Learning. In *Proceedings of ACL 2016*.
 
-[30] Settles, B. & Meeder, B. (2016). A Trainable Spaced Repetition Model for Language Learning. In *Proceedings of ACL 2016*.
-
-[31] Zaidi, A. et al. (2020). Adaptive Forgetting Curves for Spaced Repetition Language Learning. In *AIED 2020*, Springer LNCS 12164, pp. 358-363.
+[30] Zaidi, A. et al. (2020). Adaptive Forgetting Curves for Spaced Repetition Language Learning. In *AIED 2020*, Springer LNCS 12164, pp. 358-363.
 
 ### Computational Movement Analysis and Choreographic Structure
 
-[32] Fdili Alaoui, S. et al. (2017). Seeing, Sensing and Recognizing Laban Movement Qualities. In *Proceedings of CHI 2017*, ACM.
+[31] Fdili Alaoui, S. et al. (2017). Seeing, Sensing and Recognizing Laban Movement Qualities. In *Proceedings of CHI 2017*, ACM.
 
-[33] Garcia, M. et al. (2020). Recognition of Laban Effort Qualities from Hand Motion. In *Proceedings of MOCO 2020*, ACM.
+[32] Garcia, M. et al. (2020). Recognition of Laban Effort Qualities from Hand Motion. In *Proceedings of MOCO 2020*, ACM.
 
-[34] El Raheb, K. & Ioannidis, Y. (2012). A Labanotation Based Ontology for Representing Dance Movement. In *GW 2011*, Lecture Notes in Computer Science, vol. 7206, Springer, pp. 106-117.
+[33] El Raheb, K. & Ioannidis, Y. (2012). A Labanotation Based Ontology for Representing Dance Movement. In *GW 2011*, Lecture Notes in Computer Science, vol. 7206, Springer, pp. 106-117.
 
-[35] Paul, S., Das, P. P., & Rao, K. S. (2025). Ontology in Dance Domain—A Survey. *ACM Journal on Computing and Cultural Heritage*, 18(1), Article 16, pp. 1-32.
+[34] Paul, S., Das, P. P., & Rao, K. S. (2025). Ontology in Dance Domain—A Survey. *ACM Journal on Computing and Cultural Heritage*, 18(1), Article 16, pp. 1-32.
 
-[36] Camurri, A., Hashimoto, S., Ricchetti, M., Trocca, R., Suzuki, K., & Volpe, G. (2000). EyesWeb: Toward Gesture and Affect Recognition in Interactive Dance and Music Systems. *Computer Music Journal*, 24(1), 57-69.
+[35] Camurri, A., Hashimoto, S., Ricchetti, M., Trocca, R., Suzuki, K., & Volpe, G. (2000). EyesWeb: Toward Gesture and Affect Recognition in Interactive Dance and Music Systems. *Computer Music Journal*, 24(1), 57-69.
 
-[37] Forsythe, W. (2008). Choreographic Objects. Essay.
+[36] Forsythe, W. (2008). Choreographic Objects. Essay.
 
 ### Multi-Frequency and Tiered Event Processing
 
-[38] Marz, N. & Warren, J. (2015). *Big Data: Principles and Best Practices of Scalable Real-Time Data Systems.* Manning.
+[37] Marz, N. & Warren, J. (2015). *Big Data: Principles and Best Practices of Scalable Real-Time Data Systems.* Manning.
 
-[39] Kreps, J. (2014). Questioning the Lambda Architecture. O'Reilly Blog.
+[38] Kreps, J. (2014). Questioning the Lambda Architecture. O'Reilly Blog.
 
-[40] Luckham, D. (2002). *The Power of Events: An Introduction to Complex Event Processing.* Addison-Wesley.
+[39] Luckham, D. (2002). *The Power of Events: An Introduction to Complex Event Processing.* Addison-Wesley.
 
-[41] Baresi, L. & Guinea, S. (2013). Event-Based Multi-Level Service Monitoring. In *Proceedings of ICWS 2013*, IEEE.
+[40] Baresi, L. & Guinea, S. (2013). Event-Based Multi-Level Service Monitoring. In *Proceedings of ICWS 2013*, IEEE.
 
-[42] Keskisärkkä, R. (2014). Semantic Complex Event Processing for Decision Support. In *ISWC 2014*, Part II, Springer LNCS 8797, pp. 529-536.
+[41] Keskisärkkä, R. (2014). Semantic Complex Event Processing for Decision Support. In *ISWC 2014*, Part II, Springer LNCS 8797, pp. 529-536.
 
 ---
 
