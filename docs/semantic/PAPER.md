@@ -100,7 +100,7 @@ Plexus sits at the intersection of several research areas that have not previous
 
 ### 2.1 Cognitive Context Loss in AI-Assisted Development
 
-The opacity problem (§1.1) is increasingly documented. Valett-Harper et al. [10] describe "material disengagement" in AI-assisted coding, where developers orchestrate code generation without comprehending the output, and propose post-hoc model recovery—essentially reconstructing understanding after the fact. Raychev et al. [11] measure a comprehension-performance gap in AI-assisted brownfield development: developers produce code effectively but cannot explain the resulting architecture. Radhakrishnan et al. [12] identify the measurement gap itself—despite growing evidence of cognitive cost, there are few empirical studies of cognitive load imposed by AI coding assistants.
+The opacity problem (§1.1) is increasingly documented. Cito and Bork [10] describe "material disengagement" in AI-assisted coding, where developers orchestrate code generation without comprehending the output, and propose post-hoc model recovery—essentially reconstructing understanding after the fact. Qiao et al. [11] measure a comprehension-performance gap in AI-assisted brownfield development: developers produce code effectively but cannot explain the resulting architecture. Al Haque et al. [12] identify the measurement gap itself—despite growing evidence of cognitive cost, there are few empirical studies of cognitive load imposed by AI coding assistants.
 
 Industry data corroborates this. A 2025 survey [13] found 65% of developers cite missing context as their top concern with AI-generated code—more than hallucination or correctness. Only 3.8% report both low hallucination rates and high confidence shipping AI code without review.
 
@@ -555,15 +555,15 @@ For practitioners building similar systems, the meta-lesson may be more useful t
 
 ### Cognitive Context in AI-Assisted Development
 
-[10] Valett-Harper, M. et al. (2025). Lost in Code Generation: Reimagining the Role of Software Models in AI-driven Software Engineering. *arXiv preprint arXiv:2511.02475*.
+[10] Cito, J. & Bork, D. (2025). Lost in Code Generation: Reimagining the Role of Software Models in AI-driven Software Engineering. *arXiv preprint arXiv:2511.02475*.
 
-[11] Raychev, V. et al. (2025). Comprehension-Performance Gap in GenAI-Assisted Brownfield Development. *arXiv preprint arXiv:2511.02922*.
+[11] Qiao, Y., Hundhausen, C., Haque, S., & Shihab, M. I. H. (2025). Comprehension-Performance Gap in GenAI-Assisted Brownfield Programming: A Replication and Extension. *arXiv preprint arXiv:2511.02922*.
 
-[12] Radhakrishnan, A. et al. (2025). Towards Decoding Developer Cognition in the Age of AI Assistants. *arXiv preprint arXiv:2501.02684*.
+[12] Al Haque, E., Brown, C., LaToza, T. D., & Johnson, B. (2025). Towards Decoding Developer Cognition in the Age of AI Assistants. *arXiv preprint arXiv:2501.02684*.
 
-[13] Qodo. (2025). State of AI Code Quality in 2025. Industry Report.
+[13] Qodo. (2025). State of AI Code Quality in 2025. Industry Report. https://www.qodo.ai/reports/state-of-ai-code-quality/
 
-[14] Sweller, J. (2024). Cognitive load theory and individual differences. *Learning and Instruction*, 88.
+[14] Sweller, J. (2024). Cognitive load theory and individual differences. *Learning and Individual Differences*, 110, 102423.
 
 ### External Cognition and Epistemic Tools
 
@@ -585,9 +585,9 @@ For practitioners building similar systems, the meta-lesson may be more useful t
 
 ### LLM-Based Knowledge Graph Construction
 
-[22] Yao, Y. et al. (2024). iText2KG: Incremental Knowledge Graphs Construction Using Large Language Models. *arXiv preprint arXiv:2409.03284*.
+[22] Lairgi, Y., Moncla, L., Cazabet, R., Benabdeslem, K., & Cléau, P. (2024). iText2KG: Incremental Knowledge Graphs Construction Using Large Language Models. In *Proceedings of WISE 2024*. arXiv:2409.03284.
 
-[23] Pan, S. et al. (2025). LLM-empowered Knowledge Graph Construction: A Survey. *arXiv preprint arXiv:2510.20345*.
+[23] Bian, H. et al. (2025). LLM-empowered Knowledge Graph Construction: A Survey. *arXiv preprint arXiv:2510.20345*.
 
 [24] Agrawal, M. et al. (2024). Can Knowledge Graphs Reduce Hallucinations in LLMs? A Survey. In *Proceedings of NAACL 2024*.
 
@@ -595,9 +595,9 @@ For practitioners building similar systems, the meta-lesson may be more useful t
 
 [25] Zep. (2024-2025). Graphiti: Temporally-Aware Knowledge Graphs. https://github.com/getzep/graphiti
 
-[26] Arenas-Guerrero, J. et al. (2024). IncRML: Incremental Knowledge Graph Construction from Heterogeneous Data Sources. *Semantic Web Journal*.
+[26] Van Assche, D. et al. (2024). IncRML: Incremental Knowledge Graph Construction from Heterogeneous Data Sources. *Semantic Web Journal*, Special Issue on Knowledge Graph Construction.
 
-[27] Zhu, Y. et al. (2024). IncDE: Towards Continual Knowledge Graph Embedding via Incremental Distillation. In *Proceedings of AAAI 2024*.
+[27] Liu, J., Ke, W., Wang, P., Shang, Z., Gao, J., Li, G., Ji, K., & Liu, Y. (2024). Towards Continual Knowledge Graph Embedding via Incremental Distillation. In *Proceedings of AAAI 2024*, pp. 8759-8768.
 
 ### Self-Reinforcing and Memory-Inspired Knowledge Structures
 
@@ -615,11 +615,11 @@ For practitioners building similar systems, the meta-lesson may be more useful t
 
 [33] Garcia, M. et al. (2020). Recognition of Laban Effort Qualities from Hand Motion. In *Proceedings of MOCO 2020*, ACM.
 
-[34] Raheb, K.E. et al. (2010). A Labanotation Based Ontology for Representing Dance Movement. In *GW 2010*, Springer.
+[34] El Raheb, K. & Ioannidis, Y. (2012). A Labanotation Based Ontology for Representing Dance Movement. In *GW 2011*, Lecture Notes in Computer Science, vol. 7206, Springer, pp. 106-117.
 
-[35] El Raheb, K. et al. (2024). Ontology in Dance Domain—A Survey. *Journal on Computing and Cultural Heritage*, ACM.
+[35] Paul, S., Das, P. P., & Rao, K. S. (2025). Ontology in Dance Domain—A Survey. *ACM Journal on Computing and Cultural Heritage*, 18(1), Article 16, pp. 1-32.
 
-[36] Camurri, A. et al. (2000). Toward Gesture and Affect Recognition in Interactive Dance and Music Systems. *Computer Music Journal*, 24(1).
+[36] Camurri, A., Hashimoto, S., Ricchetti, M., Trocca, R., Suzuki, K., & Volpe, G. (2000). EyesWeb: Toward Gesture and Affect Recognition in Interactive Dance and Music Systems. *Computer Music Journal*, 24(1), 57-69.
 
 [37] Forsythe, W. (2008). Choreographic Objects. Essay.
 
@@ -633,7 +633,7 @@ For practitioners building similar systems, the meta-lesson may be more useful t
 
 [41] Baresi, L. & Guinea, S. (2013). Event-Based Multi-Level Service Monitoring. In *Proceedings of ICWS 2013*, IEEE.
 
-[42] Taylor, R. et al. (2014). Semantic Complex Event Processing for Decision Support. In *EKAW 2014*, Springer LNCS 8876.
+[42] Keskisärkkä, R. (2014). Semantic Complex Event Processing for Decision Support. In *ISWC 2014*, Part II, Springer LNCS 8797, pp. 529-536.
 
 ---
 
