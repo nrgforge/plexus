@@ -33,14 +33,29 @@ What's missing is not a post-hoc documentation tool. What's missing is a live st
 
 Plexus is a knowledge graph engine designed to address this opacity. Rather than analyzing artifacts after they're complete, Plexus integrates with the creative environment and builds a semantic graph that evolves in real-time as content is composed. The graph is not documentation—it is a live structural reflection of the emerging work.
 
-Consider a developer working in a text editor with Plexus running alongside:
+The core insight is that all composition—regardless of medium—produces structure, and that structure is what creators lose track of. The specific structural elements differ by domain, but the experience of watching your work's structure emerge in real-time is the same:
 
-- **As they write a new function**, edges appear in the graph connecting it to the functions it calls, the modules it imports, the concepts it implements.
-- **As they introduce a new concept** in a document, the graph shows it clustering with semantically related ideas—some from the current file, some from distant parts of the corpus.
-- **As they refactor**, they watch the graph restructure: dependencies shift, clusters merge or split, hub nodes gain or lose connections.
-- **As an AI assistant generates code**, the graph captures the structural implications of that generation in real-time—what was introduced, what it connects to, what changed.
+| Domain | Nodes | Edges | What You See Evolving |
+|--------|-------|-------|----------------------|
+| **Code** | Functions, modules, types, constants | Imports, calls, definitions, data flow | Dependency graph restructuring as you refactor |
+| **Fiction** | Characters, scenes, locations, objects | Appearances, dialogue, plot threads, narrative arcs | Character relationship web thickening as the story develops |
+| **Research** | Concepts, papers, claims, evidence | Citations, arguments, supports/contradicts, builds-on | Argument structure crystallizing as you synthesize sources |
+| **Movement/Performance** | Poses, gestures, qualities, formations | Transitions, variations, oppositions, triggers | Choreographic vocabulary emerging, performer-environment coupling visible |
+| **Free-writing** | Emerging ideas, fragments, questions | Associations, echoes, tensions, elaborations | Thought-trains becoming visible, clusters forming from scattered notes |
 
-This produces something closer to a flow state than traditional development tooling offers. The developer maintains structural awareness without interrupting composition to manually trace dependencies or read documentation. The graph is peripheral vision for knowledge work.
+In each case, the creator composes linearly (word after word, function after function) but the structure of the work is non-linear—a graph, not a sequence. Without a live structural view, the creator must hold that graph in their head. With Plexus, the graph is externalized and kept current automatically.
+
+Consider the experience across two domains:
+
+*A developer* writes a new function. Edges appear connecting it to the functions it calls and the modules it imports. They prompt an AI assistant to generate a utility module—the graph immediately shows what the generated code introduced, what it depends on, and how it changed the dependency topology. When they refactor, they watch clusters merge and hub nodes shift.
+
+*A novelist* writes a new scene. A character node gains edges to the location, the other characters present, and the plot threads advanced. A thematic concept ("betrayal") strengthens its connections to the scenes where it appears. When the writer introduces a subplot, they see it as a new cluster forming at the periphery of the main narrative structure, gradually developing edges inward.
+
+*A performer* in an interactive installation moves through a sequence. Pose nodes connect via transition edges; movement qualities (sustained, sudden, bound) cluster into a visible vocabulary. The graph shows performer-environment coupling: this gesture reliably triggers that lighting state, this spatial formation activates that soundscape. Across rehearsals, the conceptual layer reveals what's emerging—which movement phrases are developing, which performer-to-performer dynamics recur, which environment responses are strengthening through repetition. The choreographic structure becomes visible not through notation but through the graph's memory of what happened and how it connected.
+
+The graph behaves identically in all cases—nodes appear, edges form, clusters emerge, hubs solidify, unused connections fade. The content-type-specific analyzers (tree-sitter for code, narrative parsers for fiction, citation extractors for research, pose trackers for movement) feed different node and edge types into the same graph engine with the same self-reinforcing dynamics. Coding and choreography, fiction and research, viewed through the graph, feel like the same activity: *composition with live structural feedback*.
+
+This produces something closer to a flow state than traditional tooling offers. The creator maintains structural awareness without interrupting composition to manually trace dependencies, re-read earlier chapters, or search for related notes. The graph is peripheral vision for knowledge work.
 
 Plexus's core design principles support this:
 
@@ -344,18 +359,31 @@ This enables a "go to source" UX: click a concept node in the graph → open the
 
 A live knowledge graph in a creative environment cannot update everything at once—LLM extraction takes ~10s per document (§4.6), and the user is composing continuously. The solution is tiered update frequencies, where different semantic layers refresh at different cadences:
 
-| Layer | Content | Trigger | Target Latency | Method |
-|-------|---------|---------|----------------|--------|
-| **Structural** | Imports, definitions, call graphs, file tree | Every validation cycle / keystroke debounce | <100ms | AST parsing (tree-sitter), no LLM |
-| **Relational** | Shared terms, topic clusters, sibling similarity | On save or typing pause (>2s idle) | <2s | Lightweight text analysis, cached embeddings |
-| **Semantic** | Concepts, themes, cross-document relationships | Background, priority-queued | 10–30s | LLM extraction (this paper's pipeline) |
-| **Conceptual** | Deep relationships, community structure, hub identification | On explicit refresh or scheduled | Minutes | Network analysis, community detection |
+| Layer | Trigger | Target Latency | Method |
+|-------|---------|----------------|--------|
+| **Structural** | Every validation cycle / keystroke debounce | <100ms | Deterministic parsing (tree-sitter, regex, format-specific), no LLM |
+| **Relational** | On save or typing pause (>2s idle) | <2s | Lightweight text analysis, cached embeddings |
+| **Semantic** | Background, priority-queued | 10–30s | LLM extraction (this paper's pipeline) |
+| **Conceptual** | On explicit refresh or scheduled | Minutes | Network analysis, community detection |
 
-The structural layer provides immediate feedback: write a function call and the edge appears. The relational layer provides near-real-time clustering: save a file and see it settle into its neighborhood. The semantic layer provides depth: background extraction discovers concepts and relationships that text analysis alone would miss. The conceptual layer provides the big picture: community structure, hub nodes, knowledge gaps.
+Each layer manifests differently depending on the creative domain, but the tiering is universal:
+
+| Layer | Code | Fiction | Research | Movement/Performance |
+|-------|------|---------|----------|---------------------|
+| **Structural** | Imports, calls, definitions, type relationships | Character appearances, scene boundaries, dialogue attribution | Citations, section structure, reference links | Poses, transitions, spatial formations, performer positions |
+| **Relational** | Shared terms, module co-usage, naming patterns | Character co-occurrence, setting reuse, motif repetition | Term overlap, shared citations, methodological similarity | Movement quality similarity (Laban efforts), gesture vocabulary clustering, spatial proximity |
+| **Semantic** | Concepts, architectural patterns, design intent | Themes, narrative arcs, character development trajectories | Arguments, claims, evidential support/contradiction | Choreographic phrases, performer-environment coupling, trigger-response mappings |
+| **Conceptual** | Module communities, hub abstractions, dependency topology | Plot thread structure, thematic communities, narrative architecture | Argument structure, knowledge gaps, synthesis opportunities | Emergent movement patterns, ensemble dynamics, performance evolution over time |
+
+The movement/performance domain is particularly illustrative. In an interactive performance system (such as one mapping gesture to lighting and sound), the structural layer captures what the performer is doing right now—poses, transitions, spatial formations. The relational layer identifies movement vocabulary: which gestures cluster together, which transitions are practiced vs. novel. The semantic layer discovers choreographic structure: phrases that echo, develop, or contrast each other; performer-environment coupling patterns (gesture X reliably triggers lighting state Y). The conceptual layer reveals what emerges over time: how the performance vocabulary evolves across rehearsals, which multi-performer formations recur, which movement-environment couplings strengthen through use.
+
+This is the same graph engine operating on different content-type analyzers. A tree-sitter parser and a pose tracker are structurally equivalent from Plexus's perspective: both produce nodes and edges at the structural layer, which feed upward into relational clustering, semantic extraction, and conceptual analysis. The self-reinforcing edge model works identically—a gesture-to-lighting edge that fires reliably strengthens, just as a function-call edge traversed by a developer strengthens.
+
+The structural layer provides immediate feedback: write a function call, execute a gesture, introduce a character—the edge appears. The relational layer provides near-real-time clustering: save a file, pause between movement phrases—the work settles into its neighborhood. The semantic layer provides depth: background extraction discovers concepts and relationships that structural analysis alone would miss. The conceptual layer provides the big picture: community structure, hub nodes, knowledge gaps, emergent patterns.
 
 This tiering is informed directly by our performance experiments (§4.6). The ~10s LLM extraction floor means semantic analysis cannot be synchronous. But the structural and relational layers—which don't require LLM inference—can update fast enough to feel live. The result is a graph that is always responsive (structural edges appear immediately) and always deepening (semantic concepts accumulate in the background).
 
-Priority queuing ensures the semantic layer stays relevant: the file currently open gets highest priority, recently edited files next, then depth-first traversal of the rest. Content-hash caching means unchanged files are never re-extracted.
+Priority queuing ensures the semantic layer stays relevant: the currently active artifact (open file, active performer, focused document) gets highest priority, recently modified artifacts next, then breadth-first traversal of the rest. Content-hash caching means unchanged material is never re-extracted.
 
 ---
 
