@@ -11,19 +11,36 @@ ORCID: 0000-0003-0157-7744
 
 ## Abstract
 
-Building knowledge graphs from document corpora using local LLMs requires solving several interacting design problems: how to traverse documents, how to extract concepts reliably, how to handle documents that exceed context windows, how to spread concepts across related documents, how to normalize terminology, and how to operate within the performance constraints of consumer hardware. Rather than proposing a theoretical architecture, we ran targeted experiments against real corpora to answer each design question empirically. The result is a three-system architecture (orchestration, provenance, knowledge graph) whose design choices are grounded in experimental evidence. Key findings include: file tree traversal provides complete document coverage without the need for network algorithms; directory co-location provides 9.3× stronger semantic signal than explicit links; evidence-grounded prompts achieve 0% hallucination on technical corpora; compositional extraction via chunk-fan-out-aggregate handles large documents autonomously; concept propagation effectiveness depends on corpus organization quality rather than parameter tuning; and local 7B model inference has a ~10s per-document latency floor that is not explained by model size. We report both what worked and what failed, including a 93% extraction failure rate on literary corpora and the inability to meet interactive latency targets on laptop hardware.
+Modern knowledge work increasingly involves opaque accumulation processes—AI-assisted coding sessions where context is lost between prompts, personal knowledge bases that grow without structural awareness, multi-tool workflows where understanding fragments across systems. The practitioner's mental model diverges from the actual state of their knowledge. We describe **Plexus**, a real-time knowledge graph engine designed to make these processes visible by evolving alongside the systems it integrates with. This paper focuses on one critical subsystem: semantic extraction from document corpora using local LLMs. Building this subsystem required solving six interacting design problems—traversal, extraction, composition, propagation, normalization, and performance—each of which we answered through targeted experiments on real corpora. Key findings include: file tree traversal provides complete document coverage without network algorithms; directory co-location provides 9.3× stronger semantic signal than explicit links; evidence-grounded prompts achieve 0% hallucination on technical corpora; compositional extraction handles large documents autonomously; concept propagation effectiveness depends on corpus organization quality, not parameter tuning; and local 7B model inference has a ~10s per-document latency floor unexplained by model size. The resulting three-system architecture (orchestration, provenance, knowledge graph) feeds into Plexus's broader goal of self-reinforcing knowledge graphs that strengthen through use and provide ambient visibility into what you know and how it connects.
 
-**Keywords:** knowledge graphs, LLM extraction, system design, personal knowledge management, semantic extraction, document corpora
+**Keywords:** knowledge graphs, LLM extraction, system design, cognitive context, semantic extraction, real-time knowledge systems
 
 ---
 
 ## 1. Introduction
 
-### 1.1 The Problem
+### 1.1 The Opacity Problem
 
-Personal knowledge management (PKM) systems accumulate large document corpora—wikis, notes, documentation—that lack semantic structure beyond what the author imposed through file organization. Building a knowledge graph from such corpora would enable concept search, semantic navigation, and cross-document discovery. But doing so with LLMs raises a series of practical design questions that existing literature largely answers with "process everything with an LLM and figure out the rest later."
+Knowledge accumulates faster than understanding. A developer "vibe-coding" with an AI assistant produces working software but may not fully grasp the architectural decisions embedded in the generated code. A researcher's personal knowledge base grows to thousands of notes whose interconnections are invisible. A team's documentation sprawls across wikis, repos, and chat histories with no unified semantic map. In each case, knowledge exists but cognitive context—the awareness of what you know, how it connects, and where the gaps are—erodes.
 
-We wanted something more principled. Specifically, we needed to decide:
+This is not a storage problem. The documents exist. The code compiles. The notes are searchable by keyword. The problem is structural: there is no live representation of the semantic relationships within and across these artifacts. The knowledge is there but opaque to the person who ostensibly possesses it.
+
+### 1.2 Plexus: A Real-Time Knowledge Graph
+
+Plexus is a knowledge graph engine designed to address this opacity. It integrates with working environments (editors, orchestration tools, knowledge bases) and builds a semantic graph that evolves in real-time as content changes. Its core design principles are:
+
+- **Real-time evolution**: The graph updates as files are saved, code is generated, and notes are written—not as a batch process after the fact.
+- **Self-reinforcing edges**: Relationships strengthen through use and decay without reinforcement, implementing a form of Hebbian learning for knowledge structures. Edges that matter become visible; edges that don't, fade.
+- **Provenance throughout**: Every concept in the graph traces back to a specific file, line, and evidence span. Click a node, open the source.
+- **Multi-system integration**: Plexus connects to LLM orchestration (llm-orc), provenance tracking (clawmarks), and UI layers (Manza) via MCP, creating a bidirectional learning loop where execution patterns inform graph structure and graph analysis informs future orchestration.
+
+The vision is ambient structural awareness: a live map of your knowledge that you can glance at, query, or ignore—but that is always there, always current, always grounded in evidence.
+
+### 1.3 This Paper: Semantic Extraction from Document Corpora
+
+A knowledge graph is only as useful as what's in it. The first challenge for Plexus is ingestion: how do you extract semantic content from existing document corpora and feed it into the graph? This paper addresses that question through a series of empirical experiments.
+
+We needed to decide:
 
 1. **Traversal**: How do we select and order documents for processing?
 2. **Extraction**: How do we pull concepts from documents with high fidelity?
@@ -32,18 +49,19 @@ We wanted something more principled. Specifically, we needed to decide:
 5. **Normalization**: How much post-processing do extracted concepts need?
 6. **Performance**: What throughput and latency can we expect on consumer hardware?
 
-Each question has multiple plausible answers. Rather than guessing, we ran targeted experiments on real corpora to find out.
+Each question has multiple plausible answers. Rather than guessing, we ran targeted experiments on real corpora to find out. The result is a three-system architecture (orchestration → provenance → knowledge graph) that plugs into Plexus's broader real-time infrastructure.
 
-### 1.2 Approach
+### 1.4 Approach
 
-We conducted a spike investigation consisting of 18 experiments across three corpora of different structure and content type. Each experiment was designed to answer a specific design question with measurable outcomes. The experiments were not planned as a single study; they evolved iteratively, with early results redirecting later investigations. We report the sequence honestly, including hypotheses that turned out to be wrong.
+We conducted 18 experiments across three corpora of different structure and content type. Each experiment was designed to answer a specific design question with measurable outcomes. The experiments evolved iteratively, with early results redirecting later investigations. We report the sequence honestly, including hypotheses that turned out to be wrong.
 
-### 1.3 Contributions
+### 1.5 Contributions
 
 1. A three-system architecture (orchestration → provenance → knowledge graph) whose every major design choice is backed by experimental evidence
 2. Empirical answers to six design questions, including negative results (what didn't work)
 3. A methodology for using targeted experiments to make system design decisions—applicable beyond this specific domain
 4. Quantitative characterization of local LLM performance constraints on consumer hardware
+5. Integration design for feeding extracted semantics into a real-time, self-reinforcing knowledge graph
 
 ---
 
@@ -247,11 +265,17 @@ Throughput plateaus at ~8–10 docs/min regardless of concurrency. Maximum speed
 
 ## 5. System Architecture
 
-The experiments produced a three-system architecture where each component has a distinct responsibility:
+The experiments produced a three-system architecture for semantic extraction that feeds into Plexus's real-time knowledge graph:
 
 ```
 Document ──► llm-orc ──► Clawmarks ──► Plexus
              (extract)    (provenance)   (knowledge graph)
+                                              │
+                                    ┌─────────┴──────────┐
+                                    │  Self-reinforcing   │
+                                    │  edges, decay,      │
+                                    │  community detection │
+                                    └─────────────────────┘
 ```
 
 | System | Responsibility | Why Separate |
@@ -314,6 +338,7 @@ The most broadly applicable findings:
 - **Evidence-grounded prompting eliminates hallucination on technical content.** Requiring the LLM to cite text spans is a simple, effective constraint. We saw 0% hallucination across 290 concepts on technical corpora.
 - **Compositional extraction works autonomously.** Chunking + fan-out + aggregation handles large documents without human intervention, validating the approach for corpora with diverse document sizes.
 - **The LLM is an implicit normalizer.** With constrained prompts, the model produces canonical concept forms without explicit post-processing. This surprised us and simplified the pipeline.
+- **Provenance enables the "live map" UX.** Every concept traces to file:line:evidence, which means the knowledge graph isn't abstract—it's navigable. Click a concept, open the source. This is what distinguishes Plexus from systems that produce graph visualizations disconnected from the underlying artifacts.
 
 ### 6.2 What Failed
 
@@ -340,15 +365,27 @@ It degrades gracefully: the system falls back to content-only analysis for flat 
 - **Small corpus for key claims**: The 9.3× sibling signal strength comes from a 50-file corpus. Larger-scale validation is needed.
 - **LLM-as-judge bias**: Propagation evaluation (P1) used the same model family as extraction. A blind human evaluation would be more rigorous.
 
+### 6.5 Beyond Document Corpora
+
+This paper addresses one ingestion pathway: extracting semantics from existing document corpora. Plexus is designed for multiple concurrent sources of knowledge:
+
+- **LLM orchestration feedback**: When llm-orc executes multi-agent ensembles, execution outcomes (which agents contributed, which dependencies produced high-quality results) feed back into the graph as reinforcement signals. Over time, the graph learns which agent configurations work.
+- **Real-time editing**: As a developer writes or modifies code, Plexus updates incrementally—re-extracting changed files, invalidating stale concepts, re-propagating affected relationships.
+- **AI-assisted workflows**: In vibe-coding sessions, the knowledge generated by AI assistants is captured in the graph as it's produced, maintaining cognitive context that would otherwise be lost between prompts.
+
+The semantic extraction pipeline described here is the batch-ingestion entry point. The other pathways are event-driven and operate on the same graph infrastructure. The self-reinforcing edge model (edges strengthen through use, decay without reinforcement) applies uniformly across all sources—a concept extracted from a document and later referenced in a coding session gets reinforced from both directions.
+
 ---
 
 ## 7. Conclusion
 
-We set out to build an LLM-powered knowledge graph construction system and discovered that most of the interesting design questions had non-obvious answers. Network algorithms weren't needed for traversal. Explicit links carried less signal than directory structure. Smaller models weren't faster. Concept normalization was unnecessary. Propagation effectiveness was determined by corpus organization, not parameter tuning.
+We set out to build the semantic ingestion layer for Plexus—a real-time knowledge graph engine designed to make opaque knowledge accumulation visible—and discovered that most of the interesting design questions had non-obvious answers. Network algorithms weren't needed for traversal. Explicit links carried less signal than directory structure. Smaller models weren't faster. Concept normalization was unnecessary. Propagation effectiveness was determined by corpus organization, not parameter tuning.
 
 The resulting architecture is straightforward: walk the file tree, extract concepts with evidence-grounded prompts using appropriate ensembles for different document types, record provenance, store in a graph, and propagate cautiously within coherent subtrees. Each choice is backed by experiment rather than assumption.
 
-For practitioners building similar systems, the meta-lesson may be more useful than the specific findings: targeted experiments on real corpora reveal design answers that intuition and literature review alone would miss. We expected PageRank to work and tree traversal to be naive. We expected explicit links to be the strongest signal. We expected smaller models to be faster. All three intuitions were wrong.
+This extraction pipeline feeds into Plexus's broader architecture, where concepts become nodes with self-reinforcing edges—strengthening when traversed or validated, decaying when ignored. The provenance model (every concept → file:line → evidence text) is not just an audit trail; it's the mechanism that connects the abstract knowledge graph back to the concrete artifacts where knowledge lives. When a developer loses track of what an AI-assisted coding session produced, or a researcher forgets how their notes connect, the graph provides a live structural map grounded in source material.
+
+For practitioners building similar systems, the meta-lesson may be more useful than the specific findings: targeted experiments on real corpora reveal design answers that intuition and literature review alone would miss. We expected PageRank to work and tree traversal to be naive. We expected explicit links to be the strongest signal. We expected smaller models to be faster. All three intuitions were wrong. The experiments took less effort than implementing the wrong architecture would have.
 
 ---
 
