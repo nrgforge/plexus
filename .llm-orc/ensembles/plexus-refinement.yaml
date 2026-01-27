@@ -1,0 +1,111 @@
+# Plexus Refinement Ensemble
+# Iterative taxonomy refinement for content-only corpora (no tree structure)
+name: plexus-refinement
+description: Extract concepts and refine taxonomy iteratively
+
+agents:
+  # Stage 1: Extract concepts from a document given current taxonomy context
+  - name: concept-extractor
+    model_profile: ollama-llama3
+    timeout_seconds: 60
+    system_prompt: |
+      You are a literary and semantic analyst extracting concepts from text.
+
+      You will receive:
+      1. A document (play, story, or other text)
+      2. A current taxonomy (categories discovered so far) - may be empty on first pass
+
+      Extract concepts in these categories:
+      - **characters**: Named people/beings in the text
+      - **themes**: Abstract ideas explored (love, betrayal, ambition, jealousy)
+      - **settings**: Locations where action takes place
+      - **genre_signals**: Elements indicating comedy, tragedy, history, romance
+      - **relationships**: Key character relationships (father-son, lovers, rivals)
+      - **literary_devices**: Techniques used (soliloquy, irony, wordplay)
+
+      For each concept:
+      - Align to existing taxonomy categories if they fit
+      - Flag as "new_category" if it doesn't fit existing taxonomy
+      - Include confidence score
+
+      Return JSON:
+      {
+        "document_title": "extracted from content",
+        "concepts": [
+          {
+            "name": "concept name",
+            "category": "characters|themes|settings|genre_signals|relationships|literary_devices|new_category",
+            "confidence": 0.9,
+            "evidence": "brief quote or description",
+            "taxonomy_aligned": true/false
+          }
+        ],
+        "genre_classification": "tragedy|comedy|history|romance|problem_play",
+        "genre_confidence": 0.8
+      }
+    output_format: json
+
+  # Stage 2: Update taxonomy based on extracted concepts
+  - name: taxonomy-updater
+    model_profile: ollama-llama3
+    timeout_seconds: 45
+    depends_on: [concept-extractor]
+    system_prompt: |
+      You are a taxonomy curator. Given extracted concepts from multiple documents,
+      update the corpus taxonomy.
+
+      Tasks:
+      1. **Assign**: Place new concepts into existing categories
+      2. **Create**: Propose new categories for orphan concepts
+      3. **Merge**: Suggest merging similar categories
+      4. **Split**: Suggest splitting overly broad categories
+      5. **Normalize**: Identify duplicate concepts with different names
+
+      Return JSON:
+      {
+        "taxonomy": {
+          "characters": {
+            "subcategories": ["royalty", "commoners", "supernatural"],
+            "concepts": ["hamlet", "claudius", "ghost"]
+          },
+          "themes": {
+            "subcategories": ["love", "death", "power", "deception"],
+            "concepts": ["revenge", "madness", "corruption"]
+          },
+          ...
+        },
+        "changes": [
+          {"action": "create|merge|split|assign", "description": "..."}
+        ],
+        "stability_score": 0.8,
+        "coverage": 0.9
+      }
+    output_format: json
+
+  # Stage 3: Assess quality and decide if more iterations needed
+  - name: quality-assessor
+    model_profile: ollama-llama3
+    timeout_seconds: 30
+    depends_on: [taxonomy-updater]
+    system_prompt: |
+      You are a quality assessor for taxonomy refinement.
+
+      Evaluate:
+      1. **Coverage**: What % of concepts have category assignments?
+      2. **Balance**: Are categories roughly equal size, or highly skewed?
+      3. **Coherence**: Do concepts within categories belong together?
+      4. **Stability**: How much did taxonomy change from last iteration?
+
+      Return JSON:
+      {
+        "quality_metrics": {
+          "coverage": 0.9,
+          "balance_score": 0.7,
+          "coherence_score": 0.8,
+          "stability_score": 0.6
+        },
+        "recommendation": "continue|converged|needs_restructure",
+        "issues": ["list of problems to address"],
+        "suggestions": ["improvements for next iteration"]
+      }
+    output_format: json

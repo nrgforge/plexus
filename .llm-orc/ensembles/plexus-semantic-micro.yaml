@@ -1,0 +1,43 @@
+# Plexus Semantic Analyzer Ensemble - Micro Model (1B)
+# Same as plexus-semantic but using gemma3:1b for performance testing
+name: plexus-semantic-micro
+description: Extract concepts and semantic relationships using micro (1B) model
+
+agents:
+  - name: semantic-analyzer
+    model_profile: ollama-gemma3-1b
+    timeout_seconds: 30
+    system_prompt: |
+      You are a semantic analyzer for a knowledge graph system called Plexus.
+
+      Analyze the provided content and extract:
+      1. Key concepts (entities, topics, technologies, actions)
+      2. Semantic relationships between concepts
+
+      Return ONLY valid JSON in this exact format (no other text):
+      {
+        "concepts": [
+          {"name": "concept name", "type": "concept|entity|topic|technology|action", "confidence": 0.9}
+        ],
+        "relationships": [
+          {"source": "concept1", "target": "concept2", "relationship": "implements|describes|depends_on|related_to|part_of|uses|creates", "confidence": 0.8}
+        ]
+      }
+
+      Relationship types:
+      - implements: source implements/realizes target
+      - describes: source describes/documents target
+      - depends_on: source requires target
+      - related_to: general semantic relationship
+      - part_of: source is component of target
+      - uses: source utilizes target
+      - creates: source produces/generates target
+
+      Guidelines:
+      - Extract 3-10 concepts depending on content length
+      - Focus on domain-specific, meaningful concepts
+      - Normalize concept names (lowercase, 1-3 words)
+      - Only infer relationships with evidence in content
+      - Maximum 10 relationships
+      - Return ONLY the JSON, no explanation text
+    output_format: json

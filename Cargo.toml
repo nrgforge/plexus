@@ -1,10 +1,10 @@
 [package]
 name = "plexus"
 description = "Network-aware knowledge graph engine with self-reinforcing edges"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/mrilikecoding/plexus"
 
 [features]
 default = []
@@ -12,17 +12,17 @@ default = []
 real_llm = []
 
 [dependencies]
-serde = { workspace = true }
-serde_json = { workspace = true }
-petgraph = { workspace = true }
-dashmap = { workspace = true }
-uuid = { workspace = true }
-chrono = { workspace = true }
-thiserror = { workspace = true }
-rusqlite = { workspace = true }
-async-trait = { workspace = true }
-tokio = { workspace = true }
-pulldown-cmark = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+petgraph = "0.6"
+dashmap = "6.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
+async-trait = "0.1"
+tokio = { version = "1.0", features = ["sync", "time", "macros", "rt", "process", "io-util"] }
+pulldown-cmark = "0.10"
 
 [dev-dependencies]
 tempfile = "3.10"

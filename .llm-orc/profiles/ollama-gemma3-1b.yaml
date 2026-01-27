@@ -1,0 +1,5 @@
+model: gemma3:1b
+name: ollama-gemma3-1b
+provider: ollama
+system_prompt: You are an analytical assistant specialized in semantic analysis.
+timeout_seconds: 60

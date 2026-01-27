@@ -1,0 +1,136 @@
+# Plexus Compositional Ensemble
+# Hierarchical extraction for long documents (plays, books, large articles)
+# Architecture: Chunk → Parallel extraction (fan-out) → Aggregation → Synthesis
+# Requires: llm-orc >= 0.13 for fan_out support
+name: plexus-compositional
+description: Compositional semantic extraction for long documents via chunk→fan-out→aggregate→synthesize pipeline
+
+agents:
+  # Layer 1: Chunker (splits document by line count with overlap)
+  - name: chunker
+    type: script
+    script: scripts/plexus/chunker.sh
+    args: ["150", "20"]  # 150 lines per chunk, 20 line overlap
+
+  # Layer 2: Chunk Extractor (runs in parallel on each chunk via fan-out)
+  - name: chunk-extractor
+    model_profile: ollama-llama3
+    timeout_seconds: 45
+    depends_on: [chunker]
+    fan_out: true
+    system_prompt: |
+      You are analyzing a SINGLE SCENE or SECTION from a larger work.
+
+      Extract from THIS CHUNK ONLY:
+      1. **Characters present**: Who appears in this scene
+      2. **Key events**: 2-4 main actions/events that occur
+      3. **Themes touched**: Abstract ideas explored (love, death, power, betrayal, etc.)
+      4. **Mood/tone**: Overall emotional quality
+      5. **Literary devices**: Techniques used (soliloquy, irony, wordplay, foreshadowing)
+      6. **Supernatural elements**: Any ghosts, magic, prophecies
+
+      Return ONLY valid JSON:
+      {
+        "chunk_id": "extracted from header if present",
+        "characters_present": ["list of character names"],
+        "key_events": ["event 1", "event 2"],
+        "themes": [{"name": "theme", "strength": 0.8}],
+        "mood": "single word or short phrase",
+        "literary_devices": ["device 1", "device 2"],
+        "supernatural": true/false,
+        "notes": "any other key observations"
+      }
+    output_format: json
+
+  # Layer 3: Aggregator (combines all fan-out chunk extractions)
+  - name: aggregator
+    model_profile: ollama-llama3
+    timeout_seconds: 60
+    depends_on: [chunk-extractor]
+    system_prompt: |
+      You are aggregating extractions from MULTIPLE CHUNKS of a document.
+
+      Given a list of chunk extractions, produce a UNIFIED summary:
+
+      1. **Character importance**: Rank characters by frequency across chunks
+      2. **Recurring themes**: Themes that appear in multiple chunks (with frequency)
+      3. **Narrative arc**: How the story/argument develops across chunks
+      4. **Tonal shifts**: Changes in mood between chunks
+      5. **Cumulative devices**: All literary devices used
+
+      Return JSON:
+      {
+        "chunk_count": N,
+        "character_ranking": [{"name": "char", "appearances": N, "role": "protagonist|antagonist|supporting"}],
+        "recurring_themes": [{"name": "theme", "frequency": N, "chunks": ["list"]}],
+        "narrative_arc": "one paragraph summary of progression",
+        "tonal_shifts": ["shift 1", "shift 2"],
+        "all_devices": ["list of unique devices"],
+        "supernatural_present": true/false
+      }
+    output_format: json
+
+  # Layer 4: Synthesizer (produces document-level understanding)
+  - name: synthesizer
+    model_profile: ollama-llama3
+    timeout_seconds: 60
+    depends_on: [aggregator]
+    system_prompt: |
+      You are synthesizing aggregated extractions into a DOCUMENT-LEVEL semantic representation.
+
+      Given the aggregated summary, produce:
+
+      1. **Genre classification**: tragedy, comedy, history, romance (with evidence)
+      2. **Central themes**: 3-5 major themes with their arcs across the work
+      3. **Character hierarchy**: Protagonist, antagonist, key supporting characters
+      4. **Literary significance**: Notable techniques and their effects
+      5. **Setting and world**: Where/when the work takes place
+
+      Return JSON:
+      {
+        "title": "work title if identifiable",
+        "genre": "tragedy|comedy|history|romance|other",
+        "genre_confidence": 0.9,
+        "genre_evidence": ["signal 1", "signal 2"],
+        "central_themes": [
+          {"name": "theme", "weight": 0.9, "arc": "how it develops"}
+        ],
+        "protagonist": {"name": "char", "traits": ["list"]},
+        "antagonist": {"name": "char", "traits": ["list"]},
+        "supporting_characters": ["list"],
+        "literary_techniques": [{"device": "name", "effect": "impact"}],
+        "settings": ["location 1", "location 2"],
+        "time_period": "when the work is set"
+      }
+    output_format: json
+
+  # Layer 5: Taxonomy Updater (integrates into corpus taxonomy)
+  - name: taxonomy-updater
+    model_profile: ollama-llama3
+    timeout_seconds: 45
+    depends_on: [synthesizer]
+    system_prompt: |
+      You are updating a corpus taxonomy based on a document synthesis.
+
+      Given:
+      1. The document synthesis (themes, characters, genre, etc.)
+      2. The current corpus taxonomy (may be empty)
+
+      Tasks:
+      1. **Assign**: Place new concepts into existing categories
+      2. **Create**: Propose new categories for orphan concepts
+      3. **Normalize**: Identify duplicates with different names
+
+      Return JSON:
+      {
+        "taxonomy_updates": {
+          "characters": {"added": ["list"], "subcategory_assignments": {}},
+          "themes": {"added": ["list"], "subcategory_assignments": {}},
+          "genres": {"added": ["list"]}
+        },
+        "new_categories_proposed": [],
+        "normalizations": [{"canonical": "name", "variants": ["list"]}],
+        "coverage": 0.9,
+        "stability_delta": 0.1
+      }
+    output_format: json

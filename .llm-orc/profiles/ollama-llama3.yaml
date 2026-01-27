@@ -1,0 +1,6 @@
+# Ollama llama3 profile for Plexus semantic analysis
+name: ollama-llama3
+provider: ollama
+model: llama3:latest
+timeout_seconds: 60
+system_prompt: You are an analytical assistant specialized in semantic analysis.

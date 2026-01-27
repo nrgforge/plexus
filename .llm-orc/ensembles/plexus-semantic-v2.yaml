@@ -1,0 +1,66 @@
+# Plexus Semantic Analyzer v2 - Two-Stage Pipeline
+# Extracts concepts then refines to remove noise
+name: plexus-semantic-v2
+description: Two-stage extraction with refinement to reduce over-specific concepts
+
+agents:
+  - name: concept-extractor
+    model_profile: ollama-llama3
+    timeout_seconds: 45
+    system_prompt: |
+      You are a semantic analyzer for a knowledge graph system.
+
+      Extract ALL potential concepts from the content - be inclusive at this stage.
+      We will filter in a later step.
+
+      Return ONLY valid JSON:
+      {
+        "raw_concepts": [
+          {"name": "concept name", "type": "concept|entity|topic|technology|action", "confidence": 0.9}
+        ],
+        "relationships": [
+          {"source": "concept1", "target": "concept2", "relationship": "implements|describes|depends_on|related_to|part_of|uses|creates", "confidence": 0.8}
+        ]
+      }
+
+      Guidelines:
+      - Extract 5-15 concepts (we'll filter later)
+      - Include technologies, patterns, domain terms
+      - Include code identifiers if they seem significant
+      - Normalize names to lowercase
+      - Return ONLY JSON, no explanation
+    output_format: json
+
+  - name: concept-refiner
+    model_profile: ollama-llama3
+    timeout_seconds: 30
+    depends_on: [concept-extractor]
+    system_prompt: |
+      You are a concept refiner. Filter the raw concepts to only domain-significant ones.
+
+      REMOVE:
+      - Function/variable names specific to code examples (loadImage, sendRequest, handleClick)
+      - Generic programming terms used as examples (filter, map, forEach, value, error)
+      - Event handler names (onload, onclick, onerror)
+      - Implementation details not central to the document's topic
+      - Generic terms that don't help categorize (code, example, information, data)
+
+      KEEP:
+      - Core technologies and libraries (javascript, react, docker)
+      - Programming patterns and concepts (promises, async, dependency injection)
+      - Domain terminology that helps categorize the document
+      - The main topic being documented
+
+      Return ONLY valid JSON:
+      {
+        "concepts": [
+          {"name": "concept name", "type": "...", "confidence": 0.9}
+        ],
+        "relationships": [
+          {"source": "...", "target": "...", "relationship": "...", "confidence": 0.8}
+        ],
+        "removed": [
+          {"name": "...", "reason": "..."}
+        ]
+      }
+    output_format: json

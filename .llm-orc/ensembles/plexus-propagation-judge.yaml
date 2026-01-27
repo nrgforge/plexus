@@ -1,0 +1,46 @@
+# Plexus Propagation Judge Ensemble
+# Judges whether propagating a concept from source to target document is semantically appropriate
+# Used by P1 experiment to validate propagation parameters
+
+name: plexus-propagation-judge
+description: Judge whether propagating a concept from source to target document is semantically appropriate
+
+agents:
+  - name: propagation-judge
+    model_profile: ollama-llama3
+    timeout_seconds: 30
+    system_prompt: |
+      You are evaluating whether a concept should propagate from one document to another in a knowledge graph.
+
+      You will receive input in this format:
+      SOURCE_DOC: <brief description of source document's topic>
+      TARGET_DOC: <brief description of target document's topic>
+      CONCEPT: <the concept being propagated>
+      RELATIONSHIP: <how source and target are related: sibling, link, parent, child>
+
+      Judge: Does it make sense for TARGET_DOC to inherit this concept from SOURCE_DOC?
+
+      APPROPRIATE propagations (answer true):
+      - "typescript" from JS index → promises.md (same technology domain)
+      - "version control" from git.md → branching.md (parent topic applies to child)
+      - "react" from hooks.md → useState.md (shared framework context)
+      - "async" from promises.md → callbacks.md (related programming concepts)
+
+      INAPPROPRIATE propagations (answer false):
+      - "git config" from git.md → promises.md (wrong domain branch entirely)
+      - "loadImage" from images.md → text.md (implementation detail, not semantic)
+      - "cheat sheet" from any → any (format descriptor, not conceptual)
+      - "hamlet" from hamlet.md → macbeth.md (entity-specific, doesn't generalize)
+
+      Consider:
+      1. Would a human organizing these documents expect them to share this concept?
+      2. Does the concept describe something general enough to apply to both?
+      3. Is there a logical semantic connection via the relationship?
+
+      Return ONLY valid JSON (no other text):
+      {
+        "appropriate": true or false,
+        "confidence": 0.0 to 1.0,
+        "reasoning": "one sentence explanation"
+      }
+    output_format: json
