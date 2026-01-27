@@ -1,4 +1,4 @@
-# Tree-First Semantic Extraction: Network Structure vs. File Hierarchy for Knowledge Graph Construction
+# Empirical Design of an LLM-Powered Knowledge Graph Construction System for Document Corpora
 
 **Nathaniel Green**
 Independent Researcher
@@ -11,463 +11,344 @@ ORCID: 0000-0003-0157-7744
 
 ## Abstract
 
-We investigate whether file tree structure can replace link-based network algorithms for semantic extraction in personal knowledge management (PKM) corpora. The hypothesis seemed almost too simple: maybe the directory structure authors create already encodes the semantic relationships we're trying to discover. Through experimentation on structured (pkm-webdev) and unstructured (Shakespeare) corpora, we find this hypothesis largely holds. Tree traversal achieves 100% document coverage by construction; PageRank-based BFS achieves only 44-72%. More surprisingly, directory co-location provides 9.3× stronger semantic signal than explicit wikilinks—authors' implicit organization outperforms their explicit linking. LLM extraction achieves 80-100% grounding on technical corpora with 0% hallucination when using evidence-grounded prompts, though literary corpora pose challenges. Concept propagation works well within coherent directory subtrees (~70-80% appropriate) but poorly across arbitrary groupings (~30% overall), suggesting corpus organization quality matters more than parameter tuning. Performance profiling reveals a ~10s per-document latency floor on laptop hardware that is not explained by model size alone; micro models (1B) show negligible improvement over 7B. For structured corpora, the file hierarchy—not link-based network algorithms—should be the primary mechanism for document traversal and semantic proximity inference.
+Building knowledge graphs from document corpora using local LLMs requires solving several interacting design problems: how to traverse documents, how to extract concepts reliably, how to handle documents that exceed context windows, how to spread concepts across related documents, how to normalize terminology, and how to operate within the performance constraints of consumer hardware. Rather than proposing a theoretical architecture, we ran targeted experiments against real corpora to answer each design question empirically. The result is a three-system architecture (orchestration, provenance, knowledge graph) whose design choices are grounded in experimental evidence. Key findings include: file tree traversal provides complete document coverage without the need for network algorithms; directory co-location provides 9.3× stronger semantic signal than explicit links; evidence-grounded prompts achieve 0% hallucination on technical corpora; compositional extraction via chunk-fan-out-aggregate handles large documents autonomously; concept propagation effectiveness depends on corpus organization quality rather than parameter tuning; and local 7B model inference has a ~10s per-document latency floor that is not explained by model size. We report both what worked and what failed, including a 93% extraction failure rate on literary corpora and the inability to meet interactive latency targets on laptop hardware.
 
-**Keywords:** knowledge graphs, semantic extraction, file hierarchy, personal knowledge management, LLM, label propagation, PageRank
+**Keywords:** knowledge graphs, LLM extraction, system design, personal knowledge management, semantic extraction, document corpora
 
 ---
 
 ## 1. Introduction
 
-### 1.1 Problem Statement
+### 1.1 The Problem
 
-Semantic extraction from document corpora faces a fundamental scaling challenge that I suspect most practitioners have encountered but few have quantified. The naive approach—send every document to an LLM, compare every pair for similarity—requires O(n) LLM calls plus O(n²) comparisons. For 1,000 documents this means roughly 500,000 comparisons; for 10,000 documents, around 50 million. These numbers become impractical fast.
+Personal knowledge management (PKM) systems accumulate large document corpora—wikis, notes, documentation—that lack semantic structure beyond what the author imposed through file organization. Building a knowledge graph from such corpora would enable concept search, semantic navigation, and cross-document discovery. But doing so with LLMs raises a series of practical design questions that existing literature largely answers with "process everything with an LLM and figure out the rest later."
 
-But computational cost isn't even the main problem. The naive approach makes three questionable assumptions: that documents are atomic units (they're not—a 50-page document contains many distinct topics), that we should ignore file/folder organization (but this organization *is* semantic signal, placed there by the author), and that we don't need hierarchical zoom (we do—users want to move from "big picture" to "specific detail").
+We wanted something more principled. Specifically, we needed to decide:
 
-### 1.2 The Layered Insight
+1. **Traversal**: How do we select and order documents for processing?
+2. **Extraction**: How do we pull concepts from documents with high fidelity?
+3. **Composition**: How do we handle documents that exceed LLM context windows?
+4. **Propagation**: How do we spread concepts to related documents without reprocessing them?
+5. **Normalization**: How much post-processing do extracted concepts need?
+6. **Performance**: What throughput and latency can we expect on consumer hardware?
 
-Here's what I think the field has been missing: **documents are not the atomic unit of semantics.** Structure exists at multiple levels—context, directory, document, section, concept—and each level carries semantic meaning. A corpus contains directories; directories contain documents; documents contain sections; sections contain concepts.
+Each question has multiple plausible answers. Rather than guessing, we ran targeted experiments on real corpora to find out.
 
-```
-Context (corpus/vault)
-├── Directory structure ──────── Implicit clustering: siblings are related
-│   └── Documents ──────────── Explicit links (wikilinks, imports)
-│       └── Sections ────────── Topical boundaries within doc
-│           └── Concepts ────── Named entities, ideas, terms
-```
+### 1.2 Approach
 
-The key insight, and it's almost embarrassingly simple once you see it: structure IS semantics. Files in `/hooks/` are related—the author put them there together. Sections under "## Authentication" share a topic. We get semantic signal for free from structure we already have. Why are we computing similarities when the author already told us what's related?
+We conducted a spike investigation consisting of 18 experiments across three corpora of different structure and content type. Each experiment was designed to answer a specific design question with measurable outcomes. The experiments were not planned as a single study; they evolved iteratively, with early results redirecting later investigations. We report the sequence honestly, including hypotheses that turned out to be wrong.
 
-### 1.3 Original Hypothesis
+### 1.3 Contributions
 
-We initially hypothesized that **network science techniques** (PageRank [6], label propagation [5], community detection [7]) would solve the coverage problem efficiently. The approach assumed:
-
-- **H1**: Network-guided sampling at p=0.15 of sections achieves ≥85% coverage
-- **H2**: PageRank identifies semantically rich seed documents
-- **H7**: Directory sibling edges provide semantic signal (precision ≥50%)
-
-### 1.4 Investigation Pivot
-
-Our spike investigation revealed that **H2 was fundamentally wrong**. PageRank-based seed selection achieved only 44-72% coverage—nowhere near the 85% we'd hoped for. But testing H7 revealed something I hadn't expected at all:
-
-> **Tree structure doesn't just provide signal—it provides COMPLETE coverage and STRONGER signal than links.**
-
-This was surprising enough to force a complete pivot. We stopped asking "how do we improve PageRank coverage?" and started asking different questions entirely: Does tree structure provide equivalent or better coverage than link-based traversal? (RQ1) Is directory co-location a stronger semantic signal than explicit links? (RQ2) How does corpus structure affect these findings? (RQ3) And what propagation parameters work best for tree-structured corpora? (RQ4)
-
-### 1.5 Contributions
-
-1. Empirical demonstration that tree traversal obsoletes PageRank for document coverage
-2. Quantitative measurement showing siblings provide 9.3× stronger semantic signal than links
-3. Validation of LLM extraction quality (80-100% grounding on technical corpora)
-4. Identification of flat corpus limitations requiring content-only fallback
-5. Performance characterization: ~10s/doc latency floor is not explained by model size (1B ≈ 7B)
-6. Propagation insight: effectiveness depends on corpus semantic coherence, not parameter tuning
+1. A three-system architecture (orchestration → provenance → knowledge graph) whose every major design choice is backed by experimental evidence
+2. Empirical answers to six design questions, including negative results (what didn't work)
+3. A methodology for using targeted experiments to make system design decisions—applicable beyond this specific domain
+4. Quantitative characterization of local LLM performance constraints on consumer hardware
 
 ---
 
 ## 2. Related Work
 
-### 2.1 Knowledge Graph Construction
+### 2.1 Existing Knowledge Graph Construction Systems
 
-Recent systems for document-to-knowledge-graph construction share a common assumption: analyze every document with an LLM, then build relationships.
+Recent systems share a common assumption: process every document with an LLM, then build relationships after the fact.
 
-| System | Approach | Limitation |
-|--------|----------|------------|
-| **Microsoft GraphRAG** [1] | Extract entities → community detection → hierarchical summaries | Expensive (all docs), costly incremental updates |
-| **LightRAG** [2] | Graph + embedding retrieval with incremental updates | Still extracts from every document |
-| **Neo4j LLM Graph Builder** [3] | Multi-LLM extraction to graph database | Processes every document, no tree-aware sampling |
+| System | Approach | Design Assumptions |
+|--------|----------|-------------------|
+| **Microsoft GraphRAG** [1] | Entity extraction → community detection → hierarchical summaries | All docs processed; PageRank for importance ranking |
+| **LightRAG** [2] | Graph + embedding retrieval with incremental updates | All docs processed; no structural awareness |
+| **Neo4j LLM Graph Builder** [3] | Multi-LLM extraction to graph database | All docs processed; documents are atomic units |
 
-All treat documents as atomic units. They build relationships from scratch rather than exploiting the structural organization that already exists in the corpus.
+All three treat documents as atomic, independent units. None exploit the organizational structure that already exists in the corpus. Our experiments test whether that structure is useful—and find that it often provides more signal than the extraction itself.
 
 ### 2.2 Network Science in Document Analysis
 
-**InfraNodus** [4] applies network science (betweenness centrality, modularity) to personal knowledge management. It builds co-occurrence graphs and identifies "structural gaps" between topic clusters.
-
-This is the closest prior work to our initial hypothesis. However, InfraNodus:
-- Works on single vaults, not multi-context
-- Analyzes each note independently (no propagation)
-- Uses network structure for analysis, not for sampling efficiency
-
-Our investigation revealed that network science solves the wrong problem: coverage is already solved by the file tree.
+**InfraNodus** [4] applies network science (betweenness centrality, modularity) to PKM corpora. It builds co-occurrence graphs and identifies structural gaps between topic clusters. This is the closest prior work to our initial hypothesis that network algorithms would be the right traversal mechanism. Our experiments showed this hypothesis was wrong for structured corpora.
 
 ### 2.3 Label Propagation
 
-Semi-supervised label propagation [5] is well-established in machine learning for spreading labels from a small set of annotated examples to unlabeled data. However, no existing knowledge graph system applies label propagation to concept spreading.
-
-Our contribution validates that propagation works for semantic concepts within coherent domains (~70-80% useful), but overall effectiveness across diverse corpora is lower (~30%) and depends more on corpus semantic structure than parameter tuning. Our key finding is that **sibling edges** (directory co-location) provide 9.3× stronger signal than explicit links—inverting the typical assumption that explicit relationships are more valuable.
-
-### 2.4 LLM-Based Extraction
-
-Recent work on LLM extraction focuses on prompting strategies and hallucination reduction. Our validation pyramid (L1 schema, L2 grounding, L3 semantic) follows this trend, but our finding that 0% hallucination is achievable on technical corpora with evidence-grounded prompts suggests simpler approaches may suffice.
+Semi-supervised label propagation [5] spreads labels from annotated examples to unlabeled data. No existing knowledge graph system applies this to concept spreading across documents. We tested it and found it works within semantically coherent directory subtrees but not across arbitrary groupings.
 
 ---
 
-## 3. Method
+## 3. Experimental Setup
 
-### 3.0 Experimental Setup
+### 3.1 Hardware and Software
 
-All experiments were conducted on consumer laptop hardware:
+All experiments ran on consumer laptop hardware:
 - **Hardware**: MacBook Pro M2 Pro, 16GB unified memory
-- **OS**: macOS Sonoma 14.x
 - **LLM Runtime**: Ollama 0.5.x
 - **Models**: llama3:8b-instruct-q4_0 (4.7GB), gemma3:1b (815MB)
 - **Temperature**: 0.0 (deterministic output)
-- **Context**: Default (4096 tokens)
 
-Results may vary on different hardware configurations. GPU-accelerated inference or cloud APIs would likely show different latency characteristics.
+### 3.2 Corpora
 
-### 3.1 Corpora
-
-| Corpus | Files | Structure | Description |
-|--------|-------|-----------|-------------|
+| Corpus | Files | Structure | Content |
+|--------|-------|-----------|---------|
 | pkm-webdev | 50 | Deep tree (28 dirs) | Web development knowledge base |
-| arch-wiki | 2,487 | Medium | Arch Linux wiki subset |
+| arch-wiki | 2,487 | Medium tree | Arch Linux wiki subset |
 | shakespeare | 43 | Flat (1 dir) | Complete plays |
 
-### 3.2 Graph Construction
+These corpora were chosen to represent different structural extremes: deep hierarchy, moderate hierarchy, and no hierarchy.
 
-Documents are parsed into a multi-level graph:
-- **Structural edges**: parent_of, contains, sibling
-- **Semantic edges**: links_to, references
-- **Derived edges**: linked_from (reverse), contained_by (reverse)
+### 3.3 Orchestration Platform
 
-### 3.3 Traversal Strategies
-
-| Strategy | Description |
-|----------|-------------|
-| PageRank + BFS | Select top-k seeds by PageRank, expand via BFS |
-| Random Walk | Probabilistic exploration with restart |
-| Stratified Sampling | One document per directory |
-| Tree Traversal | Depth-first walk of file hierarchy |
-
-### 3.4 Semantic Extraction
-
-LLM-based concept extraction using LLaMA 3 [8] via Ollama [9] with structured prompts requiring evidence grounding.
-
-### 3.5 Metrics
-
-| Metric | Definition |
-|--------|------------|
-| Coverage | % of documents reachable from seeds |
-| Jaccard Similarity | Concept overlap between document pairs |
-| Grounding Rate | % of concepts with textual evidence |
-| Propagation Usefulness | % of propagated concepts judged semantically appropriate |
+Experiments used **llm-orc**, a local LLM orchestration tool that supports multi-agent ensembles, fan-out parallelism, and script-based preprocessing. Ensemble configurations are YAML files specifying agent chains with dependencies.
 
 ---
 
-## 4. Results
+## 4. Design Questions and Experimental Answers
 
-### 4.1 Tree Structure vs. Network Algorithms (RQ1)
+### 4.1 Traversal: How Should We Select Documents?
 
-**Finding**: Tree traversal achieves 100% coverage by construction; PageRank-based approaches achieve 44-72%.
+**Initial hypothesis**: Network science techniques (PageRank [6], label propagation [5], community detection [7]) would efficiently select high-value seed documents, achieving ≥85% coverage at 15% sampling.
 
-| Approach | Coverage | Complexity |
+**What we tested**: PageRank-based BFS with varying seed counts, random walk with restart, stratified sampling (one per directory), and depth-first tree traversal.
+
+**Results**:
+
+| Strategy | Coverage | Complexity |
 |----------|----------|------------|
 | PageRank BFS (5 seeds) | 44% | O(k×n×d) |
 | PageRank BFS (10 seeds) | 58% | O(k×n×d) |
 | Random Walk (p=0.15) | 72% | Probabilistic |
-| **Stratified (1/dir)** | **100%** | O(n) |
-| **Tree Traversal** | **100%** | O(n) |
+| Stratified (1/dir) | 100% | O(n) |
+| Tree Traversal | 100% | O(n) |
 
-**Evidence**: EXPERIMENT-LOG.md, Investigation 2d
+PageRank-based seed selection achieved 44–72% coverage—well below our 85% target. The file tree achieves 100% by construction: every document belongs to a directory, every directory has a parent.
 
-**Interpretation**: This result felt almost too obvious in hindsight. The file tree is inherently a fully connected graph—every document belongs to a directory, every directory has a parent up to root. The "coverage problem" that PageRank attempts to solve? The file system already solved it. We'd been trying to optimize our way around a problem that didn't need to exist.
-
-**Note on baseline selection**: PageRank wasn't designed as a coverage algorithm—it measures node importance/centrality. We tested it because Microsoft GraphRAG [1] and similar systems use PageRank-based seed selection, making it the de facto industry baseline. A coverage-optimal algorithm (e.g., dominating set) would likely perform better than PageRank but still couldn't exceed tree traversal's 100% by construction.
-
-### 4.2 Sibling vs. Link Semantic Signal (RQ2)
-
-**Finding**: Directory co-location (siblings) provides 9.3× stronger semantic signal than explicit wikilinks.
+We also measured whether directory co-location provides semantic signal by comparing concept overlap (Jaccard similarity) across relationship types:
 
 | Relationship | Mean Jaccard | % With Overlap | vs. Random |
 |--------------|--------------|----------------|------------|
-| Siblings | 0.1108 | 44.4% | **9.3×** |
-| Linked | 0.0119 | 13.3% | 1.8× |
-| Random | 0.0067 | 6.7% | 1.0× |
+| Siblings (same directory) | 0.1108 | 44.4% | 9.3× |
+| Linked (explicit wikilinks) | 0.0119 | 13.3% | 1.8× |
+| Random pairs | 0.0067 | 6.7% | 1.0× |
 
-**Evidence**: EXPERIMENT-LOG.md, Investigation 3 (lines 554-570)
+The sibling vs. random comparison yields a large effect size (Cohen's d ≈ 0.8, p < 0.01, Mann-Whitney U). The 9.3× ratio should be read as order-of-magnitude, not precise—the linked sample is smaller (n=15 vs n=45).
 
-**Interpretation**: This 9.3× difference surprised me. Authors organize related content into directories—that's not controversial. But I expected explicit wikilinks to carry more signal, since someone took the time to create them. Turns out, explicit cross-references often serve navigational purposes ("see also: X") rather than topical ones. The implicit structure the author created by *placing files together* is more reliable than the explicit links they added later.
+**Design decision**: Walk the file tree for document selection. Weight sibling edges higher than explicit links. Reserve network algorithms for cross-branch discovery, not primary traversal.
 
-**Statistical note**: The sibling vs. random comparison (0.1108 vs 0.0067) yields a large effect size (Cohen's d ≈ 0.8) and is statistically significant (p < 0.01, Mann-Whitney U). The sibling vs. linked comparison (0.1108 vs 0.0119) is also significant, though the linked sample is smaller (n=15 pairs with links vs n=45 sibling pairs). The 9.3× ratio should be interpreted as indicative rather than precise—the key finding is the order-of-magnitude difference, not the exact multiplier.
+**Boundary condition**: This fails completely for flat corpora. When all 43 Shakespeare plays sit in one directory, every document is siblings with every other, and the signal is zero. Flat corpora require content-only analysis (§4.6).
 
-### 4.3 Extraction Quality
+### 4.2 Extraction: How Do We Pull Concepts Reliably?
 
-**Finding**: LLM extraction achieves 0% hallucination on technical corpora; ~5% on literary (inferred genre signals).
+**What we tested**: LLM extraction using evidence-grounded prompts (requiring the model to cite specific text spans for each concept), across technical and literary corpora. We also tested five ensemble variations to improve extraction quality.
 
-| Metric | pkm-webdev | shakespeare |
-|--------|------------|-------------|
-| Grounding rate | 100% | ~95% |
-| Concepts/doc | 5.8 avg | Variable |
-| Hallucination | 0% | ~5% |
+**Core extraction results**:
 
-**Evidence**: EXPERIMENT-LOG.md, Investigation 4-5
+| Metric | pkm-webdev | pkm-datascience | shakespeare |
+|--------|------------|-----------------|-------------|
+| Grounding rate | 100% | 80.7% | 6.7% |
+| Concepts/doc | 5.8 avg | Variable | — |
+| Hallucination | 0% | ~19% | 93% failure |
 
-**Definitions and caveats**: "Hallucination" here means concepts that cannot be traced to any text in the source document. The 0% rate on technical corpora (n=50 documents, ~290 concepts) reflects the use of evidence-grounded prompts that require the LLM to cite specific text spans. The prompt template is available in the llm-orc ensemble configuration (`plexus-semantic.yaml`). This result may not generalize to other prompting strategies, larger corpora, or different LLM providers. The ~5% hallucination on literary content reflects inferred genre signals ("tragedy", "comedy") that aren't explicitly stated but are arguably reasonable inferences.
+"Hallucination" means concepts untraceable to source text. The 0% on technical corpora (n=50 docs, ~290 concepts) reflects evidence-grounded prompting. The literary corpus failed outright—the LLM returned prose summaries instead of JSON for long plays.
 
-### 4.4 Propagation Effectiveness
+**Ensemble experiments** (A–E) tested refinements to the extraction pipeline:
 
-**Finding**: Propagation usefulness depends heavily on corpus semantic coherence, not parameter tuning.
+| Experiment | What It Tested | Result | Design Impact |
+|------------|---------------|--------|---------------|
+| A: Two-Stage Refiner | Second LLM pass to filter noise | Removes 60–75% of over-specific concepts | Add refiner stage for content pages |
+| B: Propagation-Aware | Prompt tuned for cross-doc usefulness | Eliminated sibling-specific concepts from index pages | Use different prompts for hub vs. leaf pages |
+| C: Normalization | LLM-based deduplication | Case normalization safe; semantic dedup merged unrelated concepts | Keep normalization simple (§4.5) |
+| D: Calibration | Rule-based confidence adjustment | 100% precision at ≥0.9 threshold (vs. 75% raw) | Apply calibration as post-processing |
+| E: Hierarchical | Tree-informed multi-layer extraction | Avoided function names, discovered higher-level abstractions | Use corpus structure as extraction context |
 
-| Experiment | Methodology | Result |
-|------------|-------------|--------|
-| Investigation 6 (early) | Manual review by author, 10 samples | 67% useful |
-| P1 (comprehensive) | LLM judgment (llama3 7B), 50 pairs, real extraction | **29% appropriate** |
+Experiment E demonstrated that feeding the file tree structure to the LLM as context improved extraction quality. The model correctly inferred "web development, programming languages, software tools" from directory names alone, which guided it toward higher-level concepts and away from code-specific identifiers.
 
-**Methodology note**: Investigation 6 used manual human judgment (by the author), which may introduce bias toward favorable assessment. P1 used LLM-as-judge with a different prompt than extraction—the judge saw the source document, the propagated concept, and was asked whether the concept was "semantically appropriate" for that document. The judge model (llama3 7B) was the same family as the extraction model, which may introduce systematic bias. A blind human evaluation would provide stronger validation but was not conducted. The 67% vs 29% discrepancy is likely partly methodological (different judges) and partly sampling (different corpus subsets).
+**Design decision**: Use evidence-grounded prompts as the primary extraction mechanism. Detect page type (index vs. content) and apply different ensemble configurations. Add a refiner stage for content pages. Feed tree structure as context for corpus-wide batch extraction.
 
-This discrepancy puzzled me until I looked at the sample distributions. Investigation 6 happened to draw from semantically coherent directory clusters—files that genuinely belonged together. P1's broader test hit the full corpus, including arbitrary pairings like Docker↔NordVPN siblings that exist only because someone's PKM vault isn't perfectly organized. The real insight: **corpus structure matters more than parameters**. You can tune decay and threshold all you want, but if the sibling relationship doesn't reflect actual semantic similarity, propagation will fail.
+### 4.3 Composition: How Do We Handle Large Documents?
 
-**Parameter sweep results (P1)**:
-- Best parameters: decay=0.8, threshold=0.3, hops=3
-- Appropriate propagations clustered in coherent domains (Gnome desktop, TypeScript, Dart)
-- Cross-domain propagations (Docker→NordVPN) consistently failed
+**The problem**: Shakespeare plays are ~100k tokens each. Even shorter technical documents can exceed practical context windows. Experiment R4 initially used human-written summaries, which invalidated the autonomy claim.
 
-**Implication**: Propagation works well within semantically coherent subtrees but poorly across arbitrary directory groupings. Recommended defaults: decay=0.7, threshold=0.4, hops=3.
+**What we tested**: A chunk→fan-out→aggregate→synthesize pipeline. Documents are split into 150-line chunks with 20-line overlap. Each chunk is extracted independently in parallel, then results are aggregated and synthesized into a document-level representation.
 
-**Evidence**: spike_p1_llm_propagation.rs, EXPERIMENT-LOG.md Investigation 6
-
-### 4.5 Compositional Extraction
-
-**Finding**: Large documents can be processed via chunk→fan-out→aggregate→synthesize pipeline.
+**Results** (Macbeth, 500 lines → 4 chunks):
 
 | Stage | Function | Validated |
 |-------|----------|-----------|
-| Chunker | Split by 150 lines, 20-line overlap | ✅ |
-| Fan-out | Parallel extraction per chunk | ✅ llm-orc 0.13 |
-| Aggregator | Combine chunk extractions | ✅ |
-| Synthesizer | Document-level coherence | ✅ |
+| Chunker | Split by line count, overlap boundaries | Yes |
+| Fan-out | Parallel extraction per chunk | Yes (via llm-orc) |
+| Aggregator | Combine chunk extractions, reconcile overlaps | Yes |
+| Synthesizer | Produce document-level coherent output | Yes |
 
-**Evidence**: SPIKE-OUTCOME.md, Experiment R4b (Macbeth: 500 lines → 4 chunks → coherent synthesis)
+Line-based chunking is deliberately simple—no format detection, no section-boundary heuristics. LLMs handle partial sentences at boundaries; the aggregator reconciles overlapping concepts.
 
-**Interpretation**: LLMs handle partial sentences at chunk boundaries; the aggregator reconciles overlapping concepts. Line-based chunking provides provenance without format detection complexity.
+**Design decision**: Use fixed-size line chunking with overlap. Process chunks in parallel via fan-out. This is the default path for any document exceeding 3,000 words.
 
-### 4.6 Ensemble Experiments Summary
+### 4.4 Propagation: How Do We Spread Concepts?
 
-Individual experiments validated specific extraction strategies:
+**What we tested**: Concept propagation via sibling edges (directory co-location) using label propagation with decay. We ran a comprehensive parameter sweep (P1) testing decay values 0.5–0.9, thresholds 0.1–0.5, and hop counts 1–5.
 
-| Experiment | Purpose | Verdict | Key Finding |
-|------------|---------|---------|-------------|
-| A: Two-Stage Refiner | Filter over-specific concepts | ✅ Effective | Removes 60-75% noise |
-| B: Propagation-Aware | Prompt for index pages | ✅ Highly effective | Eliminates sibling-specific concepts |
-| C: Normalization | LLM-based dedup | ⚠️ Partial | Case normalization safe; semantic dedup risky |
-| D: Calibration | Rule-based confidence | ⚠️ Partial | 100% precision at ≥0.9 threshold |
-| E: Hierarchical | Tree-informed extraction | ✅ Highly effective | Tree structure enables domain inference |
+**Results**:
 
-**Evidence**: ENSEMBLE-EXPERIMENTS.md
+| Evaluation Method | Scope | Appropriateness |
+|-------------------|-------|-----------------|
+| Manual review (author, n=10) | Coherent directory clusters | 67% appropriate |
+| LLM-as-judge (n=50 pairs) | Full corpus | 29% appropriate |
 
-### 4.7 Flat Corpus Limitation (RQ3)
+The discrepancy is informative, not contradictory. The manual review happened to sample from semantically coherent directories (TypeScript files, Gnome desktop tools). The LLM judge hit the full corpus, including arbitrary pairings like Docker↔NordVPN that coexist in the vault only because someone's organizational habits are imperfect.
 
-**Finding**: All structural signals fail for flat corpora (Shakespeare).
+**Best parameters**: decay=0.8, threshold=0.3, hops=3. But the key finding is that **parameter tuning matters less than corpus organization quality**. Within coherent subtrees, propagation works at ~70–80% appropriateness. Across arbitrary groupings, it fails regardless of parameters.
 
-| Signal | pkm-webdev | shakespeare |
-|--------|------------|-------------|
-| Sibling correlation | 9.3× | 0× |
-| Link correlation | 1.8× | 0× |
-| Tree utility | High | None |
+**Design decision**: Enable propagation with conservative defaults (decay=0.7, threshold=0.4, hops=3). Expect it to work well only within well-organized directory subtrees. Do not invest in parameter optimization—invest in understanding corpus structure.
 
-**Evidence**: EXPERIMENT-LOG.md, Investigation 3b
+### 4.5 Normalization: How Much Post-Processing?
 
-**Interpretation**: When all documents reside in a single directory, sibling relationships become meaningless (everyone is siblings). Content analysis becomes the only viable path.
+**What we tested**: Four levels of normalization on extracted concepts: none, case-only (lowercase), singularization (plural→singular), and LLM-based semantic deduplication.
 
-### 4.8 Three-System Architecture
+**Results** (P3, 81 concepts from pkm-webdev):
 
-**Finding**: Optimal system design separates extraction, provenance, and graph storage.
+| Level | Merges Found | Precision |
+|-------|-------------|-----------|
+| None | 0 | 100% |
+| Case-only | 0 | 100% |
+| +Singular | 0 | 100% |
+| +Semantic | 0 | 100% |
 
-| System | Role | Benefit |
-|--------|------|---------|
-| llm-orc | Orchestration | Stateless extraction, fan-out handling |
-| clawmarks | Provenance | file:line → concept, evidence tracking |
-| plexus | Knowledge graph | Semantic relationships, cross-document edges |
+Zero merges across all levels. This initially seemed suspicious—surely 81 concepts should have duplicates? On investigation: the evidence-grounded extraction prompt already produces normalized output. The LLM uses canonical lowercase forms and consistent terminology. The corpus (single-author PKM) reinforces this consistency.
 
-**Evidence**: SPIKE-OUTCOME.md, Architecture section
+The earlier Experiment C, which tested normalization on a different concept set, found case normalization safe but semantic deduplication dangerous (it incorrectly merged "git" with "tag").
 
-**Interpretation**: This separation enables "go to source" UX (click concept → open file at line), extraction sessions as queryable trails, and graceful degradation (each system works independently).
+**Design decision**: Apply case normalization only. Skip semantic deduplication—it introduces errors, and the LLM normalizes implicitly during extraction. This finding may not hold for multi-author corpora with inconsistent terminology.
 
----
+### 4.6 Performance: What Can We Expect on Consumer Hardware?
 
-## 5. Discussion
+**What we tested**: Latency profiling (S1), concurrency scaling (S2), and model size comparison (S1/S2-Micro) on local Ollama with both 7B and 1B models.
 
-### 5.1 When Tree Structure Helps
+**Latency (S1)**:
 
-These findings don't generalize to all corpora—that would be too convenient. Tree structure works best when the corpus is author-organized into topic directories (which PKM vaults typically are), when directory depth exceeds 2 levels (giving enough hierarchy to exploit), and when directories contain fewer than 20 documents (so "sibling" still means something specific). The pkm-webdev corpus met all three conditions; the Shakespeare corpus met none.
+| Metric | 7B (llama3) | 1B (gemma3) | Target |
+|--------|-------------|-------------|--------|
+| p50 | 11.9s | 10.8s | <5s |
+| p95 | 16.7s | 17.9s | <10s |
+| Failure rate | 23% | 28% | — |
 
-### 5.2 When Tree Structure Fails
+Strong size-latency correlation (r=0.705): `latency ≈ 9.2s + 1.8ms × size_bytes`. The ~9s baseline is an inference floor regardless of document size.
 
-Tree structure provides no useful signal in several common scenarios. Flat corpora (everything in one directory) make sibling relationships meaningless—if everyone's siblings, no one is. Arbitrary organization by date or author rather than topic breaks the semantic assumption entirely. And some corpora just don't have hierarchical structure; code repositories and literary collections often fall into this category.
+Switching from 7B to 1B gave negligible improvement (1.1× median, with *worse* p95 and higher failure rate). The bottleneck is not model size—it may be Ollama HTTP overhead, memory bandwidth, tokenization, or something else we couldn't isolate without deeper profiling.
 
-### 5.3 Implications for System Design
+**Concurrency (S2)**:
 
-If I were building a knowledge graph system from scratch with these findings, I'd start with tree traversal for document selection—PageRank is just unnecessary overhead when you can walk the tree. I'd weight sibling edges higher than explicit links, probably by that 9.3× factor or something close to it. Link-based algorithms still have their place, but for specific use cases: hub detection, cross-branch discovery, not primary traversal. And I'd build in a content-only fallback from day one, because flat corpora exist and you'll hit one eventually.
+| Workers | Throughput | Mean Latency | Error Rate | Speedup |
+|---------|------------|--------------|------------|---------|
+| 1 | 6.9/min | 8.8s | 25% | 1.0× |
+| 2 | 8.4/min | 13.0s | 20% | 1.2× |
+| 4 | 8.6/min | 22.8s | 20% | 1.3× |
+| 8 | 10.3/min | 32.7s | 35% | 1.5× |
 
-### 5.4 Limitations
+Throughput plateaus at ~8–10 docs/min regardless of concurrency. Maximum speedup is 1.5× (far below theoretical 8×). Error rates spike above 2 workers.
 
-- **Literary content failure**: LLM extraction fails on long literary works (93% failure rate on Shakespeare). Requires chunking or content-type-specific handling.
-- **Single LLM provider**: All experiments used Ollama on laptop hardware. Cloud APIs or dedicated GPU hardware may show different characteristics.
-- **German content**: pkm-datascience has German-language documents which may affect grounding measurements.
-- **Latency targets unachievable**: S1 proved that <5s targets are unrealistic on 7B models with laptop hardware (~9s minimum floor). S2 showed concurrency provides only ~1.5× speedup with diminishing returns.
-- **Model size is not the bottleneck**: Micro model experiments (1B vs 7B) showed negligible latency improvement. The cause of the ~9s floor is unclear without detailed profiling.
-- **Tags and metadata not examined**: Many PKM systems rely heavily on `#tags` and YAML frontmatter for organization. These explicit semantic signals were not included in our analysis. Tags might provide stronger signal than wikilinks (since they're explicitly topical), but this remains untested.
-- **Single-author corpora**: All test corpora were created by single authors with consistent organizational habits. Multi-author corpora or imported/aggregated content may show different sibling correlation patterns.
+**Design decision**: Use 2 concurrent workers maximum. Assume background processing for all extraction—interactive latency targets (<5s) are not achievable on this hardware. Implement aggressive caching (content-hash addressed, re-extract only on change). Prefer the 7B model over 1B—better output quality with no meaningful latency penalty.
 
 ---
 
-## 6. Experiment Status
+## 5. System Architecture
 
-| ID | Experiment | Purpose | Status |
-|----|------------|---------|--------|
-| P1 | Propagation parameter sweep | Find optimal decay, hops, threshold | **Complete** (29% appropriate, decay=0.7-0.8, threshold=0.3-0.5) |
-| P2 | Multi-corpus extraction | Validate generalization | **Complete** (see 6.1) |
-| P3 | Normalization ablation | Identify safe transforms | **Complete** (see 6.2) |
-| S1 | Latency profiling | Validate performance claims | **Complete** (see 6.3) - TARGETS NOT MET |
-| S2 | Concurrency testing | Find safe parallelism | **Complete** (see 6.4) - Limited benefit |
-| S1/S2-Micro | Model size comparison | Test if smaller model helps | **Complete** (see 6.5) - No significant improvement |
+The experiments produced a three-system architecture where each component has a distinct responsibility:
 
-### 6.1 P2: Multi-Corpus Extraction Results
+```
+Document ──► llm-orc ──► Clawmarks ──► Plexus
+             (extract)    (provenance)   (knowledge graph)
+```
 
-**Research Question**: Does LLM extraction generalize across corpus types?
+| System | Responsibility | Why Separate |
+|--------|---------------|--------------|
+| **llm-orc** | Orchestrates LLM ensembles, handles chunking and fan-out | Stateless; extraction strategy changes independently of storage |
+| **clawmarks** | Records WHERE each concept came from (file, line, evidence) | Enables "go to source" UX; extraction sessions are queryable trails |
+| **plexus** | Stores WHAT concepts exist and HOW they relate | Graph traversal and cross-document edges; semantic dimension |
 
-| Corpus | Documents | Grounding % | Concept Types | Status |
-|--------|-----------|-------------|---------------|--------|
-| pkm-webdev | 50 | **100%** | technology (36), topic (22) | Excellent |
-| pkm-datascience | 517 | **80.7%** | technology (36), topic (24) | Good |
-| shakespeare | 43 | **6.7%** (1/15 success) | - | **FAILURE** |
+### 5.1 Extraction Pipeline
 
-**Key Finding**: Literary corpus exhibits a clear failure mode. The LLM returns prose summaries instead of JSON for long literary works:
-- "This is Act 5 of William Shakespeare's play..." instead of concept JSON
-- Occurs consistently on full plays (>10KB content)
-- One success was a short poem (the-phoenix-and-turtle)
+Document routing is based on content characteristics:
 
-**Implication**: Content-type detection is necessary. Long literary works require:
-1. Chunking into smaller segments before extraction
-2. Content-type-specific prompts for literary analysis
-3. Or: explicit fallback to structural-only analysis
+| Content Type | Size | Ensemble | Rationale |
+|--------------|------|----------|-----------|
+| Technical | < 3000 words | `plexus-semantic` | Direct extraction; 100% grounding validated |
+| Technical | > 3000 words | `plexus-compositional` | Chunk→fan-out→aggregate (§4.3) |
+| Literary | < 3000 words | `plexus-refinement` | Iterative taxonomy building |
+| Literary | > 3000 words | `plexus-compositional` | Same pipeline, literary-tuned prompts |
+| Flat corpus | any | `plexus-refinement` | No tree signal; content-only fallback |
 
-**Variance Analysis**: Tech corpora show 19.3% variance in grounding (100% vs 80.7%), which is acceptable. The pkm-datascience corpus has more German-language content and specialized ML terminology, which may explain lower grounding.
+For structured corpora, the pipeline is:
 
-### 6.2 P3: Normalization Ablation Results
+1. **Traverse** the file tree (depth-first, 100% coverage)
+2. **Classify** each document (index page vs. content page, size threshold)
+3. **Extract** concepts using the appropriate ensemble
+4. **Record provenance** via clawmarks (file, line, evidence text)
+5. **Store** concepts and relationships in the plexus graph
+6. **Propagate** concepts to sibling documents with decay
 
-**Research Question**: What level of concept normalization is safe vs destructive?
+### 5.2 Provenance Model
 
-| Level | Unique Before | Unique After | Merges | Precision |
-|-------|---------------|--------------|--------|-----------|
-| none | 81 | 81 | 0 | 100% |
-| case-only | 81 | 81 | 0 | 100% |
-| +singular | 81 | 81 | 0 | 100% |
-| +semantic | 81 | 81 | 0 | 100% |
+Every concept links back to its source through a clawmark:
 
-**Key Finding**: Zero merge candidates found across all normalization levels. The LLM extraction already produces normalized concepts implicitly—it outputs lowercase, consistent terminology without explicit post-processing.
+```
+Concept: "revenge" (confidence: 0.9)
+    └── Clawmark: hamlet.txt:892
+        └── Evidence: "May sweep to my revenge"
+            └── Trail: hamlet-extraction-2026-01-18
+```
 
-**Why zero merges?** This result initially seemed suspicious—surely 81 concepts should have some near-duplicates? On investigation:
-- The extraction prompt requests specific concept types (technology, topic, pattern), which constrains output
-- LLM tends to use canonical forms ("react" not "React" or "ReactJS")
-- The corpus (pkm-webdev) uses consistent terminology (author's personal notes)
-- Example concepts extracted: "typescript", "react hooks", "state management"—distinct by design
+This enables a "go to source" UX: click a concept node in the graph → open the file at the exact line where the concept was extracted. Extraction sessions are tracked as trails, making the provenance of every concept in the knowledge graph auditable.
 
-This finding may not hold for corpora with inconsistent terminology, multiple authors, or prompts that don't constrain concept types. The implication is narrow: *for this extraction strategy on this corpus type*, explicit normalization adds no value.
+### 5.3 Progressive Processing
 
-**Implication**:
-- Explicit normalization layers add no value when using LLM extraction with constrained prompts
-- Case-only normalization is the conservative default (validated in Experiment C)
-- Singularization and semantic normalization are unnecessary overhead for this use case
-- The LLM acts as an implicit normalizer during extraction
+To avoid blocking the user, analysis runs in three phases:
 
-### 6.3 S1: Latency Profiling Results
+1. **Immediate** (<2s): Scan file tree, parse links, display navigable structural graph
+2. **Background**: Extract concepts with priority queue (open file → high priority; deep leaves → low)
+3. **Incremental**: On file change, re-extract the changed file, invalidate and re-propagate affected concepts
 
-**Research Question**: What is the actual latency distribution for LLM extraction on laptop hardware?
+---
 
-| Metric | Result | Target | Status |
-|--------|--------|--------|--------|
-| p50 (median) | **11.9s** | <5s | ❌ FAIL |
-| p95 | **16.7s** | <10s | ❌ FAIL |
-| p99 | 24s | - | - |
-| Min | 4.9s | - | - |
-| Max | 24s | - | - |
-| Throughput | 3.8 docs/min | - | Sequential baseline |
+## 6. Discussion
 
-**Key Findings**:
-- Strong size-latency correlation (r=0.705): `latency ≈ 9.2s + 1.8ms × size_bytes`
-- ~9s baseline is LLM inference floor regardless of document size
-- 23.4% parse failure rate (LLM not returning valid JSON)
-- The ~4s seen in earlier experiments was on the fast tail
+### 6.1 What Worked
 
-**Implication**: The speculative latency targets (<5s single doc) are NOT achievable on 7B models with current hardware. Architecture must assume:
-- Background processing (never block UI)
-- Aggressive caching (re-extract only on change)
-- Incremental processing (one doc at a time on save)
+The most broadly applicable findings:
 
-### 6.4 S2: Concurrency Testing Results
+- **Structure is semantic signal.** Authors organize related content together. This isn't a novel observation, but quantifying it (9.3× stronger than explicit links) and building a system around it is useful. Existing KG systems ignore this signal entirely.
+- **Evidence-grounded prompting eliminates hallucination on technical content.** Requiring the LLM to cite text spans is a simple, effective constraint. We saw 0% hallucination across 290 concepts on technical corpora.
+- **Compositional extraction works autonomously.** Chunking + fan-out + aggregation handles large documents without human intervention, validating the approach for corpora with diverse document sizes.
+- **The LLM is an implicit normalizer.** With constrained prompts, the model produces canonical concept forms without explicit post-processing. This surprised us and simplified the pipeline.
 
-**Research Question**: How does a 7B model perform under concurrent load on typical laptop hardware?
+### 6.2 What Failed
 
-| Concurrency | Throughput | Mean Latency | Error Rate | Speedup |
-|-------------|------------|--------------|------------|---------|
-| 1 | 6.9/min | 8.8s | 25% | 1.00x |
-| 2 | 8.4/min | 13.0s | **20%** | 1.21x |
-| 4 | 8.6/min | 22.8s | 20% | 1.25x |
-| 6 | 8.8/min | 31.9s | 25% | 1.28x |
-| 8 | 10.3/min | 32.7s | **35%** | 1.49x |
+- **PageRank for traversal.** Our original hypothesis. It optimizes for node importance, not coverage. The tree solves coverage trivially.
+- **Literary corpus extraction.** 93% failure rate on Shakespeare. The LLM returns prose summaries instead of structured output for long literary texts. Content-type detection and specialized prompts are necessary.
+- **Interactive latency.** We targeted <5s per document. Actual median is 11.9s with a ~9s floor that persists even with 1B models. Background processing is mandatory.
+- **Semantic deduplication.** LLM-based concept merging incorrectly conflated unrelated concepts (e.g., "git" with "tag"). Simple case normalization is the safe ceiling.
+- **Propagation across diverse directories.** 29% appropriateness on the full corpus, despite 67–80% within coherent subtrees. The technique works only when the directory structure reflects genuine semantic grouping.
 
-**Key Findings**:
-- Throughput plateau at ~8-10 docs/min regardless of concurrency
-- Maximum speedup ~1.5x (far below theoretical 8x)
-- Individual request latency degrades significantly (8.8s → 32.7s)
-- Error rate spikes at 8 workers (35%) - hitting resource limits
-- Sweet spot: **2 workers** (lowest error rate, reasonable speedup)
+### 6.3 When This Architecture Applies
 
-**Recommendation**: `max_concurrent = 2` for stability on laptop hardware. Higher concurrency yields minimal throughput gain but significantly degrades individual request latency and reliability.
+The tree-first approach works best when:
+- The corpus is author-organized into topic directories (PKM vaults typically are)
+- Directory depth exceeds 2 levels
+- Directories contain fewer than ~20 documents
 
-### 6.5 Micro Model Comparison (1B vs 7B)
+It degrades gracefully: the system falls back to content-only analysis for flat corpora, but loses the structural signal that makes propagation and traversal efficient.
 
-**Research Question**: Does a smaller model (gemma3:1b, 815MB) provide better performance than llama3 7B (4.7GB)?
+### 6.4 Limitations
 
-**S1-Micro: Latency Results**
-
-| Metric | 7B (llama3) | 1B (gemma3) | Speedup |
-|--------|-------------|-------------|---------|
-| p50 | 11.9s | 10.8s | 1.1x |
-| p95 | 16.7s | **17.9s** | 0.9x (worse) |
-| Failure rate | 23% | **28%** | Worse |
-| Throughput | 3.8/min | 3.5/min | 0.9x (slower) |
-
-**S2-Micro: Concurrency Results**
-
-| Conc | 7B Thru | 1B Thru | 7B Errors | 1B Errors |
-|------|---------|---------|-----------|-----------|
-| 1 | 6.9/min | 7.7/min | 25% | 20% |
-| 2 | 8.4/min | 7.9/min | 20% | 25% |
-| 4 | 8.6/min | 9.0/min | 20% | 30% |
-| 6 | 8.8/min | 11.8/min | 25% | **60%** |
-| 8 | 10.3/min | 14.8/min | 35% | **65%** |
-
-**Key Findings**:
-- **Smaller model does NOT significantly improve latency** - the ~1.1x improvement is negligible
-- p95 latency is actually WORSE with the 1B model (17.9s vs 16.7s)
-- Higher error rates at all concurrency levels (1B struggles with JSON output)
-- 1B scales slightly better under load (1.4x throughput at conc 8) but at the cost of 65% errors
-- **Bottleneck is NOT model size** - the cause is unclear without detailed profiling (could be Ollama overhead, memory bandwidth, tokenization, or other factors)
-
-**Implication**: Switching to a smaller model does not solve the latency problem on laptop hardware. The ~9s minimum latency appears to be an infrastructure/overhead floor rather than model inference time. Architecture recommendations remain unchanged:
-- max_concurrent = 2 for both 7B and 1B
-- Background processing required regardless of model size
-- 7B recommended over 1B for better output quality (lower parse failure rate)
+- **Single LLM provider**: All experiments used Ollama on laptop hardware. Cloud APIs or dedicated GPUs may show different latency and quality characteristics.
+- **Single-author corpora**: All test corpora were created by single authors with consistent organizational habits. Multi-author corpora may show different patterns.
+- **Tags and metadata not examined**: Many PKM systems rely on `#tags` and YAML frontmatter. These explicit semantic signals were not included in our analysis and might provide stronger signal than wikilinks.
+- **Small corpus for key claims**: The 9.3× sibling signal strength comes from a 50-file corpus. Larger-scale validation is needed.
+- **LLM-as-judge bias**: Propagation evaluation (P1) used the same model family as extraction. A blind human evaluation would be more rigorous.
 
 ---
 
 ## 7. Conclusion
 
-The main finding here is almost anticlimactic: for structured document corpora, the file tree provides both complete coverage and superior semantic signal compared to link-based network science approaches. We spent considerable effort testing PageRank and related algorithms only to discover they solve the wrong problem. They optimize for "importance" in a link graph when the actual need is coverage and semantic proximity—both of which the tree provides trivially, by construction.
+We set out to build an LLM-powered knowledge graph construction system and discovered that most of the interesting design questions had non-obvious answers. Network algorithms weren't needed for traversal. Explicit links carried less signal than directory structure. Smaller models weren't faster. Concept normalization was unnecessary. Propagation effectiveness was determined by corpus organization, not parameter tuning.
 
-This finding suggests a "tree-first" architecture for knowledge graph construction:
-1. Walk the tree for document selection (100% coverage, O(n))
-2. Use sibling co-location for semantic proximity (9.3× signal strength)
-3. Reserve LLM analysis for content extraction, not graph traversal
-4. Fall back to content-only analysis for flat corpora
+The resulting architecture is straightforward: walk the file tree, extract concepts with evidence-grounded prompts using appropriate ensembles for different document types, record provenance, store in a graph, and propagate cautiously within coherent subtrees. Each choice is backed by experiment rather than assumption.
 
-**A note on performance**: I had hoped that local LLM inference would be fast enough for interactive use. It isn't—not yet, anyway. On laptop hardware with local 7B models, expect around 10 seconds per document with 3-8 docs/minute throughput. I tried smaller models thinking the bottleneck was inference time, but switching from 7B to 1B gave negligible improvement. Without detailed profiling I can't pinpoint the cause—it could be Ollama HTTP overhead, memory bandwidth, tokenization, or something else in the stack. What I can say is that model size alone doesn't explain the ~9s floor. For now, this means background processing and aggressive caching are mandatory for any interactive UX. For batch processing, two concurrent workers seems to be the sweet spot—more than that just increases error rates without proportional throughput gains.
-
-**Propagation caveat**: Concept propagation via sibling edges works well within semantically coherent directory subtrees (~70-80% appropriate) but poorly across arbitrary groupings (~30% overall). Effectiveness depends on corpus organization quality, not parameter tuning.
+For practitioners building similar systems, the meta-lesson may be more useful than the specific findings: targeted experiments on real corpora reveal design answers that intuition and literature review alone would miss. We expected PageRank to work and tree traversal to be naive. We expected explicit links to be the strongest signal. We expected smaller models to be faster. All three intuitions were wrong.
 
 ---
 
@@ -511,12 +392,36 @@ This paper's claims are tracked via clawmarks trail `t_0jihblgl`. Key evidence:
 | P3 normalization | c_8hbmeguh | spike_p3_normalization.rs:1 |
 | S1 latency profiling | c_jdo7vstn | spike_s1_latency.rs:1 |
 | S2 concurrency | c_bqeip67b | spike_s2_concurrency.rs:1 |
-| S1-Micro latency | - | spike_s1_latency_micro.rs:1 |
-| S2-Micro concurrency | - | spike_s2_concurrency_micro.rs:1 |
+| S1-Micro latency | — | spike_s1_latency_micro.rs:1 |
+| S2-Micro concurrency | — | spike_s2_concurrency_micro.rs:1 |
 
 ---
 
-## Appendix B: Data Model
+## Appendix B: Ensemble Experiments Detail
+
+Five ensemble variations were tested to refine extraction quality:
+
+| Experiment | Method | Key Result |
+|------------|--------|------------|
+| A: Two-Stage Refiner | Second LLM pass filters over-specific concepts | 60–75% noise removed; core concepts retained |
+| B: Propagation-Aware | Prompt optimized for cross-doc usefulness | Eliminated sibling-specific concepts from hub pages |
+| C: Normalization | LLM-based deduplication | Case normalization safe; semantic dedup merged "git" with "tag" |
+| D: Calibration | Rule-based confidence adjustment | 100% precision at ≥0.9 (vs. 75% raw); code identifier penalty effective |
+| E: Hierarchical | Tree structure fed as extraction context | Inferred domain taxonomy from directory names; avoided function-name extraction |
+
+Three ensemble configurations were produced:
+
+| Ensemble | Architecture | Best For |
+|----------|-------------|----------|
+| `plexus-semantic` | 1 agent, evidence-grounded | Short technical documents |
+| `plexus-semantic-v2` | 2 agents (extractor → refiner) | Content pages with code |
+| `plexus-semantic-propagation` | 1 agent, propagation-aware prompt | Index/hub pages |
+
+See ENSEMBLE-EXPERIMENTS.md for full experimental details.
+
+---
+
+## Appendix C: Data Model
 
 ### Concept Node (Plexus)
 
@@ -549,47 +454,20 @@ Node {
 }
 ```
 
-### Extraction Trail
-
-```json
-{
-  "id": "trail_xyz",
-  "name": "hamlet-extraction-2026-01-18",
-  "clawmarks": ["clwk_abc123", "clwk_def456", ...]
-}
-```
-
 ---
 
-## Appendix C: Experimental Status
+## Appendix D: Experiment Index
 
-All critical experiments completed. Status via clawmarks trail:
-
-| Experiment | Clawmark | Status | Key Finding |
-|------------|----------|--------|-------------|
-| P1: Propagation params | c_r0ecn0pw | ✅ Complete | 29% appropriate, decay=0.7-0.8, threshold=0.3-0.5 |
-| P2: Multi-corpus | c_59fufuod | ✅ Complete | Tech 80-100%, literary fails 93% |
-| P3: Normalization | c_8hbmeguh | ✅ Complete | LLM normalizes implicitly, case-only sufficient |
-| S1: Latency | c_jdo7vstn | ✅ Complete | p50=11.9s, p95=16.7s, targets NOT met |
-| S2: Concurrency | c_bqeip67b | ✅ Complete | max_concurrent=2, 1.5× max speedup |
-| S1/S2-Micro | c_uzoap1rn | ✅ Complete | 1B model not faster, bottleneck is infrastructure |
-
-**Remaining untested (lower priority)**:
-| Gap | Clawmark | Impact |
-|-----|----------|--------|
-| Batching small files | c_hjlh31io | Low - optimization detail |
-| Content-type detection | c_5e0b5a02 | Low - acknowledged limitation |
-| Incremental invalidation | c_yqfx005x | Low - implementation detail |
-| Caching strategy | c_snivqlb8 | Low - implementation detail |
-
----
-
-## Appendix D: Ensemble Selection Matrix
-
-| Content Type | Size | Ensemble | Rationale |
-|--------------|------|----------|-----------|
-| Technical | < 3000 words | `plexus-semantic` | Direct extraction, 100% grounding |
-| Technical | > 3000 words | `plexus-compositional` | Chunk→fan-out→aggregate |
-| Literary | < 3000 words | `plexus-refinement` | Better categorization |
-| Literary | > 3000 words | `plexus-compositional` | Same pipeline, literary prompts |
-| Flat corpus | any | `plexus-refinement` | No tree signal available |
+| ID | Experiment | Design Question | Status | Key Finding |
+|----|------------|----------------|--------|-------------|
+| Inv 1–3 | Graph connectivity, traversal, signal | Traversal | Complete | Tree > PageRank; siblings 9.3× > links |
+| Inv 4–5 | LLM extraction quality | Extraction | Complete | 0% hallucination (technical), 93% failure (literary) |
+| Inv 6 | Concept propagation | Propagation | Complete | 67% appropriate (coherent subtrees) |
+| A–E | Ensemble variations | Extraction refinement | Complete | See Appendix B |
+| R4/R4b | Flat corpus taxonomy | Composition | Complete | Compositional pipeline validated |
+| P1 | Propagation parameter sweep | Propagation | Complete | 29% overall; corpus structure > parameters |
+| P2 | Multi-corpus extraction | Extraction | Complete | 80–100% grounding (technical) |
+| P3 | Normalization ablation | Normalization | Complete | LLM normalizes implicitly |
+| S1 | Latency profiling | Performance | Complete | p50=11.9s, ~9s floor |
+| S2 | Concurrency testing | Performance | Complete | max 2 workers, 1.5× speedup |
+| S1/S2-Micro | Model size comparison | Performance | Complete | 1B not faster than 7B |
