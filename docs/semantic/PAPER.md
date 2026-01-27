@@ -96,33 +96,101 @@ We conducted 18 experiments across three corpora of different structure and cont
 
 ## 2. Related Work
 
-### 2.1 Existing Knowledge Graph Construction Systems
+Plexus sits at the intersection of several research areas that have not previously been integrated: knowledge graph construction, cognitive context in AI-assisted work, flow theory, external cognition, self-reinforcing memory models, computational movement analysis, and tiered event processing. We survey each and identify the gap our system occupies.
 
-Recent systems share a common assumption: process every document with an LLM, then build relationships after the fact.
+### 2.1 Cognitive Context Loss in AI-Assisted Development
+
+The opacity problem (§1.1) is increasingly documented. Valett-Harper et al. [10] describe "material disengagement" in AI-assisted coding, where developers orchestrate code generation without comprehending the output, and propose post-hoc model recovery—essentially reconstructing understanding after the fact. Raychev et al. [11] measure a comprehension-performance gap in AI-assisted brownfield development: developers produce code effectively but cannot explain the resulting architecture. Radhakrishnan et al. [12] identify the measurement gap itself—despite growing evidence of cognitive cost, there are few empirical studies of cognitive load imposed by AI coding assistants.
+
+Industry data corroborates this. A 2025 survey [13] found 65% of developers cite missing context as their top concern with AI-generated code—more than hallucination or correctness. Only 3.8% report both low hallucination rates and high confidence shipping AI code without review.
+
+These findings motivate Plexus's core design: rather than recovering context post-hoc, maintain it continuously through a live structural representation that evolves alongside AI-assisted composition. Sweller's updated cognitive load theory [14] provides the theoretical mechanism: AI-generated code imposes extraneous cognitive load because its information structure is not aligned with the developer's existing schema. A live knowledge graph externalizes the structural relationships, reducing the load.
+
+### 2.2 External Cognition and Epistemic Tools
+
+The idea that external representations reduce cognitive burden has deep theoretical grounding. Kirsh and Maglio [15] distinguish epistemic actions (which change the agent's computational state, making mental computation easier) from pragmatic actions (which change the world toward a goal). In their Tetris experiments, players rotate pieces physically to simplify mental pattern-matching—an action that looks "wasteful" but is computationally efficient. A knowledge graph that externalizes structural relationships serves a similar function: it makes the relationships visible so the composer doesn't have to hold them in working memory.
+
+Hutchins [16] extends this to distributed cognition: cognitive processes are not confined to individual minds but distributed across people, artifacts, and environments. Crucially, Hutchins argues that tools do not merely "amplify" cognition—they enable qualitatively different cognitive processes using different skills. A developer with a live knowledge graph is not simply thinking harder about structure; they are engaging in a different kind of structural reasoning that relies on perceptual processing rather than memory retrieval.
+
+Scaife and Rogers [17] formalize three mechanisms by which external graphical representations support cognition: *computational offloading* (reducing working memory demands), *re-representation* (presenting information in a form better suited to the task), and *graphical constraining* (limiting the space of possible inferences). Plexus's graph visualization performs all three: it offloads structural tracking, re-represents linear composition as a network topology, and constrains attention to the semantically relevant neighborhood of the current work.
+
+Clark and Chalmers [18] provide philosophical grounding through the extended mind thesis: cognitive processes literally extend into the environment when external resources play the functional role that internal memory would otherwise play. By this account, Plexus is not a tool the composer uses—it is part of the composer's cognitive system.
+
+### 2.3 Flow State and Structural Feedback
+
+Csikszentmihalyi [19] identifies three conditions for flow: clear goals, immediate feedback, and challenge-skill balance. The second condition is directly relevant. Traditional development environments provide delayed structural feedback—the developer must actively query for dependencies, references, or call hierarchies. A live knowledge graph provides immediate, continuous structural feedback without requiring an explicit query.
+
+Dietrich [20] adds a neurological constraint: flow involves transient hypofrontality—the prefrontal cortex partially deactivates, reducing self-monitoring and analytical processing. This implies that structural feedback must be *ambient and peripheral* rather than demanding focused attention. A knowledge graph visualization that requires active reading would disrupt flow; one that operates at the level of peripheral awareness—shapes shifting, clusters forming, edges thickening—preserves it. Matthews et al. [21] study this design space for glanceable peripheral displays, finding that ambient information can maintain awareness without attentional capture.
+
+Digital audio workstations, 3D modeling tools, and game engines already provide this kind of live structural feedback. Waveforms evolve as musicians compose; wireframes respond as modelers sculpt; physics simulations run alongside level design. In each case, the structural representation co-evolves with the creative act. Software development has moved toward this with live linting and type checking, but these provide *correctness* feedback ("is this valid?"), not *structural* feedback ("what did this change connect to?"). A live knowledge graph occupies a different niche: it shows the semantic topology of the work as it emerges.
+
+### 2.4 Knowledge Graph Construction with LLMs
+
+Recent systems for LLM-based knowledge graph construction share a batch-processing assumption.
 
 | System | Approach | Design Assumptions |
 |--------|----------|-------------------|
 | **Microsoft GraphRAG** [1] | Entity extraction → community detection → hierarchical summaries | All docs processed; PageRank for importance ranking |
 | **LightRAG** [2] | Graph + embedding retrieval with incremental updates | All docs processed; no structural awareness |
 | **Neo4j LLM Graph Builder** [3] | Multi-LLM extraction to graph database | All docs processed; documents are atomic units |
+| **iText2KG** [22] | Zero-shot incremental extraction with four-module pipeline | Incremental but not real-time; no structural corpus awareness |
 
-All three treat documents as atomic, independent units. None exploit the organizational structure that already exists in the corpus. Our experiments test whether that structure is useful—and find that it often provides more signal than the extraction itself.
+All treat documents as atomic, independent units. None exploit organizational structure already present in the corpus. Pan et al. [23] survey the LLM-KG construction landscape comprehensively, covering multi-agent approaches (KARMA) and metacognitive prompting (Ontogenia), but none of the surveyed systems operate in real-time or integrate with a creative composition environment.
 
-### 2.2 Network Science in Document Analysis
+On the hallucination problem, Agrawal et al. [24] survey KG-LLM integration and find that knowledge graphs as external grounding demonstrably reduce LLM hallucination. Our evidence-grounded prompting approach (§4.2) is a specific implementation of this principle: requiring the LLM to cite text spans for each extracted concept achieves 0% hallucination on technical corpora.
 
-**InfraNodus** [4] applies network science (betweenness centrality, modularity) to PKM corpora. It builds co-occurrence graphs and identifies structural gaps between topic clusters. This is the closest prior work to our initial hypothesis that network algorithms would be the right traversal mechanism. Our experiments showed this hypothesis was wrong for structured corpora.
+**InfraNodus** [4] is the closest prior work to our initial approach. It applies network science (betweenness centrality, modularity) to knowledge management corpora, building co-occurrence graphs and identifying structural gaps. This informed our original hypothesis that network algorithms would be the right traversal mechanism. Our experiments showed this was wrong for structured corpora—the file tree provides stronger signal than network centrality (§4.1).
 
-### 2.3 Label Propagation
+### 2.5 Live and Incremental Knowledge Graphs
 
-Semi-supervised label propagation [5] spreads labels from annotated examples to unlabeled data. No existing knowledge graph system applies this to concept spreading across documents. We tested it and found it works within semantically coherent directory subtrees but not across arbitrary groupings.
+A few systems move beyond batch processing. **Graphiti** [25] (Zep, 2024–2025) builds knowledge graphs incrementally in real-time with a bi-temporal data model tracking both event occurrence and ingestion time. It combines semantic embeddings, BM25, and graph traversal for low-latency queries. However, Graphiti targets AI agent memory, not human creative practitioners—it has no visualization layer, no self-reinforcing edges, and no multi-frequency update model.
 
-### 2.4 Live Structural Feedback in Creative Tools
+Arenas-Guerrero et al. [26] demonstrate incremental KG construction using declarative RML mappings, achieving 315× less storage and 4.4× faster construction than full rebuilds. Zhu et al. [27] address continual KG embedding with incremental distillation, ordering new triples by graph distance and centrality. Both address the engineering of incremental updates but not the real-time composition use case.
 
-The idea that real-time structural visibility supports creative flow has precedent outside software engineering. Digital audio workstations display waveforms and spectrograms as musicians compose. 3D modeling tools show wireframes and topology alongside surfaces. Game engines render physics simulations live alongside level design. In each case, the structural representation evolves with the creative act, providing peripheral awareness that supports rather than interrupts flow.
+### 2.6 Self-Reinforcing and Memory-Inspired Knowledge Structures
 
-Software development tooling has moved in this direction with live linting, type checking, and test runners. But these provide correctness feedback ("is this valid?"), not structural feedback ("what did this change connect to?"). A live knowledge graph occupies a different niche: it shows the semantic topology of the work as it emerges, making visible the relationships that correctness tools ignore.
+Plexus's self-reinforcing edge model—where edges strengthen through use and decay without reinforcement—is inspired by Hebbian learning ("neurons that fire together wire together"). The closest existing system is **Kairos** [28] (NeurIPS 2025 Workshop), which implements three neuroplasticity operations on knowledge graphs: long-term potentiation (edge strengthening), long-term depression (temporal decay), and emergent connection formation from co-activation. Kairos adds validation-gated learning—consolidation occurs only when reasoning passes quality checks, preventing hallucination reinforcement. This is architecturally similar to our design, but applied to AI agent memory rather than creative composition environments.
 
-To our knowledge, no existing system provides a real-time, self-reinforcing knowledge graph integrated into a composition environment. The closest analogues are IDE features like "find references" and "call hierarchy"—but these are query-response tools, not ambient visualizations, and they operate only on code structure, not semantic relationships.
+The theoretical basis for beneficial forgetting comes from Bjork and Bjork [29], who distinguish storage strength (permanent) from retrieval strength (decays). Periodic forgetting builds higher storage strength on re-learning—a "desirable difficulty." In our system, edge decay serves an analogous function: concepts that are re-encountered after fading receive stronger reinforcement than concepts that were never forgotten, naturally surfacing the relationships that recur across the practitioner's work.
+
+Practical implementations of memory-inspired learning include spaced repetition systems. Settles and Meeder [30] develop half-life regression for predicting memory decay in language learning (deployed in Duolingo). Zaidi et al. [31] extend this with adaptive forgetting curves incorporating linguistic complexity. Our temporal decay function (exponential with weekly half-life) is deliberately simpler, but could be refined with similar complexity-aware models.
+
+### 2.7 Computational Movement Analysis and Choreographic Structure
+
+The movement/performance domain (§1.2, §5.3) connects to a body of work on computational Laban Movement Analysis and interactive performance systems.
+
+Fdili Alaoui et al. [32] integrate LMA experts into sensor selection and feature computation, showing that multimodal data (positional, dynamic, physiological) best characterizes Laban Effort qualities—Weight, Time, Space, and Flow. Garcia et al. [33] train HMM models for six Effort qualities, finding equi-affine features highly discriminant. These systems provide the "structural layer" input for a movement knowledge graph: they classify the low-level movement data into Laban-theoretic categories that become graph nodes.
+
+At the knowledge representation level, Raheb et al. [34] develop a dance ontology in OWL-2 based on Labanotation semantics, with Description Logic reasoning to extract new movement knowledge. El Raheb et al. [35] survey ontology-based dance knowledge management comprehensively. These ontologies provide a schema for the *conceptual* layer of a movement knowledge graph, but they are static representations—authored by experts, not emergent from live performance data.
+
+For real-time performance systems, Camurri et al. [36] describe EyesWeb, a platform for real-time analysis of expressive gesture in dance and music performance. Forsythe's choreographic objects [37] provide the conceptual foundation: choreographic structure as a formal system that can be computationally represented, manipulated, and visualized.
+
+No existing system combines these capabilities into a self-reinforcing graph that evolves through performance. The movement analysis systems classify gestures; the ontologies represent choreographic knowledge; the interactive systems respond in real-time. Plexus proposes unifying these into a single graph where performer-environment couplings strengthen through rehearsal, movement vocabulary clusters emerge from practice, and choreographic structure becomes visible not through notation but through the graph's accumulated memory of what happened and how it connected.
+
+### 2.8 Multi-Frequency Event Processing
+
+Our tiered update architecture (§5.3) has precedent in stream processing. The Lambda Architecture [38] processes data through parallel batch (high-latency, high-accuracy) and speed (low-latency, approximate) layers. Kreps [39] simplifies this to the Kappa Architecture where all processing is stream-based with replay for recomputation.
+
+Luckham [40] formalizes hierarchical event abstraction in Complex Event Processing: low-level events compose into higher-level complex events across different temporal windows. This is directly analogous to our multi-frequency model where token-level structural events compose into relational patterns, semantic concepts, and conceptual structures at increasing timescales.
+
+Baresi and Guinea [41] propose multi-layer monitoring with three processor types operating at different frequencies, the closest architectural precedent to our approach. Taylor et al. [42] address the specific challenge of applying semantic reasoning to streaming data—traditionally semantic approaches assume static data, while our semantic layer must operate incrementally on a continuously evolving corpus.
+
+### 2.9 Gap Analysis
+
+No existing system integrates all of these elements:
+
+| Capability | GraphRAG | Graphiti | Kairos | InfraNodus | **Plexus** |
+|------------|----------|----------|--------|------------|-----------|
+| LLM-based extraction | ✓ | ✓ | — | — | ✓ |
+| Incremental/real-time | — | ✓ | — | — | ✓ |
+| Self-reinforcing edges | — | — | ✓ | — | ✓ |
+| Evidence provenance | — | — | — | — | ✓ |
+| Multi-frequency updates | — | — | — | — | ✓ |
+| Creative composition UX | — | — | — | — | ✓ |
+| Content-agnostic (code, text, movement) | — | — | — | — | ✓ |
+| Flow-preserving ambient display | — | — | — | — | ✓ |
+
+The closest system to Plexus is Kairos, which shares the Hebbian edge model, but targets AI agent memory rather than human creative environments. Graphiti shares the real-time incremental approach but lacks self-reinforcement, provenance, and visualization. No existing system combines live structural feedback with a self-reinforcing knowledge graph in a creative composition environment.
 
 ---
 
@@ -465,6 +533,8 @@ For practitioners building similar systems, the meta-lesson may be more useful t
 
 ## References
 
+### Knowledge Graph Construction
+
 [1] Edge, D., Trinh, H., Cheng, N., Bradley, J., Chao, A., Mody, A., Truitt, S., & Larson, J. (2024). From Local to Global: A Graph RAG Approach to Query-Focused Summarization. *arXiv preprint arXiv:2404.16130*.
 
 [2] Guo, Z., Xia, L., Yu, Y., Ao, T., & Huang, C. (2025). LightRAG: Simple and Fast Retrieval-Augmented Generation. In *Findings of the Association for Computational Linguistics: EMNLP 2025*, pp. 10746-10761.
@@ -482,6 +552,88 @@ For practitioners building similar systems, the meta-lesson may be more useful t
 [8] Meta AI. (2024). Llama 3 Model Card. https://github.com/meta-llama/llama3/blob/main/MODEL_CARD.md
 
 [9] Ollama. (2024). Ollama: Run Large Language Models Locally. https://ollama.com/
+
+### Cognitive Context in AI-Assisted Development
+
+[10] Valett-Harper, M. et al. (2025). Lost in Code Generation: Reimagining the Role of Software Models in AI-driven Software Engineering. *arXiv preprint arXiv:2511.02475*.
+
+[11] Raychev, V. et al. (2025). Comprehension-Performance Gap in GenAI-Assisted Brownfield Development. *arXiv preprint arXiv:2511.02922*.
+
+[12] Radhakrishnan, A. et al. (2025). Towards Decoding Developer Cognition in the Age of AI Assistants. *arXiv preprint arXiv:2501.02684*.
+
+[13] Qodo. (2025). State of AI Code Quality in 2025. Industry Report.
+
+[14] Sweller, J. (2024). Cognitive load theory and individual differences. *Learning and Instruction*, 88.
+
+### External Cognition and Epistemic Tools
+
+[15] Kirsh, D. & Maglio, P. (1994). On Distinguishing Epistemic from Pragmatic Action. *Cognitive Science*, 18(4), 513-549.
+
+[16] Hutchins, E. (1995). *Cognition in the Wild.* MIT Press.
+
+[17] Scaife, M. & Rogers, Y. (1996). External Cognition: How Do Graphical Representations Work? *International Journal of Human-Computer Studies*, 45(2), 185-213.
+
+[18] Clark, A. & Chalmers, D. (1998). The Extended Mind. *Analysis*, 58(1), 7-19.
+
+### Flow State and Creative Feedback
+
+[19] Csikszentmihalyi, M. (1990). *Flow: The Psychology of Optimal Experience.* Harper & Row.
+
+[20] Dietrich, A. (2004). Neurocognitive mechanisms underlying the experience of flow. *Consciousness and Cognition*, 13(4), 746-761.
+
+[21] Matthews, T. et al. (2006). Designing and evaluating glanceable peripheral displays. In *Proc. DIS '06*, ACM.
+
+### LLM-Based Knowledge Graph Construction
+
+[22] Yao, Y. et al. (2024). iText2KG: Incremental Knowledge Graphs Construction Using Large Language Models. *arXiv preprint arXiv:2409.03284*.
+
+[23] Pan, S. et al. (2025). LLM-empowered Knowledge Graph Construction: A Survey. *arXiv preprint arXiv:2510.20345*.
+
+[24] Agrawal, M. et al. (2024). Can Knowledge Graphs Reduce Hallucinations in LLMs? A Survey. In *Proceedings of NAACL 2024*.
+
+### Incremental and Real-Time Knowledge Graphs
+
+[25] Zep. (2024-2025). Graphiti: Temporally-Aware Knowledge Graphs. https://github.com/getzep/graphiti
+
+[26] Arenas-Guerrero, J. et al. (2024). IncRML: Incremental Knowledge Graph Construction from Heterogeneous Data Sources. *Semantic Web Journal*.
+
+[27] Zhu, Y. et al. (2024). IncDE: Towards Continual Knowledge Graph Embedding via Incremental Distillation. In *Proceedings of AAAI 2024*.
+
+### Self-Reinforcing and Memory-Inspired Knowledge Structures
+
+[28] Kairos. (2025). Validation-Gated Hebbian Learning for Adaptive Agent Memory. *NeurIPS 2025 Workshop*. OpenReview: EN9VRTnZbK.
+
+[29] Bjork, R.A. & Bjork, E.L. (1992). A New Theory of Disuse and an Old Theory of Stimulus Fluctuation. In *From Learning Processes to Cognitive Processes*, Erlbaum.
+
+[30] Settles, B. & Meeder, B. (2016). A Trainable Spaced Repetition Model for Language Learning. In *Proceedings of ACL 2016*.
+
+[31] Zaidi, A. et al. (2020). Adaptive Forgetting Curves for Spaced Repetition Language Learning. In *AIED 2020*, Springer LNCS 12164, pp. 358-363.
+
+### Computational Movement Analysis and Choreographic Structure
+
+[32] Fdili Alaoui, S. et al. (2017). Seeing, Sensing and Recognizing Laban Movement Qualities. In *Proceedings of CHI 2017*, ACM.
+
+[33] Garcia, M. et al. (2020). Recognition of Laban Effort Qualities from Hand Motion. In *Proceedings of MOCO 2020*, ACM.
+
+[34] Raheb, K.E. et al. (2010). A Labanotation Based Ontology for Representing Dance Movement. In *GW 2010*, Springer.
+
+[35] El Raheb, K. et al. (2024). Ontology in Dance Domain—A Survey. *Journal on Computing and Cultural Heritage*, ACM.
+
+[36] Camurri, A. et al. (2000). Toward Gesture and Affect Recognition in Interactive Dance and Music Systems. *Computer Music Journal*, 24(1).
+
+[37] Forsythe, W. (2008). Choreographic Objects. Essay.
+
+### Multi-Frequency and Tiered Event Processing
+
+[38] Marz, N. & Warren, J. (2015). *Big Data: Principles and Best Practices of Scalable Real-Time Data Systems.* Manning.
+
+[39] Kreps, J. (2014). Questioning the Lambda Architecture. O'Reilly Blog.
+
+[40] Luckham, D. (2002). *The Power of Events: An Introduction to Complex Event Processing.* Addison-Wesley.
+
+[41] Baresi, L. & Guinea, S. (2013). Event-Based Multi-Level Service Monitoring. In *Proceedings of ICWS 2013*, IEEE.
+
+[42] Taylor, R. et al. (2014). Semantic Complex Event Processing for Decision Support. In *EKAW 2014*, Springer LNCS 8876.
 
 ---
 
