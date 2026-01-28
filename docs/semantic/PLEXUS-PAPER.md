@@ -11,9 +11,9 @@ ORCID: 0000-0003-0157-7744
 
 ## Abstract
 
-Knowledge accumulates faster than understanding across all creative domains — code grows through AI-assisted generation, research notes proliferate across tools, choreographic vocabulary develops through rehearsal — yet practitioners lose structural awareness of their own work. We present **Plexus**, a content-agnostic knowledge graph engine designed to evolve alongside creative composition, providing ambient structural awareness without interrupting flow. Plexus operates across five creative domains (code, fiction, research, movement/performance, free-writing) using domain-specific analyzers that feed a unified graph engine with self-reinforcing edge dynamics inspired by Hebbian learning. The system updates at multiple frequencies — structural changes appear in <100ms, relational clustering in <2s, semantic extraction in 10–30s, and conceptual analysis on longer timescales — creating a peripheral structural reflection of the emerging work. We ground the design in external cognition theory, flow-state research, the cognitive costs of AI-assisted work, memory-inspired learning models, and computational movement analysis. We describe integration points with three companion systems: llm-orc (LLM orchestration), Trellis (creative writing scaffolding), and EDDI (interactive performance). A companion paper [Paper 1] provides experimental validation of the semantic extraction layer. This paper presents the system vision, theoretical grounding, architecture, and evaluation agenda.
+Knowledge accumulates faster than understanding across all creative domains — code grows through AI-assisted generation, research notes proliferate across tools, choreographic vocabulary develops through rehearsal — yet practitioners lose structural awareness of their own work. We present **Plexus**, a content-agnostic knowledge graph engine designed to evolve alongside creative composition, providing ambient structural awareness without interrupting the creative process. Plexus operates across five creative domains (code, fiction, research, movement/performance, free-writing) using domain-specific analyzers that feed a unified graph engine with self-reinforcing edge dynamics inspired by Hebbian learning. The system updates at multiple frequencies — structural changes appear in <100ms, relational clustering in <2s, semantic extraction in 10–30s, and conceptual analysis on longer timescales — creating a peripheral structural reflection of the emerging work. We ground the design in external cognition theory, flow-state research, the cognitive costs of AI-assisted work, memory-inspired learning models, and computational movement analysis. Plexus depends on two services — llm-orc for LLM orchestration and clawmarks for provenance tracking — and is consumed by domain-specific interfaces that demonstrate the content-agnostic claim: Manza (code and document composition), Trellis (creative writing scaffolding), and EDDI (interactive performance). A companion paper [Paper 1] provides experimental validation of the semantic extraction layer. This paper presents the system vision, theoretical grounding, architecture, and evaluation agenda.
 
-**Keywords:** knowledge graphs, creative composition, self-reinforcing networks, Hebbian learning, multi-frequency updates, external cognition, content-agnostic systems, flow state
+**Keywords:** knowledge graphs, creative composition, self-reinforcing networks, Hebbian learning, multi-frequency updates, external cognition, ambient structural feedback, content-agnostic systems
 
 ---
 
@@ -39,7 +39,7 @@ In code, the nodes are functions, modules, types; the edges are imports, calls, 
 
 In every case, the creator composes linearly — word after word, function after function — but the structure of the work is non-linear. A graph, not a sequence. Without a live structural view, the creator must hold that graph in their head. With Plexus, the graph is externalized and kept current automatically.
 
-Consider the experience across three domains:
+Consider the intended experience across three domains:
 
 *A developer* writes a new function. Edges appear connecting it to the functions it calls and the modules it imports. They prompt an AI assistant to generate a utility module — the graph immediately shows what the generated code introduced, what it depends on, and how it changed the dependency topology. When they refactor, they watch clusters merge and hub nodes shift. The developer didn't ask "what depends on this?" The graph already told them.
 
@@ -47,9 +47,9 @@ Consider the experience across three domains:
 
 What does a performer see? Not notation. Not a score. A performer in an interactive installation moves through a sequence, and the graph accumulates: pose nodes connect via transition edges, movement qualities (sustained, sudden, bound) cluster into a visible vocabulary, performer-environment couplings emerge as semantic edges — this gesture reliably triggers that lighting state, this spatial formation activates that soundscape. Across rehearsals, the graph reveals which movement phrases are developing, which performer-to-performer dynamics recur, which couplings are strengthening through repetition. The choreographic structure becomes visible through the graph's memory of what happened and how it connected.
 
-The graph behaves identically in all cases — nodes appear, edges form, clusters emerge, hubs solidify, unused connections fade. The content-type-specific analyzers (tree-sitter for code, narrative parsers for fiction, citation extractors for research, pose trackers for movement) feed different node and edge types into the same graph engine with the same self-reinforcing dynamics. Coding and choreography, fiction and research, viewed through the graph, feel like the same activity: *composition with live structural feedback*.
+The graph behaves identically in all cases — nodes appear, edges form, clusters emerge, hubs solidify, unused connections fade. The content-type-specific analyzers (tree-sitter for code, narrative parsers for fiction, citation extractors for research, pose trackers for movement) feed different node and edge types into the same graph engine with the same self-reinforcing dynamics. Coding and choreography, fiction and research, viewed through the graph, are designed to feel like the same activity: *composition with live structural feedback*.
 
-This produces something closer to a flow state than traditional tooling offers. The creator maintains structural awareness without interrupting composition to manually trace dependencies, re-read earlier chapters, or search for related notes. The graph is peripheral vision for knowledge work.
+The design hypothesis is that this produces something closer to a flow state than traditional tooling offers — the creator maintains structural awareness without interrupting composition to manually trace dependencies, re-read earlier chapters, or search for related notes. Whether this hypothesis holds is an empirical question we address in §5. The graph is intended as peripheral vision for knowledge work.
 
 ### 1.3 Design Principles
 
@@ -57,14 +57,14 @@ Plexus's core design principles:
 
 - **Real-time evolution**: The graph updates as files are saved, code is generated, and notes are written — not as a batch process after the fact.
 - **Multi-frequency updates**: Different semantic layers update at different cadences. Code structure (imports, definitions, call relationships) updates on every validation cycle. Semantic structure (shared terms, topic clusters) updates on save or pause. Conceptual structure (deeper cross-document relationships) updates in the background or on explicit refresh. This tiered approach keeps the graph responsive without saturating compute.
-- **Self-reinforcing edges**: Relationships strengthen through use and decay without reinforcement, implementing a form of Hebbian learning for knowledge structures. An edge traversed during navigation becomes more visible. An edge never accessed fades. Over time, the graph converges on the relationships that actually matter to the practitioner.
+- **Self-reinforcing edges**: Relationships strengthen through domain-appropriate validation and decay without reinforcement, implementing a form of Hebbian learning for knowledge structures. An edge validated through testing, compositional development, or deliberate repetition gains structural confidence. An unvalidated edge fades. Over time, the graph is hypothesized to converge on the relationships that actually matter to the practitioner.
 - **Provenance throughout**: Every concept in the graph traces back to a specific file, line, and evidence span. Click a node, open the source. The graph is not an abstraction layer on top of the work — it is a navigable index into it.
-- **Multi-system integration**: Plexus connects to LLM orchestration (llm-orc), provenance tracking (clawmarks), and UI layers (Manza) via MCP, creating a bidirectional learning loop where execution patterns inform graph structure and graph analysis informs future orchestration.
+- **Multi-system integration**: Plexus depends on llm-orc (LLM orchestration) and clawmarks (provenance tracking) as service dependencies, and exposes its graph via MCP for any domain-specific consumer. Execution patterns inform graph structure and graph analysis informs future orchestration, creating a bidirectional learning loop.
 - **Content-agnostic engine**: The same graph engine, edge dynamics, and update architecture serve all creative domains. Only the analyzers differ.
 
 ### 1.4 This Paper
 
-This paper presents the system design, theoretical grounding, and evaluation agenda for Plexus. A companion paper [Paper 1] reports the empirical experiments that validated the semantic extraction layer — one critical subsystem within the broader architecture. Here we address the full system: the content-agnostic graph engine, the self-reinforcing edge model, the multi-frequency update architecture, and integration with three companion systems (llm-orc, Trellis, EDDI).
+This paper presents the system design, theoretical grounding, and evaluation agenda for Plexus. A companion paper [Paper 1] reports the empirical experiments that validated the semantic extraction layer — one critical subsystem within the broader architecture. Here we address the full system: the content-agnostic graph engine, the self-reinforcing edge model, the multi-frequency update architecture, the service dependencies (llm-orc, clawmarks), and three domain consumers that demonstrate Plexus across creative domains (Manza, Trellis, EDDI).
 
 ---
 
@@ -82,11 +82,17 @@ Three specific mechanisms explain how [17]. *Computational offloading* reduces w
 
 Clark and Chalmers [18] provide philosophical grounding through the extended mind thesis: cognitive processes literally extend into the environment when external resources play the functional role that internal memory would otherwise play. The strong version of this claim — that Plexus literally *is* part of the composer's cognitive system — may overstate things. But the weaker claim is sufficient: a live knowledge graph changes the *kind* of structural reasoning available, from memory retrieval to perceptual processing. That shift is what matters.
 
+However, cognitive offloading is not unambiguously beneficial. Gerlich [48] finds a significant negative correlation between frequent AI tool usage and critical thinking abilities, mediated by increased cognitive offloading — younger users show higher dependence and lower critical thinking scores. Klein and Klein [49] introduce the "extended hollowed mind" framework: when AI frictionlessly provides answers, users systematically bypass the effortful cognitive processes essential for deep learning. EEG evidence shows that LLM interaction reduces frontal theta power — a marker of working memory load — suggesting reduced engagement of the cognitive processes central to learning. Matuschak and Nielsen [50] argue that transformative tools for thought must avoid reducing the user to a passive consumer of externally generated structure.
+
+This critique applies to tools that outsource *reasoning* — where the tool does the thinking and the user accepts the output. Plexus's design deliberately avoids this failure mode. It externalizes *structural awareness* (what connects to what) but not *interpretation* (what it means). The graph shows that three fragments share a concept; the creator decides whether that matters. It replaces memory retrieval with perceptual processing (consistent with Scaife and Rogers's computational offloading [17]) without replacing the creator's interpretive and compositional agency. The distinction between structural offloading and reasoning offloading is critical: the former expands cognitive capacity, while the latter risks eroding it.
+
 ### 2.2 Flow State and Structural Feedback
 
 Csikszentmihalyi [19] identifies three conditions for flow: clear goals, immediate feedback, and challenge-skill balance. The second condition is directly relevant. Traditional development environments provide delayed structural feedback — the developer must actively query for dependencies, references, or call hierarchies. A live knowledge graph provides immediate, continuous structural feedback without requiring an explicit query.
 
 Dietrich [20] adds a neurological constraint: flow involves transient hypofrontality — the prefrontal cortex partially deactivates, reducing self-monitoring and analytical processing. The implication is strict. Structural feedback must be *ambient and peripheral*. A knowledge graph visualization that demands active reading would disrupt flow; one that operates at the level of peripheral awareness — shapes shifting, clusters forming, edges thickening — preserves it. Matthews et al. [21] study this design space for glanceable peripheral displays, finding that ambient information can maintain awareness without attentional capture.
+
+A caveat on the flow framework is warranted. Farrokh et al. [51] argue that critiques of flow theories like transient hypofrontality have emerged within the same cognitive metatheoretical framework without challenging its underlying assumptions about the mind-body relationship. Wonders et al. [52] systematically review flow measurement protocols and find significant methodological problems: non-validated psychological instruments in the majority of studies, ambiguous reporting of verification results, and frequent failure to match task difficulty to participant skill levels — undermining the ecological validity of many flow claims. The flow-performance relationship, while positive, is moderate (r = 0.31) with unclear causal direction [52]. We retain the flow framework not because the science is settled — it is not — but because its core design implication is robust regardless: ambient, peripheral structural feedback that avoids interrupting the primary task is preferable to feedback that demands explicit queries and mode-switching. Whether this produces "flow" in Csikszentmihalyi's technical sense is an empirical question we address in §5.1 with awareness of these methodological challenges.
 
 Digital audio workstations, 3D modeling tools, and game engines already provide this kind of live structural feedback. Waveforms evolve as musicians compose; wireframes respond as modelers sculpt; physics simulations run alongside level design. In each case, the structural representation co-evolves with the creative act. Software development has moved toward this with live linting and type checking, but these provide *correctness* feedback ("is this valid?"), not *structural* feedback ("what did this change connect to?"). A live knowledge graph occupies a different niche: it shows the semantic topology of the work as it emerges.
 
@@ -94,25 +100,19 @@ Digital audio workstations, 3D modeling tools, and game engines already provide 
 
 The opacity problem (§1.1) has a cognitive mechanism that extends beyond the AI-specific case. We develop this in four steps: the interaction pattern disrupts flow, the underlying problem is domain-general, AI makes it acute, and external structural representations provide the remedy.
 
-**The prompt→wait→evaluate cycle disrupts flow.** AI-assisted composition imposes a distinctive interaction pattern: the creator formulates a prompt, waits for generation, then evaluates output they did not write. Mark et al. [42] demonstrate that interrupted work carries significant recovery costs — after an interruption, workers require substantial time to resume their original task, and they compensate with faster (but more stressed) work. The prompt→wait→evaluate cycle is an interruption factory: each generation forces the creator out of compositional flow into an analytical evaluation mode. Subramonyam et al. [43] identify a deeper challenge specific to LLM interaction: the "gulf of envisioning," where users struggle to formulate effective prompts because they cannot anticipate the system's behavior. The cognitive cost is not just delayed feedback (§2.2) — it is that the interaction pattern alternates between two incompatible cognitive modes: generative composition and critical evaluation of unfamiliar output.
+**The prompt→wait→evaluate cycle disrupts flow.** AI-assisted composition imposes a distinctive interaction pattern: the creator formulates a prompt, waits for generation, then evaluates output they did not write. Mark et al. [42] demonstrate that interrupted work exacts significant cognitive costs — workers compensate for interruptions by completing tasks faster but experience substantially more stress, frustration, and time pressure. The prompt→wait→evaluate cycle is an interruption factory: each generation forces the creator out of compositional flow into an analytical evaluation mode. Subramonyam et al. [43] identify a deeper challenge specific to LLM interaction: the "gulf of envisioning," where users struggle to formulate effective prompts because they cannot anticipate the system's behavior. The cognitive cost is not just delayed feedback (§2.2) — it is that the interaction pattern alternates between two incompatible cognitive modes: generative composition and critical evaluation of unfamiliar output.
 
 **Information density exceeding comprehension is not AI-specific.** The deeper issue is structural: any process that generates information faster than the creator can track produces opacity. A dance improvisation session accumulates gesture data, spatial formations, and performer-environment couplings faster than any choreographer can mentally catalog. A rapid prototyping session produces design variants whose structural differences are invisible without explicit comparison. A research sprint across dozens of papers generates conceptual connections that exceed individual working memory. Kirschner et al. [44] formalize this through collaborative cognitive load theory: when task complexity exceeds individual cognitive capacity, the load must be distributed — across collaborators, across time, or across external representations. Sweller's cognitive load theory [14] provides the mechanism: working memory is sharply limited, and information that is not organized into existing schemas imposes extraneous load. The problem is not AI. The problem is information density outpacing comprehension. AI is one instance — a particularly aggressive one.
 
-**AI makes the problem acute.** Consider "vibe-coding": a developer prompts an AI to generate modules iteratively, accepting code that works without fully comprehending how it works. After a dozen exchanges, the codebase has architectural decisions the developer didn't make, dependency patterns they didn't design, and structural implications they never evaluated. The code compiles; the tests pass; the developer has lost structural awareness of their own project. Cito and Bork [10] describe this as "material disengagement" — developers orchestrate code generation without comprehending the output. Qiao et al. [11] measure the resulting comprehension-performance gap in brownfield development. Al Haque et al. [12] note that few empirical studies of cognitive load from AI coding assistants yet exist — the phenomenon is documented but under-measured. A 2025 industry survey [13] found 65% of developers report AI misses context during refactoring, with 60% citing similar gaps in test generation and review. The artifact grew through a process the creator didn't structurally track. This is the same opacity that affects the choreographer and the researcher — but compressed into minutes rather than weeks, and compounded by the interruption costs of the prompt→wait→evaluate cycle.
+**AI makes the problem acute.** Consider "vibe-coding": a developer prompts an AI to generate modules iteratively, accepting code that works without fully comprehending how it works. After a dozen exchanges, the codebase has architectural decisions the developer didn't make, dependency patterns they didn't design, and structural implications they never evaluated. The code compiles; the tests pass; the developer has lost structural awareness of their own project. Cito and Bork [10] describe this as "material disengagement" — developers orchestrate code generation without comprehending the output. Qiao et al. [11] measure the resulting comprehension-performance gap in brownfield development. Al Haque et al. [12] note that few empirical studies of cognitive load from AI coding assistants yet exist — the phenomenon is documented but under-measured. A 2025 industry survey [13] found 65% of developers report AI misses context during refactoring, with 60% citing similar gaps in test generation and review. The artifact grew through a process the creator didn't structurally track. The Vibe-Check Protocol [53] formalizes this phenomenon through three metrics: the Cold Start Refactor (measuring skill retention via procedural decay when AI is removed), Hallucination Trap Detection (measuring vigilance via signal detection theory), and the Explainability Gap (measuring the metacognitive disconnect between generated code complexity and the developer's understanding). This is the same opacity that affects the choreographer and the researcher — but compressed into minutes rather than weeks, and compounded by the interruption costs of the prompt→wait→evaluate cycle. Noda et al. [54] identify precisely the three dimensions at stake — feedback loops, cognitive load, and flow state — as the core drivers of developer experience, providing an independent validation of the design space Plexus addresses.
 
 **External structural representations reclaim cognitive capacity.** The remedy is not better prompting or slower generation — it is structural. Endsley [45] defines situation awareness as the perception of elements in the environment, comprehension of their meaning, and projection of their future state. This is precisely what erodes in information-dense composition: the creator loses perception of what has been added, comprehension of how it connects, and projection of where the structure is heading. Larkin and Simon [46] demonstrate that diagrams reduce cognitive load by making information explicit that would otherwise require search and inference — a diagram is worth ten thousand words because it replaces memory retrieval with perceptual processing. Kirsh [47] extends this: external representations do not merely offload cognition but expand the cognitive system's boundaries, enabling forms of reasoning that are impossible with internal representations alone. This is where Plexus enters. A live knowledge graph provides ongoing situation awareness of the composition's structure — what was added, how it connects, where clusters are forming, which relationships are strengthening. It reclaims the cognitive capacity that information-dense processes erode, not by slowing production but by making the structural consequences of production continuously visible.
 
 ### 2.4 Self-Reinforcing and Memory-Inspired Knowledge Structures
 
-Plexus's self-reinforcing edge model — where edges strengthen through use and decay without reinforcement — draws on Hebbian learning ("neurons that fire together wire together") and memory research. The theoretical basis comes from Bjork and Bjork [28], who distinguish storage strength (permanent) from retrieval strength (decays). Periodic forgetting builds higher storage strength on re-learning — a "desirable difficulty." This maps directly to three neuroplasticity-inspired operations on the knowledge graph:
+Plexus's self-reinforcing edge model — where edges strengthen through validation and decay without reinforcement — draws on Hebbian learning and memory research, though the analogy requires careful scoping. The Hebbian principle ("neurons that fire together wire together") is more precisely stated as: synapses strengthen through *successful* co-activation, not mere co-occurrence. This distinction matters. In biological LTP, a synapse that fires and produces a downstream response strengthens; one that fires without functional effect does not. We adopt this stronger version: edges strengthen through domain-appropriate *validation* (tested contracts, compositional development, deliberate repetition) rather than through access frequency alone (§3.4).
 
-| Operation | Neuroscience Analogue | Graph Behaviour |
-|-----------|----------------------|----------------|
-| Edge strengthening | Long-term potentiation (LTP) | Traversed or validated edges increase in weight |
-| Temporal decay | Long-term depression (LTD) | Unaccessed edges lose retrieval strength over time |
-| Emergent connections | Co-activation | Concepts that appear together across documents form new edges |
-
-In our system, edge decay serves an analogous function to desirable difficulty: concepts that are re-encountered after fading receive stronger reinforcement than concepts that were never forgotten, naturally surfacing the relationships that recur across the practitioner's work.
+The memory-theoretic basis comes from Bjork and Bjork [28], who distinguish storage strength (permanent) from retrieval strength (decays). Periodic forgetting builds higher storage strength on re-learning — a "desirable difficulty." In our system, edge decay serves an analogous function: relationships that are re-validated after fading receive stronger reinforcement than relationships that were never forgotten, naturally surfacing the connections that recur across the practitioner's work.
 
 Practical implementations of memory-inspired learning include spaced repetition systems. Settles and Meeder [29] develop half-life regression for predicting memory decay in language learning (deployed in Duolingo). Zaidi et al. [30] extend this with adaptive forgetting curves incorporating linguistic complexity. Our temporal decay function (exponential with weekly half-life) is deliberately simpler, but could be refined with similar complexity-aware models.
 
@@ -124,9 +124,9 @@ The movement/performance domain connects to a body of work on computational Laba
 
 Fdili Alaoui et al. [31] integrate LMA experts into sensor selection and feature computation, showing that multimodal data (positional, dynamic, physiological) best characterizes Laban Effort qualities — Weight, Time, Space, and Flow. Garcia et al. [32] train HMM models for six Effort qualities, finding equi-affine features highly discriminant. These systems provide the "structural layer" input for a movement knowledge graph: they classify the low-level movement data into Laban-theoretic categories that become graph nodes.
 
-At the knowledge representation level, Raheb et al. [33] develop a dance ontology in OWL-2 based on Labanotation semantics, with Description Logic reasoning to extract new movement knowledge. El Raheb et al. [34] survey ontology-based dance knowledge management comprehensively. These ontologies provide a schema for the *conceptual* layer of a movement knowledge graph, but they are static representations — authored by experts, not emergent from live performance data.
+At the knowledge representation level, Raheb et al. [33] develop a dance ontology in OWL-2 based on Labanotation semantics, with Description Logic reasoning to extract new movement knowledge. Paul et al. [34] survey ontology-based dance knowledge management comprehensively. These ontologies provide a schema for the *conceptual* layer of a movement knowledge graph, but they are static representations — authored by experts, not emergent from live performance data.
 
-For real-time performance systems, Camurri et al. [35] describe EyesWeb, a platform for real-time analysis of expressive gesture in dance and music performance. Forsythe's choreographic objects [36] provide the conceptual foundation: choreographic structure as a formal system that can be computationally represented, manipulated, and visualized.
+For real-time performance systems, Camurri et al. [35] describe EyesWeb, a platform for real-time analysis of expressive gesture in dance and music performance. More recently, DASKEL [55] provides an interactive choreographic system with bidirectional human skeleton-to-Labanotation conversion, enabling real-time translation between movement data and dance notation — the closest existing system to the kind of live movement-to-structure mapping Plexus proposes. Forsythe's choreographic objects [36] provide the conceptual foundation: choreographic structure as a formal system that can be computationally represented, manipulated, and visualized.
 
 These three lines of work — classification, ontology, real-time response — have developed in isolation, and their limitations are complementary. The classification systems (Fdili Alaoui, Garcia) handle controlled studio conditions but say nothing about what the classified gestures *mean* in compositional context. The ontologies (El Raheb, Paul) are expert-authored and static — precisely the opposite of what emerges from live rehearsal. The interactive systems (EyesWeb) react in real-time but have no memory; each performance starts from zero. Plexus proposes unifying these into a single graph where performer-environment couplings strengthen through rehearsal, movement vocabulary clusters emerge from practice, and choreographic structure becomes visible not through notation but through the graph's accumulated memory of what happened and how it connected.
 
@@ -144,7 +144,7 @@ We frame our architecture in terms of tiered event processing rather than reacti
 
 Recent systems for LLM-based knowledge graph construction share a batch-processing assumption. Microsoft GraphRAG [1] uses entity extraction with community detection and hierarchical summaries. LightRAG [2] combines graph and embedding retrieval with incremental updates. Neo4j LLM Graph Builder [3] uses multi-LLM extraction. iText2KG [22] provides zero-shot incremental extraction. Bian [23] surveys the LLM-KG construction landscape comprehensively. Agrawal et al. [24] find that knowledge graphs as external grounding demonstrably reduce LLM hallucination. InfraNodus [4] applies network science to knowledge management corpora. All of these systems treat documents as finished artifacts. None operate during composition.
 
-Among incremental systems, Graphiti [25] builds knowledge graphs incrementally in real-time with a bi-temporal data model. Arenas-Guerrero et al. [26] demonstrate incremental KG construction using declarative RML mappings. Zhu et al. [27] address continual KG embedding with incremental distillation.
+Among incremental systems, Graphiti [25] builds knowledge graphs incrementally in real-time with a bi-temporal data model. Van Assche et al. [26] demonstrate incremental KG construction using declarative RML mappings. Liu et al. [27] address continual KG embedding with incremental distillation.
 
 Our companion paper [Paper 1] reports experiments showing that file tree traversal outperforms network algorithms for document selection, evidence-grounded prompts achieve 0% hallucination on technical corpora, and local LLM inference has a ~10s floor that directly informed the multi-frequency architecture.
 
@@ -171,27 +171,47 @@ Graphiti shares the real-time incremental approach but lacks self-reinforcement,
 
 ### 3.1 Architecture Overview
 
-Plexus is implemented as a Rust-based knowledge graph engine with SQLite storage. It connects to external systems via the Model Context Protocol (MCP):
+Plexus is implemented as a Rust-based knowledge graph engine with SQLite storage, exposed via the Model Context Protocol (MCP). Plexus has two service dependencies and any number of domain-specific consumers:
 
-```
-                    ┌──────────────┐
-                    │   Manza UI   │
-                    │  (editor)    │
-                    └──────┬───────┘
-                           │ MCP
-              ┌────────────┼────────────┐
-              │            │            │
-       ┌──────┴──────┐ ┌──┴───┐ ┌──────┴──────┐
-       │   llm-orc   │ │Plexus│ │  clawmarks  │
-       │(orchestrate)│ │(graph)│ │(provenance) │
-       └─────────────┘ └──────┘ └─────────────┘
+```mermaid
+graph TB
+    subgraph "Plexus Core"
+        Plexus["Plexus<br/>(knowledge graph engine)"]
+    end
+
+    subgraph "Service Dependencies"
+        LLMOrc["llm-orc<br/>(LLM orchestration)"]
+        Clawmarks["clawmarks<br/>(provenance tracking)"]
+    end
+
+    subgraph "Domain Consumers (examples)"
+        Manza["Manza<br/>(file viewer/editor — code)"]
+        Trellis["Trellis<br/>(creative writing)"]
+        EDDI["EDDI<br/>(interactive performance)"]
+        Other["Any MCP client"]
+    end
+
+    LLMOrc -->|semantic extraction| Plexus
+    Clawmarks -->|provenance| Plexus
+    Plexus -->|extraction requests| LLMOrc
+    Plexus -->|provenance writes| Clawmarks
+
+    Manza <-->|MCP| Plexus
+    Trellis <-->|MCP| Plexus
+    EDDI <-->|MCP| Plexus
+    Other <-->|MCP| Plexus
 ```
 
-The separation of concerns is deliberate:
-- **Plexus** stores and queries the knowledge graph (nodes, edges, contexts, dimensions)
-- **llm-orc** orchestrates LLM ensembles for semantic extraction — stateless, strategy changes independently
-- **clawmarks** records provenance (file, line, evidence span) — enables "go to source" UX
-- **Manza** provides the editor environment with ambient graph visualization
+Plexus depends on two services:
+- **llm-orc** orchestrates LLM ensembles for semantic extraction — stateless, so extraction strategies evolve independently of graph storage.
+- **clawmarks** records provenance (file, line, evidence span) for every extracted concept — enables "go to source" from any consuming interface.
+
+Plexus does not depend on any particular interface. The domain-specific consumers described in §4 — Manza, Trellis, EDDI — are independent systems that use Plexus to gain semantic graph capabilities in their respective domains:
+- **Manza** is a file viewer and editor where users collate files and folders into "contexts" to build semantic knowledge graphs of codebases and documents. Plexus originated as a subsystem of Manza but is now an independent service.
+- **Trellis** is a creative writing scaffolding system (§4.2) that consumes the graph to surface fragment connections through coaching prompts rather than graph visualization.
+- **EDDI** is an interactive performance system (§4.3) that consumes the graph to drive environmental responses (lighting, sound, projection) rather than visual display.
+
+These consumers illustrate the content-agnostic claim: the same graph engine, the same self-reinforcing dynamics, and the same multi-frequency update model serve code, writing, and movement. Only the domain-specific analyzers and the interface modality differ.
 
 ### 3.2 Data Model
 
@@ -239,23 +259,55 @@ The self-reinforcing model implements three operations inspired by neuroplastici
 
 | Operation | Neuroscience Analogue | Graph Behaviour |
 |-----------|----------------------|----------------|
-| Edge strengthening | Long-term potentiation (LTP) | Traversed or validated edges increase in weight |
-| Temporal decay | Long-term depression (LTD) | Unaccessed edges lose retrieval strength over time |
+| Edge strengthening | Long-term potentiation (LTP) | Validated edges increase in weight |
+| Temporal decay | Long-term depression (LTD) | Unvalidated edges lose retrieval strength over time |
 | Emergent connections | Co-activation | Concepts that appear together across documents form new edges |
 
-**Reinforcement sources** are heterogeneous:
-- **User navigation**: Clicking a concept node, following an edge, expanding a cluster
-- **Structural co-occurrence**: Two concepts appearing in the same file or function
+A critical design choice: edges strengthen primarily through **domain-appropriate validation**, not mere access frequency. In biological LTP, strengthening requires *successful* co-activation — a synapse that fires and produces a downstream response strengthens; one that fires without effect does not. The analogous principle for knowledge graphs is that edges should strengthen when the relationship they represent is *confirmed to hold*, not simply because a user clicked on them. Access frequency is a weak signal; it conflates importance with proximity, frustration with relevance. A developer who repeatedly navigates a tangled dependency is not validating it — they are struggling with it. Validation is the stronger signal.
+
+**Validation mechanisms are domain-specific, but the dynamic is domain-agnostic:**
+
+| Domain | Sketch (low weight) | Validated (strengthened) | Validation mechanism |
+|--------|---------------------|--------------------------|---------------------|
+| **Code** | AI-generated component exists; contract asserted but unverified | Contract tested and passing | Unit → integration → acceptance tests, run by background agentic processes |
+| **Fiction** | Two characters appear in the same scene | Arc develops — repeated interaction, escalating conflict, thematic echo across scenes | Recurrence + structural development (compositional deepening, not just co-occurrence). Detection relies on the semantic and conceptual layers — the hardest domain case, as distinguishing deepening from co-occurrence may require LLM-level interpretation |
+| **Movement** | Gesture occurs once in rehearsal | Gesture-sequence repeats; performer-environment coupling fires reliably across sessions | Repetition in the Viewpoints sense — deliberate compositional recurrence, not accident |
+| **Research** | Two concepts share a term | Multiple papers cite both; argument explicitly connects them; evidence supports the relationship | Citation co-occurrence → explicit argumentative link → evidential support |
+
+This produces a natural gradient of structural confidence. Consider a vibe-coding scenario: a developer prompts an AI to generate components in rapid succession. Each generated component creates nodes and edges in the graph — but these edges start at *sketch weight*, representing asserted but unverified structure. Background agentic processes then begin validating: unit tests confirm individual component contracts, integration tests confirm the *relationships between components* (the edges themselves), and acceptance tests confirm the contracts hold in context. The graph evolves from a faint sketch to a solid structure not because the developer navigated it, but because the system proved it out. The developer sees structural confidence emerge in peripheral vision while they continue composing.
+
+The movement domain provides an equally natural example. In Viewpoints-based composition — a practice grounded in the observation that repetition creates meaning — a gesture that occurs once is exploration. A gesture that recurs is a choice. A gesture that recurs and *transforms* is vocabulary. The edge weight gradient maps directly onto this compositional logic: one-time occurrences are sketch-weight, deliberate repetitions strengthen, and repeated-with-variation patterns (the hallmark of compositional development) strengthen further. The graph doesn't need to import a metaphor from neuroscience; the domain itself has a theory of how repetition creates significance.
+
+**Additional reinforcement sources:**
 - **Extraction validation**: A concept re-extracted from a modified document confirms existing edges
 - **Cross-system feedback**: llm-orc execution outcomes, clawmarks trail traversal
+- **User navigation**: Traversal provides a secondary reinforcement signal, weaker than validation
 
-**Decay function**: `w(t) = w₀ × e^(-λt)` where λ corresponds to a configurable half-life (default: 1 week). This ensures unused edges fade but don't disappear instantly — they remain discoverable but visually recede.
+**Decay function**: `w(t) = w₀ × e^(-λt)` where λ corresponds to a configurable half-life (default: 1 week). This ensures unvalidated edges fade but don't disappear instantly — they remain discoverable but visually recede. The cold-start implication is deliberate: a new project's graph is not empty but *faint*. Everything starts at sketch weight and earns structural confidence through domain-appropriate validation. Note that the 1-week default assumes regular engagement. A choreographer rehearsing weekly or a novelist writing sporadically may need longer half-lives to avoid losing structural context between sessions. Domain-appropriate decay tuning is an open design question — and if different domains require substantially different parameters, it complicates the content-agnostic claim (§5.3).
 
-**Emergence**: When two concepts co-occur across multiple documents without an explicit edge, a new edge is created with initial weight proportional to co-occurrence frequency. This enables the graph to discover relationships the extractors didn't explicitly identify.
+**Active invalidation**: Decay handles neglect — edges that are never re-validated fade gradually. But some relationships are actively *contradicted*: a test that previously passed now fails, a choreographic choice is deliberately abandoned, a research argument is refuted by new evidence. In these cases, the edge should weaken immediately rather than waiting for passive decay. We propose an active invalidation signal that reduces edge weight proportionally to the strength of the contradiction — a failing integration test is a stronger invalidation signal than a failing unit test, just as validation through integration testing is a stronger reinforcement signal than unit testing. The symmetry between validation and invalidation ensures the graph can unlearn as well as learn.
 
-The combination produces a graph that converges on the relationships that actually matter to the practitioner — frequently traversed paths become highways, neglected connections fade to trails, and surprising co-occurrences surface as new paths.
+**Emergence**: When two concepts co-occur across multiple documents without an explicit edge, a new edge is created with initial weight proportional to co-occurrence frequency. This enables the graph to discover relationships the extractors didn't explicitly identify. Emergent edges also start at sketch weight and require validation to strengthen.
 
-### 3.5 Semantic Extraction Layer
+We hypothesize that validation-based reinforcement causes the graph to converge on the relationships that matter to the practitioner — validated structures solidify, unvalidated sketches fade, and emergent co-occurrences surface as candidates for validation. Whether this convergence occurs, how quickly it stabilizes, and whether it produces useful structure are empirical questions addressed in §5.2.
+
+### 3.5 llm-orc: Orchestration
+
+llm-orc provides the LLM orchestration layer. It manages ensemble configurations (YAML files specifying agent chains), handles fan-out parallelism for compositional extraction, and supports multiple model profiles. The separation from Plexus is deliberate: extraction strategies evolve independently of graph storage.
+
+The bidirectional integration goes beyond extraction: llm-orc execution outcomes feed back into Plexus as reinforcement signals. When an ensemble produces high-quality results, the concepts it extracted receive a confidence boost. When extraction fails or produces low-confidence output, the graph marks those regions for re-processing.
+
+### 3.6 clawmarks: Provenance Tracking
+
+clawmarks provides provenance for every concept in the graph. Each extracted concept links to a clawmark recording the source file, line number, evidence text span, and extraction session (trail). This enables:
+
+- **"Go to source" UX**: Click a concept node → open the file at the exact line
+- **Audit trails**: Every concept's extraction history is queryable
+- **Confidence grounding**: Concepts with strong evidence spans receive higher confidence
+
+Extraction sessions are organized as trails, providing a temporal narrative of how the graph was populated.
+
+### 3.7 Semantic Extraction Layer
 
 The semantic extraction pipeline is validated experimentally in [Paper 1]. Key findings that inform the system design:
 
@@ -269,27 +321,13 @@ The extraction pipeline routes documents through appropriate ensemble configurat
 
 ---
 
-## 4. Integration Points
+## 4. Domain Consumers
 
-### 4.1 llm-orc: Orchestration
+### 4.1 Manza: Code and Document Composition
 
-llm-orc provides the LLM orchestration layer. It manages ensemble configurations (YAML files specifying agent chains), handles fan-out parallelism for compositional extraction, and supports multiple model profiles. The separation from Plexus is deliberate: extraction strategies evolve independently of graph storage.
+Manza is a file viewer and editor where users collate files and folders into "contexts" to build semantic knowledge graphs of codebases and documents. It is the original context in which Plexus was developed and provides the most direct interface to the graph: ambient visualization designed to preserve flow state during vibe-coding and other composition workflows. In Manza, the graph is a visible peripheral display — the developer sees clusters form, edges thicken, and dependency topology shift as they compose. This is the visual-display modality of ambient structural feedback.
 
-The bidirectional integration goes beyond extraction: llm-orc execution outcomes feed back into Plexus as reinforcement signals. When an ensemble produces high-quality results, the concepts it extracted receive a confidence boost. When extraction fails or produces low-confidence output, the graph marks those regions for re-processing.
-
-### 4.2 clawmarks: Provenance Tracking
-
-clawmarks provides provenance for every concept in the graph. Each extracted concept links to a clawmark recording the source file, line number, evidence text span, and extraction session (trail). This enables:
-
-- **"Go to source" UX**: Click a concept node → open the file at the exact line
-- **Audit trails**: Every concept's extraction history is queryable
-- **Confidence grounding**: Concepts with strong evidence spans receive higher confidence
-
-Extraction sessions are organized as trails, providing a temporal narrative of how the graph was populated.
-
-### 4.3 Trellis: Writer's Fragment Enrichment
-
-<!-- PLACEHOLDER: New content to be written -->
+### 4.2 Trellis: Writer's Fragment Enrichment
 
 Trellis is a creative writing scaffolding system built on the principle of *scaffolding, not generation* — it supports the writer's process without producing content on their behalf. Writers accumulate fragments: sentences, observations, character sketches, plot ideas, research notes. These fragments are the raw material of composition, but their interconnections are invisible until the writer manually traces them.
 
@@ -299,24 +337,37 @@ Plexus integration enriches these fragments with semantic structure:
 - **Relational edges** connect fragments by shared terms, character references, thematic overlap
 - **Semantic edges** connect fragments by deeper conceptual relationships (discovered via LLM extraction)
 
+The self-reinforcing dynamics take a domain-specific form in the writing context. All fragment connections start at sketch weight — the graph notices co-occurrence but does not yet treat it as significant. Edges strengthen through writer engagement that validates the connection:
+
+- **Active sorting**: When a writer groups fragments, moves them into a shared collection, or explicitly links them, the connecting edges strengthen — the writer has validated the relationship through intentional compositional action.
+- **Seed promotion**: Trellis's accumulation model tracks fragment maturity (seedling → developing → established). When a fragment is promoted, its edges to other fragments strengthen — the writer has signaled that this material matters.
+- **Revisitation after dormancy**: A fragment ignored for months that the writer returns to and connects to new work receives stronger reinforcement than one accessed continuously. This is the Bjork and Bjork [28] "desirable difficulty" made concrete — the faded connection, re-validated, strengthens more than the connection that never decayed.
+- **Thematic recurrence across sessions**: When the concept "isolation" appears in fragments captured weeks or months apart, the edge between those fragments strengthens through organic recurrence — the writer's own unconscious thematic preoccupations becoming visible. This is the writing-domain analogue of Viewpoints repetition: recurrence across time connotes compositional importance.
+
+The writer doesn't need to see edge weights numerically. They experience the graph's structural confidence through what Trellis surfaces: juxtaposition prompts feature high-weight connections more prominently than sketch-weight ones. The system's coaching voice becomes more confident about validated connections ("you've returned to this theme four times across three months") than about tentative ones ("these fragments share a word"). The structural feedback is mediated through Trellis's communication layer, not through graph visualization — making the writing domain, like the movement domain (§4.3), a case where the graph operates as infrastructure rather than interface.
+
 The critical constraint is **non-interpretation**: Plexus reveals structure the writer has already created but does not impose interpretation. "These three fragments share the concept of 'isolation'" is structural observation. "This character is struggling with loneliness" is interpretation — and is explicitly outside Plexus's scope. The graph shows *what connects*; the writer decides *what it means*.
 
-<!-- TODO: Add theoretical grounding — Vygotsky/ZPD, SDT, writing center pedagogy -->
+The scaffolding-not-generation principle has emerging empirical support. Lee et al. [56] study varied scaffolding levels in human-AI co-writing and find that while paragraph-level AI content increases writing volume, it diminishes the writer's sense of ownership and satisfaction — extensive AI content reduces the experience of creative effort. Gero et al. [57] study eighteen creative writers integrating AI into their practice and find that personal essayists are the most restrictive about AI-generated text, using AI only for research and feedback, not prose. Ramesh et al. [58] advocate explicitly for process-oriented AI design: systems that function as "critical partners" scaffolding writing sub-processes rather than automating them, preserving active knowledge transformation over passive acceptance. These findings validate Trellis's design constraint: the system reveals structure the writer has already created (observation) but does not generate content or impose interpretation (generation). The distinction maps onto Vygotsky's zone of proximal development — the tool operates in the space between what the writer can perceive unaided and what becomes visible with structural support, without crossing into the territory of doing the work for them.
 
-### 4.4 EDDI: Gesture-to-Graph Pathway
+### 4.3 EDDI: Gesture-to-Graph Pathway
 
-<!-- PLACEHOLDER: New content to be written -->
+EDDI (Emergent Dynamic Design Interface) is an interactive performance system that maps gesture to environment (lighting, sound, projection). The performer's body becomes the input device; the performance space becomes the output. Plexus provides EDDI with a memory — a graph that accumulates the history of performer-environment interactions and drives the environment's evolving response.
 
-EDDI (Environment-Driven Dynamic Interaction) is an interactive performance system that maps gesture to environment (lighting, sound, projection). The performer's body becomes the input device; the performance space becomes the output. Plexus provides EDDI with a memory — a graph that accumulates the history of performer-environment interactions and makes choreographic structure visible.
+Critically, the performer never sees the graph. Unlike the code or writing domains where Plexus provides a peripheral visual display, in EDDI the graph is embodied in the environment itself. As edge weights shift, the environment's response shifts with them. EDDI draws on psychological arousal theory to modulate environmental parameters — color temperature, lighting intensity, sonic density, projection behavior — as a function of the graph's state. When a performer repeats a gesture-sequence, the corresponding edge weights strengthen, and the environment's response deepens: colors warm, sounds layer, the space *remembers*. A novel gesture produces a tentative, exploratory environmental response; a gesture that has become compositional vocabulary produces a richer, more committed one. The performer experiences structural feedback not by reading a visualization but by inhabiting a space that responds to their accumulated history.
+
+This is the most radical version of the "ambient structural feedback" principle that motivates Plexus's design: the cognitive overhead is literally zero, because the performer never needs to learn to read a graph. The structural feedback is the medium itself.
 
 The gesture-to-graph pathway maps EDDI's data streams onto Plexus's four-layer model:
 
 - **Structural layer**: Motion History Images (MHI) and Motion Energy Images (MEI) from pose estimation produce pose nodes, transition edges, and spatial formation data. Updated at camera frame rate, debounced to structural layer latency (<100ms).
 - **Relational layer**: Laban Effort qualities (Weight, Time, Space, Flow) extracted from movement data cluster gestures into a movement vocabulary. Spatial proximity and temporal co-occurrence create relational edges between performers.
 - **Semantic layer**: Choreographic phrases — sequences of gestures that form compositional units — are discovered through pattern recognition. Performer-environment coupling (gesture X triggers lighting state Y) becomes explicit as semantic edges with trigger/response semantics.
-- **Self-reinforcing edges**: Performer-environment couplings that fire reliably strengthen. Movement phrases that recur across rehearsals gain weight. Novel gestures start with low-weight edges that strengthen through repetition — or fade if they were one-off explorations.
+- **Self-reinforcing edges**: Performer-environment couplings that fire reliably strengthen, directly modulating the environment's response via arousal-theoretic mapping. Movement phrases that recur across rehearsals gain weight. Novel gestures start with low-weight edges that strengthen through deliberate repetition — in the Viewpoints sense, where repetition connotes compositional importance — or fade if they were one-off explorations.
 
-<!-- TODO: Add references — El Nasr arousal research, embodied cognition, Schödl video textures -->
+Computational approaches to movement ontology in interactive systems have advanced in parallel. Trajkova et al. [59] describe LuminAI, a co-creative AI dance partner that combines bottom-up unsupervised clustering of gesture data with top-down encodings of Laban Movement Analysis and Viewpoints movement theory to classify and respond to performer movement in real-time. A longitudinal study with fifteen dancers found that the system fostered exploration, enhanced spatial awareness, and expanded movement vocabulary [60]. These findings demonstrate that computational movement analysis can meaningfully influence choreographic practice — a premise EDDI and Plexus share. The systems differ in role: LuminAI operates as a co-creative partner generating movement responses, while EDDI provides ambient structural awareness of the performer's own emergent patterns, mapping gesture to environment at multiple temporal resolutions through Plexus's multi-frequency update model.
+
+The arousal-theoretic mapping draws on a lineage of work connecting environmental parameters to emotional response. Seif El-Nasr et al. [61] develop intelligent lighting systems that dynamically adjust scene lighting to evoke emotional responses, demonstrating that computational control of environmental parameters (color, intensity, direction) can reliably modulate arousal and valence in interactive settings. EDDI extends this principle from game environments to live performance: the graph's edge weights drive environmental parameters through the same arousal-valence dimensions, but the weights themselves emerge from the performer's accumulated movement history rather than from authored narrative beats.
 
 ---
 
@@ -324,14 +375,17 @@ The gesture-to-graph pathway maps EDDI's data streams onto Plexus's four-layer m
 
 Plexus makes several claims that require empirical validation. We outline the evaluation agenda as concrete, measurable studies.
 
-### 5.1 Flow-State Hypothesis
+### 5.1 Ambient Structural Feedback Hypothesis
 
-**Claim**: A live knowledge graph providing ambient structural feedback produces more sustained flow states than traditional development tooling.
+**Claim**: A live knowledge graph providing ambient structural feedback preserves creative engagement and structural awareness more effectively than traditional development tooling — with flow state as one operationalization of this effect.
 
-**Measurement**: Csikszentmihalyi's [19] three conditions (clear goals, immediate feedback, challenge-skill balance) provide an operationalizable framework. A within-subjects study comparing development sessions with and without Plexus, measuring:
-- Time-in-flow (self-reported via experience sampling)
+**Measurement**: Csikszentmihalyi's [19] three conditions (clear goals, immediate feedback, challenge-skill balance) provide an operationalizable framework, though the methodological challenges identified by Wonders et al. [52] — non-validated instruments, retrospective recall bias, and failure to match task difficulty to participant skill — constrain study design. A within-subjects study comparing development sessions with and without Plexus, measuring:
+- Time-in-flow (self-reported via experience sampling at randomized intervals during the task, not post-hoc, to reduce retrospective bias)
 - Task-switching frequency (observable)
 - Structural awareness accuracy (quiz on codebase topology before/after)
+- Physiological correlates where feasible (EDA, heart rate variability) to triangulate self-report data
+
+Task difficulty must be calibrated to participant skill level — a requirement the majority of existing flow studies fail to meet [52]. The validated Flow Short Scale (Rheinberg et al., 2003) or the Flow State Scale-2 (Jackson & Eklund, 2002) should be used rather than ad-hoc instruments. Given the moderate effect size of the flow-performance relationship (r = 0.31) [52], the study should be powered accordingly.
 
 ### 5.2 Self-Reinforcing Edge Convergence
 
@@ -367,7 +421,7 @@ Plexus makes several claims that require empirical validation. We outline the ev
 **Measurement**:
 - Latency from gesture to graph update (target: <100ms structural, <2s relational)
 - Whether high-weight edges correspond to intentional choreographic choices vs. noise
-- Performer perception of the graph as useful rehearsal tool
+- Performer perception of the environment's evolving response as a useful rehearsal and compositional awareness tool
 
 ---
 
@@ -375,11 +429,13 @@ Plexus makes several claims that require empirical validation. We outline the ev
 
 Plexus proposes that all creative composition shares a common structural dynamic: artifacts grow, connections form, patterns emerge, and the creator's awareness of this structure determines the quality of their engagement with their own work. By externalizing this structure in a self-reinforcing knowledge graph that updates at multiple frequencies, we aim to provide what amounts to peripheral vision for knowledge work.
 
-The theoretical grounding spans external cognition [15]–[18], flow state [19]–[21], memory-inspired learning [28]–[30], and computational movement analysis [31]–[36]. The multi-frequency architecture [37]–[41] makes the system responsive despite the ~10s LLM extraction floor demonstrated in [Paper 1]. The self-reinforcing edge model, inspired by Hebbian dynamics, means the graph converges on what matters to each practitioner rather than presenting a static extraction result.
+The theoretical grounding spans external cognition [15]–[18] (with awareness of the cognitive offloading risks identified by [48]–[50]), flow state [19]–[21] (acknowledging the measurement challenges documented by [51]–[52]), memory-inspired learning [28]–[30], and computational movement analysis [31]–[36]. The multi-frequency architecture [37]–[41] makes the system responsive despite the ~10s LLM extraction floor demonstrated in [Paper 1]. The self-reinforcing edge model, inspired by Hebbian dynamics but grounded in domain-appropriate validation rather than access frequency, is hypothesized to converge on the relationships that matter to each practitioner rather than presenting a static extraction result.
 
 What distinguishes Plexus from existing knowledge graph systems is the combination of live updating, self-reinforcement, evidence provenance, and content-agnostic operation. No existing system (§2.8) integrates all of these. The closest precedent — Graphiti [25] — shares the real-time incremental approach but targets AI agent memory, not human creative practice, and lacks self-reinforcing dynamics, provenance, and visualization.
 
-The system is partially built: the Rust graph engine exists, the semantic extraction pipeline is experimentally validated [Paper 1], and the llm-orc and clawmarks integrations are operational. What remains is the content-agnostic extension (Trellis, EDDI), the self-reinforcing edge dynamics, the ambient visualization layer, and — most importantly — empirical validation of the flow-state hypothesis that motivates the entire design.
+The system is partially built: the Rust graph engine exists, the semantic extraction pipeline is experimentally validated [Paper 1], and the llm-orc and clawmarks integrations are operational. What remains is domain consumer development (Manza visualization, Trellis integration, EDDI gesture-to-graph pathway), the self-reinforcing edge dynamics, the ambient feedback layer, and — most importantly — empirical validation of the flow-state hypothesis that motivates the entire design.
+
+An open question is whether Plexus's cognitive overhead — learning to read the graph, configuring analyzers, occasional attention to the visualization — exceeds the cognitive savings it provides. The ambient design is intended to minimize this overhead, but any external representation imposes some cost, and the net benefit is an empirical question. Not all creators will want continuous structural feedback; some may find it intrusive rather than helpful. The system must be unobtrusive enough that ignoring it is costless.
 
 We have deliberately separated what's built from what's designed from what's planned. The evaluation agenda (§5) specifies concrete, measurable studies for each claim. Until those studies are conducted, Plexus remains a grounded design with partial implementation — not a validated system.
 
@@ -439,7 +495,7 @@ The companion paper [Paper 1] demonstrates the methodology we intend to apply th
 
 ### Incremental and Real-Time Knowledge Graphs
 
-[25] Zep. (2024-2025). Graphiti: Temporally-Aware Knowledge Graphs. https://github.com/getzep/graphiti
+[25] Rasmussen, P. (2025). Zep: A Temporal Knowledge Graph Architecture for Agent Memory. *arXiv preprint arXiv:2501.13956*. Software: https://github.com/getzep/graphiti
 
 [26] Van Assche, D. et al. (2024). IncRML: Incremental Knowledge Graph Construction from Heterogeneous Data Sources. *Semantic Web Journal*, Special Issue on Knowledge Graph Construction.
 
@@ -492,3 +548,45 @@ The companion paper [Paper 1] demonstrates the methodology we intend to apply th
 [46] Larkin, J. H. & Simon, H. A. (1987). Why a Diagram is (Sometimes) Worth Ten Thousand Words. *Cognitive Science*, 11(1), 65-99.
 
 [47] Kirsh, D. (2010). Thinking with External Representations. *AI & Society*, 25(4), 441-454.
+
+### Cognitive Offloading Risks and Tools for Thought
+
+[48] Gerlich, M. (2025). AI Tools in Society: Impacts on Cognitive Offloading and the Future of Critical Thinking. *Societies*, 15(1), 6.
+
+[49] Klein, G. & Klein, H. (2025). The Extended Hollowed Mind: Why Foundational Knowledge is Indispensable in the Age of AI. *PMC*.
+
+[50] Matuschak, A. & Nielsen, M. (2019). How can we develop transformative tools for thought? Essay. https://numinous.productions/ttft/
+
+### Flow State Critique and Measurement
+
+[51] Farrokh, D., Stone, J. A., Davids, K., Strafford, B. W., & Rumbold, J. L. (2024). Why isn't flow flowing? Metatheoretical issues in explanations of flow. *Theory & Psychology*, 34(2).
+
+[52] Wonders, et al. (2025). Measuring Flow: Refining Research Protocols That Integrate Physiological and Psychological Approaches. *Human Behavior and Emerging Technologies*.
+
+### AI-Assisted Development
+
+[53] The Vibe-Check Protocol. (2025). The Vibe-Check Protocol: Quantifying Cognitive Offloading in AI Programming. *arXiv preprint arXiv:2601.02410*.
+
+[54] Noda, A., Forsgren, N., Storey, M.-A., & Greiler, M. (2023). DevEx: What Actually Drives Productivity. *ACM Queue*, 21(2).
+
+### Computational Movement Analysis (Additional)
+
+[55] DASKEL. (2023). DASKEL: An Interactive Choreographic System with Bidirectional Human Skeleton-Labanotation Conversion. In *Proceedings of Pacific Graphics 2023*, Eurographics.
+
+### Creative Writing Scaffolding
+
+[56] Lee, M., Liang, P., & Yang, Q. (2024). Shaping Human-AI Collaboration: Varied Scaffolding Levels in Co-writing with Language Models. In *Proceedings of CHI 2024*, ACM.
+
+[57] Gero, K. I. et al. (2025). From Pen to Prompt: How Creative Writers Integrate AI into their Writing Practice. *arXiv preprint arXiv:2411.03137*.
+
+[58] Ramesh, V. et al. (2025). AI in the Writing Process: How Purposeful AI Support Fosters Student Writing. *arXiv preprint arXiv:2506.20595*.
+
+### Interactive Performance and Co-Creative AI
+
+[59] Trajkova, M., Jacob, M., & Magerko, B. (2024). Exploring Collaborative Movement Improvisation Towards the Design of LuminAI—a Co-Creative AI Dance Partner. In *Proceedings of CHI 2024*, ACM.
+
+[60] Trajkova, M. et al. (2025). Bringing LuminAI to Life: Studying Dancers' Perceptions of a Co-Creative AI in Dance Improvisation Class. In *Proceedings of the 2025 Conference on Creativity and Cognition*, ACM.
+
+### Affective Computing and Environmental Response
+
+[61] Seif El-Nasr, M., Niedenthal, S., Knez, I., Almeida, P., & Zupko, J. (2007). Dynamic Lighting for Tension in Games. *Game Studies*, 7(1). See also: Seif El-Nasr, M. (2005). Intelligent Lighting for Game Environments. *Journal of Game Development*, 1(2).
