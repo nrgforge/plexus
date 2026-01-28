@@ -59,7 +59,7 @@ We conducted 18 experiments across three corpora of different structure and cont
 
 ### 2.1 Cognitive Context in AI-Assisted Development
 
-The opacity problem (§1.1) is increasingly documented. Cito and Bork [1] describe "material disengagement" in AI-assisted coding — developers orchestrate code generation without comprehending the output. Qiao et al. [2] measure a comprehension-performance gap in AI-assisted brownfield development. Al Haque et al. [3] identify the measurement gap — few empirical studies of cognitive load from AI coding assistants exist. A 2025 survey [4] found 65% of developers cite missing context as their top concern with AI-generated code. Sweller's updated cognitive load theory [5] provides the mechanism: AI-generated code imposes extraneous cognitive load because its information structure is not aligned with the developer's schema.
+The opacity problem (§1.1) is increasingly documented. Cito and Bork [1] describe "material disengagement" in AI-assisted coding — developers orchestrate code generation without comprehending the output. Qiao et al. [2] measure a comprehension-performance gap in AI-assisted brownfield development. Al Haque et al. [3] identify the measurement gap — few empirical studies of cognitive load from AI coding assistants exist. A 2025 survey [4] found 65% of developers report AI misses context during refactoring, with 60% citing similar gaps in test generation and review. Sweller's updated cognitive load theory [5] provides the mechanism: AI-generated code imposes extraneous cognitive load because its information structure is not aligned with the developer's schema.
 
 These findings motivate automated semantic extraction: rather than recovering context post-hoc, maintain it continuously through a live structural representation.
 
@@ -74,7 +74,7 @@ Recent systems for LLM-based knowledge graph construction share a batch-processi
 | **Neo4j LLM Graph Builder** [8] | Multi-LLM extraction to graph database | All docs processed; documents are atomic units |
 | **iText2KG** [9] | Zero-shot incremental extraction with four-module pipeline | Incremental but not real-time; no structural corpus awareness |
 
-All treat documents as atomic, independent units. None exploit organizational structure already present in the corpus. Pan et al. [10] survey the LLM-KG construction landscape comprehensively, but none of the surveyed systems operate in real-time or integrate with a creative composition environment.
+All treat documents as atomic, independent units. None exploit organizational structure already present in the corpus. Bian [10] surveys the LLM-KG construction landscape comprehensively, but none of the surveyed systems operate in real-time or integrate with a creative composition environment.
 
 On the hallucination problem, Agrawal et al. [11] find that knowledge graphs as external grounding demonstrably reduce LLM hallucination. Our evidence-grounded prompting approach (§4.2) is a specific implementation of this principle.
 
