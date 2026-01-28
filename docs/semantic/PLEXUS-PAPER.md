@@ -11,7 +11,7 @@ ORCID: 0000-0003-0157-7744
 
 ## Abstract
 
-Knowledge accumulates faster than understanding across all creative domains — code grows through AI-assisted generation, research notes proliferate across tools, choreographic vocabulary develops through rehearsal — yet practitioners lose structural awareness of their own work. We present **Plexus**, a content-agnostic knowledge graph engine designed to evolve alongside creative composition, providing ambient structural awareness without interrupting the creative process. Plexus operates across five creative domains (code, fiction, research, movement/performance, free-writing) using domain-specific analyzers that feed a unified graph engine with self-reinforcing edge dynamics inspired by Hebbian learning. The system updates at multiple frequencies — structural changes appear in <100ms, relational clustering in <2s, semantic extraction in 10–30s, and conceptual analysis on longer timescales — creating a peripheral structural reflection of the emerging work. We ground the design in external cognition theory, flow-state research, the cognitive costs of AI-assisted work, memory-inspired learning models, and computational movement analysis. Plexus depends on two services — llm-orc for LLM orchestration and clawmarks for provenance tracking — and is consumed by domain-specific interfaces that demonstrate the content-agnostic claim: Manza (code and document composition), Trellis (creative writing scaffolding), and EDDI (interactive performance). A companion paper [Paper 1] provides experimental validation of the semantic extraction layer. This paper presents the system vision, theoretical grounding, architecture, and evaluation agenda.
+Knowledge accumulates faster than understanding across all creative domains — code grows through AI-assisted generation, research notes proliferate across tools, choreographic vocabulary develops through rehearsal — yet practitioners lose structural awareness of their own work. We present **Plexus**, a content-agnostic knowledge graph engine designed to evolve alongside creative composition. Plexus receives data from domain-specific clients, processes it at multiple frequencies with self-reinforcing edge dynamics inspired by Hebbian learning, and emits events that clients can use to provide ambient structural awareness without interrupting the creative process. The system updates at multiple frequencies — structural changes appear in <100ms, relational clustering in <2s, semantic extraction in 10–30s, and conceptual analysis on longer timescales — creating a peripheral structural reflection of the emerging work. We ground the design in external cognition theory, flow-state research, the cognitive costs of AI-assisted work, memory-inspired learning models, and computational movement analysis. Plexus can optionally integrate with llm-orc (LLM orchestration) and clawmarks (provenance tracking), but clients can derive structure through any means appropriate to their domain. Three domain consumers demonstrate the content-agnostic claim: Manza (code and document composition), Trellis (creative writing scaffolding), and EDDI (interactive performance) — though Plexus could serve any domain where structure emerges from composition. A companion paper [Paper 1] provides experimental validation of the semantic extraction layer. This paper presents the system vision, theoretical grounding, architecture, and evaluation agenda.
 
 **Keywords:** knowledge graphs, creative composition, self-reinforcing networks, Hebbian learning, multi-frequency updates, external cognition, ambient structural feedback, content-agnostic systems
 
@@ -27,7 +27,7 @@ This is not a storage problem. The documents exist. The code compiles. The notes
 
 The problem is particularly acute in AI-assisted composition. When a developer prompts an LLM to generate a module, the resulting code has dependencies, introduces patterns, and makes architectural choices — but the developer's attention was on the prompt, not the output's structural implications. After several such exchanges, the codebase has grown in ways the developer didn't consciously design. The same dynamic applies to writing, research, and any creative process mediated by generative AI: the artifact grows, but the creator's structural awareness does not keep pace. This is not unique to AI-assisted work — any composition process that generates structure faster than the creator can track produces the same opacity — but AI makes it acute by accelerating production while adding an interruption-heavy interaction pattern.
 
-What's missing is not a post-hoc documentation tool. What's missing is a live structural reflection of the composition as it unfolds — something that evolves alongside the creative process and provides ambient awareness without demanding attention.
+What's missing is not a post-hoc documentation tool. What's missing is a live structural reflection of the composition as it unfolds — something that evolves alongside the creative process and enables clients to provide ambient awareness without demanding attention.
 
 ### 1.2 Plexus: A Live Knowledge Graph for Composition
 
@@ -41,30 +41,30 @@ In every case, the creator composes linearly — word after word, function after
 
 Consider the intended experience across three domains:
 
-*A developer* writes a new function. Edges appear connecting it to the functions it calls and the modules it imports. They prompt an AI assistant to generate a utility module — the graph immediately shows what the generated code introduced, what it depends on, and how it changed the dependency topology. When they refactor, they watch clusters merge and hub nodes shift. The developer didn't ask "what depends on this?" The graph already told them.
+*A developer* writes a new function. Manza sends the change to Plexus; Plexus creates nodes and edges, then emits events as connections form; Manza renders these in a peripheral visualization. They prompt an AI assistant to generate a utility module — Plexus processes the new code and emits events; Manza shows what was introduced, what it depends on, how the topology changed. When they refactor, they watch clusters merge and hub nodes shift in Manza's display. The developer didn't ask "what depends on this?" The client, fed by Plexus events, already showed them.
 
-*A novelist* has been writing for three hours. Without Plexus, she finishes a scene and wonders: have I used this motif before? Which characters know this secret? She searches, re-reads, loses her thread. With Plexus, the graph already shows "betrayal" thickening its connections — three scenes now, each linked to different characters. A new subplot appears as a cluster at the periphery, gradually developing edges inward toward the main narrative structure. She never left the scene she was writing.
+*A novelist* has been writing for three hours. Without Plexus, she finishes a scene and wonders: have I used this motif before? Which characters know this secret? She searches, re-reads, loses her thread. With Trellis feeding her fragments to Plexus and subscribing to its events, she receives a coaching prompt: "betrayal" has thickened its connections — three scenes now, each linked to different characters. A new subplot appears as a cluster at the periphery, gradually developing edges inward toward the main narrative structure. She never left the scene she was writing — Trellis surfaced the structural insight from Plexus without interrupting her.
 
-What does a performer see? Not notation. Not a score. A performer in an interactive installation moves through a sequence, and the graph accumulates: pose nodes connect via transition edges, movement qualities (sustained, sudden, bound) cluster into a visible vocabulary, performer-environment couplings emerge as semantic edges — this gesture reliably triggers that lighting state, this spatial formation activates that soundscape. Across rehearsals, the graph reveals which movement phrases are developing, which performer-to-performer dynamics recur, which couplings are strengthening through repetition. The choreographic structure becomes visible through the graph's memory of what happened and how it connected.
+What does a performer experience? Not notation. Not a score. A performer in an interactive installation moves through a sequence, and EDDI sends gesture data to Plexus. The graph accumulates: pose nodes connect via transition edges, movement qualities (sustained, sudden, bound) cluster into vocabulary, performer-environment couplings strengthen as semantic edges. EDDI subscribes to Plexus events and translates edge weights into environmental response — colors warm, sounds layer, the space responds to accumulated history. Across rehearsals, the strengthening edges (communicated via Plexus events) produce a richer environmental response. The choreographic structure becomes *felt* through the environment's memory of what happened and how it connected.
 
-The graph behaves identically in all cases — nodes appear, edges form, clusters emerge, hubs solidify, unused connections fade. The content-type-specific analyzers (tree-sitter for code, narrative parsers for fiction, citation extractors for research, pose trackers for movement) feed different node and edge types into the same graph engine with the same self-reinforcing dynamics. Coding and choreography, fiction and research, viewed through the graph, are designed to feel like the same activity: *composition with live structural feedback*.
+Plexus behaves identically in all cases — nodes appear, edges form, clusters emerge, hubs solidify, unused connections fade. The content-type-specific clients (Manza for code, Trellis for fiction, EDDI for movement) send different data types into the same graph engine with the same self-reinforcing dynamics, and subscribe to the same event stream. Clients render those events however suits their domain: visual graphs, coaching prompts, environmental responses. Coding and choreography, fiction and research, fed through Plexus and rendered by their respective clients, are designed to feel like the same activity: *composition with live structural feedback*.
 
-The design hypothesis is that this produces something closer to a flow state than traditional tooling offers — the creator maintains structural awareness without interrupting composition to manually trace dependencies, re-read earlier chapters, or search for related notes. Whether this hypothesis holds is an empirical question we address in §5. The graph is intended as peripheral vision for knowledge work.
+The design hypothesis is that this produces something closer to a flow state than traditional tooling offers — the creator maintains structural awareness without interrupting composition to manually trace dependencies, re-read earlier chapters, or search for related notes. Whether this hypothesis holds is an empirical question we address in §5. Plexus provides the structural data; clients render it as peripheral vision for knowledge work.
 
 ### 1.3 Design Principles
 
 Plexus's core design principles:
 
-- **Real-time evolution**: The graph updates as files are saved, code is generated, and notes are written — not as a batch process after the fact.
+- **Real-time evolution**: The graph updates as clients send data — file changes, generated code, new fragments, gesture streams — not as a batch process after the fact. Plexus emits events that clients can subscribe to for real-time feedback.
 - **Multi-frequency updates**: Different semantic layers update at different cadences. Code structure (imports, definitions, call relationships) updates on every validation cycle. Semantic structure (shared terms, topic clusters) updates on save or pause. Conceptual structure (deeper cross-document relationships) updates in the background or on explicit refresh. This tiered approach keeps the graph responsive without saturating compute.
 - **Self-reinforcing edges**: Relationships strengthen through domain-appropriate validation and decay without reinforcement, implementing a form of Hebbian learning for knowledge structures. An edge validated through testing, compositional development, or deliberate repetition gains structural confidence. An unvalidated edge fades. Over time, the graph is hypothesized to converge on the relationships that actually matter to the practitioner.
 - **Provenance throughout**: Every concept in the graph traces back to a specific file, line, and evidence span. Click a node, open the source. The graph is not an abstraction layer on top of the work — it is a navigable index into it.
-- **Multi-system integration**: Plexus depends on llm-orc (LLM orchestration) and clawmarks (provenance tracking) as service dependencies, and exposes its graph via MCP for any domain-specific consumer. Execution patterns inform graph structure and graph analysis informs future orchestration, creating a bidirectional learning loop.
+- **Multi-system integration**: Plexus exposes its graph via MCP for any domain-specific consumer and can optionally integrate with llm-orc (LLM orchestration) and clawmarks (provenance tracking). Clients can derive structure through any means appropriate to their domain — LLM extraction, deterministic parsing, movement classification, manual annotation. Execution patterns inform graph structure and graph analysis can inform future extraction strategies, creating a bidirectional learning loop.
 - **Content-agnostic engine**: The same graph engine, edge dynamics, and update architecture serve all creative domains. Only the analyzers differ.
 
 ### 1.4 This Paper
 
-This paper presents the system design, theoretical grounding, and evaluation agenda for Plexus. A companion paper [Paper 1] reports the empirical experiments that validated the semantic extraction layer — one critical subsystem within the broader architecture. Here we address the full system: the content-agnostic graph engine, the self-reinforcing edge model, the multi-frequency update architecture, the service dependencies (llm-orc, clawmarks), and three domain consumers that demonstrate Plexus across creative domains (Manza, Trellis, EDDI).
+This paper presents the system design, theoretical grounding, and evaluation agenda for Plexus. A companion paper [Paper 1] reports the empirical experiments that validated the semantic extraction layer — one critical subsystem within the broader architecture. Here we address the full system: the content-agnostic graph engine, the self-reinforcing edge model, the multi-frequency update architecture, optional integrations (llm-orc for LLM-based extraction, clawmarks for provenance), and three domain consumers that demonstrate Plexus across creative domains (Manza, Trellis, EDDI) — with the understanding that Plexus could serve any domain where structure emerges from composition.
 
 ---
 
@@ -78,7 +78,7 @@ The idea that external representations reduce cognitive burden has deep theoreti
 
 Distributed cognition [16] pushes this further: cognitive processes are not confined to individual minds but distributed across people, artifacts, and environments. Hutchins argues that tools do not merely "amplify" cognition — they enable qualitatively different cognitive processes using different skills. This is not a metaphor. A developer with a live knowledge graph is not simply thinking harder about structure; they are engaging in a different kind of structural reasoning, one that relies on perceptual processing rather than memory retrieval.
 
-Three specific mechanisms explain how [17]. *Computational offloading* reduces working memory demands. *Re-representation* presents information in a form better suited to the task. *Graphical constraining* limits the space of possible inferences. Plexus's graph visualization performs all three: it offloads structural tracking, re-represents linear composition as a network topology, and constrains attention to the semantically relevant neighborhood of the current work.
+Three specific mechanisms explain how [17]. *Computational offloading* reduces working memory demands. *Re-representation* presents information in a form better suited to the task. *Graphical constraining* limits the space of possible inferences. A client's visualization of the Plexus graph can perform all three: it offloads structural tracking, re-represents linear composition as a network topology, and constrains attention to the semantically relevant neighborhood of the current work. Plexus provides the data; clients provide the rendering that achieves these cognitive benefits.
 
 Clark and Chalmers [18] provide philosophical grounding through the extended mind thesis: cognitive processes literally extend into the environment when external resources play the functional role that internal memory would otherwise play. The strong version of this claim — that Plexus literally *is* part of the composer's cognitive system — may overstate things. But the weaker claim is sufficient: a live knowledge graph changes the *kind* of structural reasoning available, from memory retrieval to perceptual processing. That shift is what matters.
 
@@ -88,13 +88,13 @@ This critique applies to tools that outsource *reasoning* — where the tool doe
 
 ### 2.2 Flow State and Structural Feedback
 
-Csikszentmihalyi [19] identifies three conditions for flow: clear goals, immediate feedback, and challenge-skill balance. The second condition is directly relevant. Traditional development environments provide delayed structural feedback — the developer must actively query for dependencies, references, or call hierarchies. A live knowledge graph provides immediate, continuous structural feedback without requiring an explicit query.
+Csikszentmihalyi [19] identifies three conditions for flow: clear goals, immediate feedback, and challenge-skill balance. The second condition is directly relevant. Traditional development environments provide delayed structural feedback — the developer must actively query for dependencies, references, or call hierarchies. A client subscribed to Plexus events can provide immediate, continuous structural feedback without requiring an explicit query — the graph engine emits events as structure changes, and the client renders them in real-time.
 
-Dietrich [20] adds a neurological constraint: flow involves transient hypofrontality — the prefrontal cortex partially deactivates, reducing self-monitoring and analytical processing. The implication is strict. Structural feedback must be *ambient and peripheral*. A knowledge graph visualization that demands active reading would disrupt flow; one that operates at the level of peripheral awareness — shapes shifting, clusters forming, edges thickening — preserves it. Matthews et al. [21] study this design space for glanceable peripheral displays, finding that ambient information can maintain awareness without attentional capture.
+Dietrich [20] adds a neurological constraint: flow involves transient hypofrontality — the prefrontal cortex partially deactivates, reducing self-monitoring and analytical processing. The implication for client design is strict: structural feedback must be *ambient and peripheral*. A client visualization that demands active reading would disrupt flow; one that operates at the level of peripheral awareness — shapes shifting, clusters forming, edges thickening — preserves it. Matthews et al. [21] study this design space for glanceable peripheral displays, finding that ambient information can maintain awareness without attentional capture. This is a client rendering concern, not a graph engine concern — Plexus emits events; clients decide whether to render them ambiently or demandingly.
 
 A caveat on the flow framework is warranted. Farrokh et al. [51] argue that critiques of flow theories like transient hypofrontality have emerged within the same cognitive metatheoretical framework without challenging its underlying assumptions about the mind-body relationship. Wonders et al. [52] systematically review flow measurement protocols and find significant methodological problems: non-validated psychological instruments in the majority of studies, ambiguous reporting of verification results, and frequent failure to match task difficulty to participant skill levels — undermining the ecological validity of many flow claims. The flow-performance relationship, while positive, is moderate (r = 0.31) with unclear causal direction [52]. We retain the flow framework not because the science is settled — it is not — but because its core design implication is robust regardless: ambient, peripheral structural feedback that avoids interrupting the primary task is preferable to feedback that demands explicit queries and mode-switching. Whether this produces "flow" in Csikszentmihalyi's technical sense is an empirical question we address in §5.1 with awareness of these methodological challenges.
 
-Digital audio workstations, 3D modeling tools, and game engines already provide this kind of live structural feedback. Waveforms evolve as musicians compose; wireframes respond as modelers sculpt; physics simulations run alongside level design. In each case, the structural representation co-evolves with the creative act. Software development has moved toward this with live linting and type checking, but these provide *correctness* feedback ("is this valid?"), not *structural* feedback ("what did this change connect to?"). A live knowledge graph occupies a different niche: it shows the semantic topology of the work as it emerges.
+Digital audio workstations, 3D modeling tools, and game engines already provide this kind of live structural feedback. Waveforms evolve as musicians compose; wireframes respond as modelers sculpt; physics simulations run alongside level design. In each case, the structural representation co-evolves with the creative act. Software development has moved toward this with live linting and type checking, but these provide *correctness* feedback ("is this valid?"), not *structural* feedback ("what did this change connect to?"). A client rendering Plexus events occupies a different niche: it can show the semantic topology of the work as it emerges.
 
 ### 2.3 Cognitive Costs of AI-Assisted Composition
 
@@ -106,7 +106,7 @@ The opacity problem (§1.1) has a cognitive mechanism that extends beyond the AI
 
 **AI makes the problem acute.** Consider "vibe-coding": a developer prompts an AI to generate modules iteratively, accepting code that works without fully comprehending how it works. After a dozen exchanges, the codebase has architectural decisions the developer didn't make, dependency patterns they didn't design, and structural implications they never evaluated. The code compiles; the tests pass; the developer has lost structural awareness of their own project. Cito and Bork [10] describe this as "material disengagement" — developers orchestrate code generation without comprehending the output. Qiao et al. [11] measure the resulting comprehension-performance gap in brownfield development. Al Haque et al. [12] note that few empirical studies of cognitive load from AI coding assistants yet exist — the phenomenon is documented but under-measured. A 2025 industry survey [13] found 65% of developers report AI misses context during refactoring, with 60% citing similar gaps in test generation and review. The artifact grew through a process the creator didn't structurally track. The Vibe-Check Protocol [53] formalizes this phenomenon through three metrics: the Cold Start Refactor (measuring skill retention via procedural decay when AI is removed), Hallucination Trap Detection (measuring vigilance via signal detection theory), and the Explainability Gap (measuring the metacognitive disconnect between generated code complexity and the developer's understanding). This is the same opacity that affects the choreographer and the researcher — but compressed into minutes rather than weeks, and compounded by the interruption costs of the prompt→wait→evaluate cycle. Noda et al. [54] identify precisely the three dimensions at stake — feedback loops, cognitive load, and flow state — as the core drivers of developer experience, providing an independent validation of the design space Plexus addresses.
 
-**External structural representations reclaim cognitive capacity.** The remedy is not better prompting or slower generation — it is structural. Endsley [45] defines situation awareness as the perception of elements in the environment, comprehension of their meaning, and projection of their future state. This is precisely what erodes in information-dense composition: the creator loses perception of what has been added, comprehension of how it connects, and projection of where the structure is heading. Larkin and Simon [46] demonstrate that diagrams reduce cognitive load by making information explicit that would otherwise require search and inference — a diagram is worth ten thousand words because it replaces memory retrieval with perceptual processing. Kirsh [47] extends this: external representations do not merely offload cognition but expand the cognitive system's boundaries, enabling forms of reasoning that are impossible with internal representations alone. This is where Plexus enters. A live knowledge graph provides ongoing situation awareness of the composition's structure — what was added, how it connects, where clusters are forming, which relationships are strengthening. It reclaims the cognitive capacity that information-dense processes erode, not by slowing production but by making the structural consequences of production continuously visible.
+**External structural representations reclaim cognitive capacity.** The remedy is not better prompting or slower generation — it is structural. Endsley [45] defines situation awareness as the perception of elements in the environment, comprehension of their meaning, and projection of their future state. This is precisely what erodes in information-dense composition: the creator loses perception of what has been added, comprehension of how it connects, and projection of where the structure is heading. Larkin and Simon [46] demonstrate that diagrams reduce cognitive load by making information explicit that would otherwise require search and inference — a diagram is worth ten thousand words because it replaces memory retrieval with perceptual processing. Kirsh [47] extends this: external representations do not merely offload cognition but expand the cognitive system's boundaries, enabling forms of reasoning that are impossible with internal representations alone. This is where Plexus enters. A graph engine emitting structural events, rendered by a client as live feedback, provides ongoing situation awareness of the composition's structure — what was added, how it connects, where clusters are forming, which relationships are strengthening. It reclaims the cognitive capacity that information-dense processes erode, not by slowing production but by making the structural consequences of production continuously visible through client rendering of Plexus events.
 
 ### 2.4 Self-Reinforcing and Memory-Inspired Knowledge Structures
 
@@ -159,11 +159,10 @@ No existing system integrates all of these elements:
 | Self-reinforcing edges | — | — | ✓ (recall-only) | — | ✓ |
 | Evidence provenance | — | — | — | — | ✓ |
 | Multi-frequency updates | — | — | — | — | ✓ |
-| Creative composition UX | — | — | — | — | ✓ |
+| Event emission for clients | — | — | — | — | ✓ |
 | Content-agnostic (code, text, movement) | — | — | — | — | ✓ |
-| Flow-preserving ambient display | — | — | — | — | ✓ |
 
-Graphiti shares the real-time incremental approach but lacks self-reinforcement, provenance, and visualization. Spaced repetition systems implement Hebbian-style dynamics but optimise recall of known facts rather than discovery of emergent structure. No existing system combines live structural feedback with a self-reinforcing knowledge graph in a creative composition environment.
+Graphiti shares the real-time incremental approach but lacks self-reinforcement, provenance, and event emission for client rendering. Spaced repetition systems implement Hebbian-style dynamics but optimise recall of known facts rather than discovery of emergent structure. No existing system combines a self-reinforcing knowledge graph with event emission that enables clients to provide live structural feedback in creative composition environments.
 
 ---
 
@@ -171,15 +170,15 @@ Graphiti shares the real-time incremental approach but lacks self-reinforcement,
 
 ### 3.1 Architecture Overview
 
-Plexus is implemented as a Rust-based knowledge graph engine with SQLite storage, exposed via the Model Context Protocol (MCP). Plexus has two service dependencies and any number of domain-specific consumers:
+Plexus is implemented as a Rust-based knowledge graph engine with SQLite storage, exposed via the Model Context Protocol (MCP). Clients send data to Plexus (new nodes, validation signals, etc.); Plexus processes at multiple frequencies and emits events (node created, edge strengthened, cluster formed, etc.) that clients can subscribe to. Plexus has two service dependencies and any number of domain-specific consumers:
 
 ```mermaid
 graph TB
     subgraph "Plexus Core"
-        Plexus["Plexus<br/>(knowledge graph engine)"]
+        Plexus["Plexus<br/>(knowledge graph engine)<br/>receives data, emits events"]
     end
 
-    subgraph "Service Dependencies"
+    subgraph "Optional Integrations"
         LLMOrc["llm-orc<br/>(LLM orchestration)"]
         Clawmarks["clawmarks<br/>(provenance tracking)"]
     end
@@ -188,30 +187,32 @@ graph TB
         Manza["Manza<br/>(file viewer/editor — code)"]
         Trellis["Trellis<br/>(creative writing)"]
         EDDI["EDDI<br/>(interactive performance)"]
-        Other["Any MCP client"]
+        Other["Any MCP client<br/>(notes, research, etc.)"]
     end
 
-    LLMOrc -->|semantic extraction| Plexus
-    Clawmarks -->|provenance| Plexus
-    Plexus -->|extraction requests| LLMOrc
-    Plexus -->|provenance writes| Clawmarks
+    LLMOrc -.->|semantic extraction| Plexus
+    Clawmarks -.->|provenance| Plexus
+    Plexus -.->|extraction requests| LLMOrc
+    Plexus -.->|provenance writes| Clawmarks
 
-    Manza <-->|MCP| Plexus
-    Trellis <-->|MCP| Plexus
-    EDDI <-->|MCP| Plexus
-    Other <-->|MCP| Plexus
+    Manza <-->|data in / events out| Plexus
+    Trellis <-->|data in / events out| Plexus
+    EDDI <-->|data in / events out| Plexus
+    Other <-->|data in / events out| Plexus
 ```
 
-Plexus depends on two services:
-- **llm-orc** orchestrates LLM ensembles for semantic extraction — stateless, so extraction strategies evolve independently of graph storage.
-- **clawmarks** records provenance (file, line, evidence span) for every extracted concept — enables "go to source" from any consuming interface.
+Plexus integrates with two services (though neither is strictly required for all use cases):
+- **llm-orc** orchestrates LLM ensembles for semantic extraction — one method for populating the graph's semantic and conceptual layers. Clients that derive semantics through other means (movement classification, deterministic parsing, manual annotation) need not use llm-orc.
+- **clawmarks** records provenance (file, line, evidence span) for concepts in the graph — enables "go to source" from any consuming interface. Clients that don't require source provenance (e.g., real-time performance systems) may operate without clawmarks.
 
 Plexus does not depend on any particular interface. The domain-specific consumers described in §4 — Manza, Trellis, EDDI — are independent systems that use Plexus to gain semantic graph capabilities in their respective domains:
 - **Manza** is a file viewer and editor where users collate files and folders into "contexts" to build semantic knowledge graphs of codebases and documents. Plexus originated as a subsystem of Manza but is now an independent service.
 - **Trellis** is a creative writing scaffolding system (§4.2) that consumes the graph to surface fragment connections through coaching prompts rather than graph visualization.
 - **EDDI** is an interactive performance system (§4.3) that consumes the graph to drive environmental responses (lighting, sound, projection) rather than visual display.
 
-These consumers illustrate the content-agnostic claim: the same graph engine, the same self-reinforcing dynamics, and the same multi-frequency update model serve code, writing, and movement. Only the domain-specific analyzers and the interface modality differ.
+These consumers illustrate the content-agnostic claim: the same graph engine, the same self-reinforcing dynamics, and the same multi-frequency update model serve code, writing, and movement. Only the domain-specific analyzers and the interface modality differ. Plexus could serve any number of additional domains — workplace note-taking, legal document analysis, scientific research synthesis — with the same architecture. The three examples here are illustrations, not limitations.
+
+Importantly, llm-orc is one method for deriving semantic structure, but Plexus does not require it. Clients can populate the graph using any method appropriate to their domain: EDDI uses Viewpoints movement theory and mathematical heuristics rather than LLM extraction; a code client might use purely deterministic parsing for structural edges; a future client might use other ML models, manual annotation, or domain-specific heuristics. Plexus receives nodes and edges from clients and emits events — it is agnostic to how those nodes and edges were derived.
 
 ### 3.2 Data Model
 
@@ -243,7 +244,7 @@ Each layer manifests differently depending on the creative domain:
 | Layer | Code | Fiction | Research | Movement/Performance |
 |-------|------|---------|----------|---------------------|
 | **Structural** | Imports, calls, definitions, type relationships | Character appearances, scene boundaries, dialogue attribution | Citations, section structure, reference links | Poses, transitions, spatial formations, performer positions |
-| **Relational** | Shared terms, module co-usage, naming patterns | Character co-occurrence, setting reuse, motif repetition | Term overlap, shared citations, methodological similarity | Movement quality similarity (Laban efforts), gesture vocabulary clustering, spatial proximity |
+| **Relational** | Shared terms, module co-usage, naming patterns | Character co-occurrence, setting reuse, motif repetition | Term overlap, shared citations, methodological similarity | Movement quality similarity, gesture vocabulary clustering, spatial proximity |
 | **Semantic** | Concepts, architectural patterns, design intent | Themes, narrative arcs, character development trajectories | Arguments, claims, evidential support/contradiction | Choreographic phrases, performer-environment coupling, trigger-response mappings |
 | **Conceptual** | Module communities, hub abstractions, dependency topology | Plot thread structure, thematic communities, narrative architecture | Argument structure, knowledge gaps, synthesis opportunities | Emergent movement patterns, ensemble dynamics, performance evolution over time |
 
@@ -361,7 +362,7 @@ This is the most radical version of the "ambient structural feedback" principle 
 The gesture-to-graph pathway maps EDDI's data streams onto Plexus's four-layer model:
 
 - **Structural layer**: Motion History Images (MHI) and Motion Energy Images (MEI) from pose estimation produce pose nodes, transition edges, and spatial formation data. Updated at camera frame rate, debounced to structural layer latency (<100ms).
-- **Relational layer**: Laban Effort qualities (Weight, Time, Space, Flow) extracted from movement data cluster gestures into a movement vocabulary. Spatial proximity and temporal co-occurrence create relational edges between performers.
+- **Relational layer**: Movement qualities extracted via domain-specific methods (potentially including Viewpoints categories, mathematical heuristics, or other movement grammars — EDDI's classification approach is still in development) cluster gestures into a movement vocabulary. Spatial proximity and temporal co-occurrence create relational edges between performers.
 - **Semantic layer**: Choreographic phrases — sequences of gestures that form compositional units — are discovered through pattern recognition. Performer-environment coupling (gesture X triggers lighting state Y) becomes explicit as semantic edges with trigger/response semantics.
 - **Self-reinforcing edges**: Performer-environment couplings that fire reliably strengthen, directly modulating the environment's response via arousal-theoretic mapping. Movement phrases that recur across rehearsals gain weight. Novel gestures start with low-weight edges that strengthen through deliberate repetition — in the Viewpoints sense, where repetition connotes compositional importance — or fade if they were one-off explorations.
 
