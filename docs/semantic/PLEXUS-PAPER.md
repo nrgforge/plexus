@@ -609,7 +609,7 @@ The companion paper [66] demonstrates the methodology we intend to apply through
 
 ### Creative Writing Scaffolding
 
-[56] Lee, M., Liang, P., & Yang, Q. (2024). Shaping Human-AI Collaboration: Varied Scaffolding Levels in Co-writing with Language Models. In *Proceedings of CHI 2024*, ACM.
+[56] Dhillon, P. S., Molaei, S., Li, J., Golub, M., Zheng, S., & Robert, L. P. (2024). Shaping Human-AI Collaboration: Varied Scaffolding Levels in Co-writing with Language Models. In *Proceedings of CHI 2024*, ACM.
 
 [57] Gero, K. I. et al. (2025). From Pen to Prompt: How Creative Writers Integrate AI into their Writing Practice. *arXiv preprint arXiv:2411.03137*.
 
