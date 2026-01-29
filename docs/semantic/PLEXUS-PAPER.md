@@ -313,9 +313,11 @@ The movement domain illustrates the principle, even as it remains computationall
 
 We hypothesize that validation-based reinforcement causes the graph to converge on the relationships that matter to the practitioner — validated structures solidify, unvalidated sketches fade, and emergent co-occurrences surface as candidates for validation. Whether this convergence occurs, how quickly it stabilizes, and whether it produces useful structure are empirical questions addressed in §5.2.
 
-### 3.5 llm-orc: Orchestration
+### 3.5 llm-orc and clawmarks: Optional Integrations
 
-llm-orc provides the LLM orchestration layer. It manages ensemble configurations (YAML files specifying agent chains), handles fan-out parallelism for compositional extraction, and supports multiple model profiles. The separation from Plexus is deliberate: extraction strategies evolve independently of graph storage.
+**Minimal configuration:** Plexus operates without llm-orc and clawmarks. In minimal mode, clients send structure directly via MCP (e.g., Manza sends tree-sitter parse results), the graph stores nodes and edges, and clients subscribe to events. This is sufficient for structural-layer feedback on code. What's lost: semantic extraction (no LLM-derived concepts), provenance tracking (no source-line links), and the reinforcement signals from extraction quality. The optional integrations add these capabilities.
+
+**llm-orc** provides the LLM orchestration layer. It manages ensemble configurations (YAML files specifying agent chains), handles fan-out parallelism for compositional extraction, and supports multiple model profiles. The separation from Plexus is deliberate: extraction strategies evolve independently of graph storage.
 
 The bidirectional integration goes beyond extraction: llm-orc execution outcomes feed back into Plexus as reinforcement signals. When an ensemble produces high-quality results, the concepts it extracted receive a confidence boost. When extraction fails or produces low-confidence output, the graph marks those regions for re-processing.
 
@@ -612,6 +614,8 @@ The companion paper [Paper 1] demonstrates the methodology we intend to apply th
 [61] Seif El-Nasr, M., Niedenthal, S., Knez, I., Almeida, P., & Zupko, J. (2007). Dynamic Lighting for Tension in Games. *Game Studies*, 7(1). See also: Seif El-Nasr, M. (2005). Intelligent Lighting for Game Environments. *Journal of Game Development*, 1(2).
 
 ### Companion Papers
+
+[Paper 1] Green, N. (2026). Semantic Extraction for Live Knowledge Graphs: An Empirical Study of LLM Ensemble Strategies. *Working Paper*. (Available upon request; to be released alongside this paper.)
 
 [62] Green, N. (2026). Trellis: A Creative Scaffolding System for Writers — Toward Non-Generative AI Support for Creative Practice. *Working Paper*.
 
