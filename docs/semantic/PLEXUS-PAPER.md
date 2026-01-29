@@ -11,7 +11,7 @@ ORCID: 0000-0003-0157-7744
 
 ## Abstract
 
-Knowledge accumulates faster than understanding across all creative domains — code grows through AI-assisted generation, research notes proliferate across tools, choreographic vocabulary develops through rehearsal — yet practitioners lose structural awareness of their own work. We present **Plexus**, a content-agnostic knowledge graph engine designed to evolve alongside creative composition. Plexus receives data from domain-specific clients, processes it at multiple frequencies with self-reinforcing edge dynamics inspired by Hebbian learning, and emits events that clients can use to provide ambient structural awareness without interrupting the creative process. The system updates at multiple frequencies — structural changes appear in <100ms, relational clustering in <2s, semantic extraction in 10–30s, and conceptual analysis on longer timescales — creating a peripheral structural reflection of the emerging work. We ground the design in external cognition theory, flow-state research, the cognitive costs of AI-assisted work, memory-inspired learning models, and computational movement analysis. Plexus can optionally integrate with llm-orc (LLM orchestration) and clawmarks (provenance tracking), but clients can derive structure through any means appropriate to their domain. Three domain consumers demonstrate the content-agnostic claim: Manza (code and document composition), Trellis (creative writing scaffolding), and EDDI (interactive performance) — though Plexus could serve any domain where structure emerges from composition. A companion paper [Paper 1] provides experimental validation of the semantic extraction layer. This paper presents the system vision, theoretical grounding, architecture, and evaluation agenda.
+Knowledge accumulates faster than understanding across all creative domains — code grows through AI-assisted generation, research notes proliferate across tools, choreographic vocabulary develops through rehearsal — yet practitioners lose structural awareness of their own work. We propose **Plexus**, a content-agnostic knowledge graph engine designed to evolve alongside creative composition. Plexus receives data from domain-specific clients, processes it at multiple frequencies with self-reinforcing edge dynamics inspired by Hebbian learning, and emits events that clients can use to provide ambient structural awareness without interrupting the creative process. The system updates at multiple frequencies — structural changes appear in <100ms, relational clustering in <2s, semantic extraction in 10–30s, and conceptual analysis on longer timescales — creating a peripheral structural reflection of the emerging work. We ground the design in external cognition theory, flow-state research, the cognitive costs of AI-assisted work, memory-inspired learning models, and computational movement analysis. Plexus can optionally integrate with llm-orc (LLM orchestration) and clawmarks (provenance tracking), but clients can derive structure through any means appropriate to their domain. Three domain consumers demonstrate the content-agnostic claim: Manza (code and document composition), Trellis (creative writing scaffolding), and EDDI (interactive performance) — though Plexus could serve any domain where structure emerges from composition. A companion paper [Paper 1] provides experimental validation of the semantic extraction layer. This paper presents a design vision: the theoretical grounding, proposed architecture, and evaluation agenda for a system that exists in partial implementation. Core components (the graph engine, semantic extraction, event emission) are operational; others (self-reinforcing edge dynamics, the full multi-frequency update model, domain consumers beyond Manza) remain at the design stage.
 
 **Keywords:** knowledge graphs, creative composition, self-reinforcing networks, Hebbian learning, multi-frequency updates, external cognition, ambient structural feedback, content-agnostic systems
 
@@ -68,6 +68,18 @@ Finally, the engine is content-agnostic: the same graph engine, edge dynamics, a
 ### 1.4 This Paper
 
 This paper presents the system design, theoretical grounding, and evaluation agenda for Plexus. A companion paper [Paper 1] reports the empirical experiments that validated the semantic extraction layer — one critical subsystem within the broader architecture. Here we address the full system: the content-agnostic graph engine, the self-reinforcing edge model, the multi-frequency update architecture, optional integrations (llm-orc for LLM-based extraction, clawmarks for provenance), and three domain consumers that demonstrate Plexus across creative domains (Manza, Trellis, EDDI) — with the understanding that Plexus could serve any domain where structure emerges from composition.
+
+### 1.5 Scope and Status
+
+This is a design paper, not a systems paper. We present a theoretical framework, an architectural vision, and an evaluation agenda — not a fully implemented system with empirical validation.
+
+**What exists:** The core graph engine is operational. Semantic extraction via LLM ensembles has been validated (Paper 1). The event emission architecture is implemented and serves Manza (the code/document client). The MCP protocol for client integration is functional.
+
+**What is designed but not yet built:** The self-reinforcing edge dynamics (§3.4) exist as a specification. The full multi-frequency update model (§3.3) is partially implemented — fast structural updates work; slower semantic tiers are operational but the coordination model is incomplete. Trellis and EDDI are at different stages: Trellis has a working prototype described in a companion paper [62]; EDDI remains a design specification informed by movement analysis research.
+
+**What this paper claims:** We argue that the proposed architecture *would* address the opacity problem (§1.1) if fully implemented. We provide theoretical grounding for why the design should work, drawing on external cognition, flow research, and memory-inspired learning. The evaluation agenda (§5) specifies how to test these claims. We do not claim the system already works as described — we claim it is a coherent design worth building and testing.
+
+This framing matters for how to read subsequent sections. When we describe how edges "strengthen through validation" (§3.4), we are describing the intended behavior of a system under development, not reporting observations of a deployed system. When we describe domain consumers (§4), we are describing how Plexus *would* serve these domains, with varying levels of implementation behind each description.
 
 ---
 
@@ -259,7 +271,7 @@ Priority queuing ensures the semantic layer stays relevant: the currently active
 
 ### 3.4 Self-Reinforcing Edge Dynamics
 
-The self-reinforcing model implements three operations inspired by neuroplasticity:
+The self-reinforcing model is designed to implement three operations inspired by neuroplasticity:
 
 | Operation | Neuroscience Analogue | Graph Behaviour |
 |-----------|----------------------|----------------|
@@ -329,9 +341,13 @@ The extraction pipeline routes documents through appropriate ensemble configurat
 
 ### 4.1 Manza: Code and Document Composition
 
+*Implementation status: Operational. Manza is the primary client and the context in which Plexus was developed.*
+
 Manza is a file viewer and editor where users collate files and folders into "contexts" to build semantic knowledge graphs of codebases and documents. It is the original context in which Plexus was developed and provides the most direct interface to the graph: ambient visualization designed to preserve flow state during vibe-coding and other composition workflows. In Manza, the graph is a visible peripheral display — the developer sees clusters form, edges thicken, and dependency topology shift as they compose. This is the visual-display modality of ambient structural feedback.
 
 ### 4.2 Trellis: Writer's Fragment Enrichment
+
+*Implementation status: Working prototype with core accumulation and coaching features; Plexus integration designed but not yet built. See [62] for the companion paper describing the current system.*
 
 Trellis is a creative writing scaffolding system built on the principle of *scaffolding, not generation* — it supports the writer's process without producing content on their behalf. Writers accumulate fragments: sentences, observations, character sketches, plot ideas, research notes. These fragments are the raw material of composition, but their interconnections are invisible until the writer manually traces them.
 
@@ -357,6 +373,8 @@ This constraint is operationalized through what the Trellis paper [62] calls the
 The scaffolding-not-generation principle has emerging empirical support. Lee et al. [56] study varied scaffolding levels in human-AI co-writing and find that while paragraph-level AI content increases writing volume, it diminishes the writer's sense of ownership and satisfaction — extensive AI content reduces the experience of creative effort. Gero et al. [57] study eighteen creative writers integrating AI into their practice and find that personal essayists are the most restrictive about AI-generated text, using AI only for research and feedback, not prose. Ramesh et al. [58] advocate explicitly for process-oriented AI design: systems that function as "critical partners" scaffolding writing sub-processes rather than automating them, preserving active knowledge transformation over passive acceptance. These findings validate Trellis's design constraint: the system reveals structure the writer has already created (observation) but does not generate content or impose interpretation (generation). The distinction maps onto Vygotsky's zone of proximal development — the tool operates in the space between what the writer can perceive unaided and what becomes visible with structural support, without crossing into the territory of doing the work for them.
 
 ### 4.3 EDDI: Gesture-to-Graph Pathway
+
+*Implementation status: Design specification informed by movement analysis research. No working implementation yet exists.*
 
 EDDI (Emergent Dynamic Design Interface) is an interactive performance system that maps gesture to environment (lighting, sound, projection). The performer's body becomes the input device; the performance space becomes the output. Plexus provides EDDI with a memory — a graph that accumulates the history of performer-environment interactions and drives the environment's evolving response.
 
