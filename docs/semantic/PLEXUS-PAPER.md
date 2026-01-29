@@ -117,6 +117,8 @@ Digital audio workstations, 3D modeling tools, and game engines already provide 
 
 ### 2.3 Cognitive Costs of AI-Assisted Composition
 
+*This section synthesizes findings from cognitive psychology (working memory, cognitive load), HCI (interruption research, situation awareness), and software engineering (developer experience, AI-assisted coding). Readers from individual disciplines may find some terminology unfamiliar; we gloss key terms inline.*
+
 The opacity problem (§1.1) has a cognitive mechanism that extends beyond the AI-specific case. We develop this in four steps: the interaction pattern disrupts flow, the underlying problem is domain-general, AI makes it acute, and external structural representations provide the remedy.
 
 **The prompt→wait→evaluate cycle disrupts flow.** AI-assisted composition imposes a distinctive interaction pattern: the creator formulates a prompt, waits for generation, then evaluates output they did not write. Mark et al. [42] demonstrate that interrupted work exacts significant cognitive costs — workers compensate for interruptions by completing tasks faster but experience substantially more stress, frustration, and time pressure. Each generation forces the creator out of compositional flow into an analytical evaluation mode; the cycle is an interruption factory. Subramonyam et al. [43] identify a deeper challenge specific to LLM interaction: the "gulf of envisioning," where users struggle to formulate effective prompts because they cannot anticipate the system's behavior. What makes this costly is not just delayed feedback (§2.2) — it is that the interaction pattern alternates between two incompatible cognitive modes: generative composition and critical evaluation of unfamiliar output.
