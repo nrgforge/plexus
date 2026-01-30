@@ -11,7 +11,7 @@ ORCID: 0000-0003-0157-7744
 
 ## Abstract
 
-Knowledge accumulates faster than understanding across all creative domains — code grows through AI-assisted generation, research notes proliferate across tools, choreographic vocabulary develops through rehearsal — yet practitioners lose structural awareness of their own work. We propose **Plexus**, a content-agnostic knowledge graph engine designed to evolve alongside creative composition. Plexus receives data from domain-specific clients, processes it at multiple frequencies with self-reinforcing edge dynamics inspired by Hebbian learning, and emits events that clients can use to provide ambient structural awareness without interrupting the creative process. The system updates at multiple frequencies — structural changes appear in <100ms, relational clustering in <2s, semantic extraction in 10–30s, and conceptual analysis on longer timescales — creating a peripheral structural reflection of the emerging work. We ground the design in external cognition theory, flow-state research, the cognitive costs of AI-assisted work, memory-inspired learning models, and computational movement analysis. Plexus can optionally integrate with llm-orc (LLM orchestration) and clawmarks (provenance tracking), but clients can derive structure through any means appropriate to their domain. Three domain consumers demonstrate the content-agnostic claim: Manza (code and document composition), Trellis (creative writing scaffolding), and EDDI (interactive performance) — though Plexus could serve any domain where structure emerges from composition. A companion paper [66] provides experimental validation of the semantic extraction layer. This paper presents a design vision: the theoretical grounding, proposed architecture, and evaluation agenda for a system that exists in partial implementation. Core components (the graph engine, semantic extraction, event emission) are operational; others (self-reinforcing edge dynamics, the full multi-frequency update model, domain consumers beyond Manza) remain at the design stage.
+Knowledge accumulates faster than understanding across all creative domains — code grows through AI-assisted generation, research notes proliferate across tools, choreographic vocabulary develops through rehearsal — yet practitioners lose structural awareness of their own work. We propose **Plexus**, a content-agnostic knowledge graph engine designed to evolve alongside creative composition. Plexus receives data from domain-specific clients, processes it at multiple frequencies with self-reinforcing edge dynamics inspired by Hebbian learning, and emits events that clients can use to provide ambient structural awareness without interrupting the creative process. The system updates at multiple frequencies — structural changes appear in <100ms, relational clustering in <2s, semantic extraction in 10–30s, and conceptual analysis on longer timescales — creating a peripheral structural reflection of the emerging work. We ground the design in external cognition theory, flow-state research, the cognitive costs of AI-assisted work, memory-inspired learning models, and computational movement analysis. Plexus requires two domain-specific semantic capabilities — semantic extraction (populating the graph's upper layers) and provenance (grounding concepts in source material) — but these are fulfilled by pluggable adapters whose implementations vary by domain. For text-based domains, llm-orc (LLM orchestration) and clawmarks (provenance tracking) serve as the reference adapter implementation; other domains use different strategies (deterministic parsers, movement classifiers, manual annotation). Clients derive structure through any means appropriate to their domain. Three domain consumers demonstrate the content-agnostic claim: Manza (code and document composition), Trellis (creative writing scaffolding), and EDDI (interactive performance) — though Plexus could serve any domain where structure emerges from composition. A companion paper [66] provides experimental validation of the semantic extraction layer. This paper presents a design vision: the theoretical grounding, proposed architecture, and evaluation agenda for a system that exists in partial implementation. Core components (the graph engine, semantic extraction, event emission) are operational; others (self-reinforcing edge dynamics, the full multi-frequency update model, domain consumers beyond Manza) remain at the design stage.
 
 **Keywords:** knowledge graphs, creative composition, self-reinforcing networks, Hebbian learning, multi-frequency updates, external cognition, ambient structural feedback, content-agnostic systems
 
@@ -61,13 +61,13 @@ Edges self-reinforce through domain-appropriate validation and decay without rei
 
 Provenance runs throughout. Every concept in the graph traces back to a specific file, line, and evidence span. Click a node, open the source. The graph is not an abstraction layer on top of the work — it is a navigable index into it.
 
-Plexus exposes its graph via MCP for any domain-specific consumer and can optionally integrate with llm-orc (LLM orchestration) and clawmarks (provenance tracking). Clients can derive structure through any means appropriate to their domain — LLM extraction, deterministic parsing, movement classification, manual annotation. Execution patterns inform graph structure and graph analysis can inform future extraction strategies, creating a bidirectional learning loop.
+Plexus exposes its graph via MCP for any domain-specific consumer and defines two required semantic capabilities: *semantic extraction* (populating the relational, semantic, and conceptual layers) and *provenance* (grounding concepts in source material). These capabilities are fulfilled by domain-specific *semantic adapters* — pluggable implementations that vary by domain. For text-based domains, llm-orc provides semantic extraction and clawmarks provides provenance; for movement domains, Viewpoints-aware classifiers and temporal provenance serve the same roles; for deterministic domains, parser-based extraction and file/line provenance suffice. The adapter interface is required; the implementation is domain-specific. Execution patterns inform graph structure and graph analysis can inform future extraction strategies, creating a bidirectional learning loop.
 
-Finally, the engine is designed to be content-agnostic. The hypothesis is that the same graph data model, edge dynamics, and MCP protocol can serve all creative domains — with only the analyzers (parsers, extractors, classifiers) differing per domain. Whether this holds — whether domain-specific validation mechanisms and decay parameters can be cleanly separated from the shared infrastructure — is an empirical question we address in §5.3. The claim is architectural intent, not demonstrated capability.
+The engine itself is designed to be content-agnostic: the same graph data model, edge dynamics, and MCP protocol serve all creative domains. What differs per domain is the semantic adapter — the parsers, extractors, and classifiers that populate the graph, and the provenance strategy that grounds it. This separation — content-agnostic engine plus domain-specific semantic adapters — is the core architectural claim. Whether it holds — whether domain-specific validation mechanisms and decay parameters can be cleanly separated from the shared infrastructure — is an empirical question we address in §5.3. The claim is architectural intent, not demonstrated capability.
 
 ### 1.4 This Paper
 
-This paper presents the system design, theoretical grounding, and evaluation agenda for Plexus. A companion paper [66] reports the empirical experiments that validated the semantic extraction layer — one critical subsystem within the broader architecture. Here we address the full system: the content-agnostic graph engine, the self-reinforcing edge model, the multi-frequency update architecture, optional integrations (llm-orc for LLM-based extraction, clawmarks for provenance), and three domain consumers that demonstrate Plexus across creative domains (Manza, Trellis, EDDI) — with the understanding that Plexus could serve any domain where structure emerges from composition.
+This paper presents the system design, theoretical grounding, and evaluation agenda for Plexus. A companion paper [66] reports the empirical experiments that validated the semantic extraction layer — one critical subsystem within the broader architecture. Here we address the full system: the content-agnostic graph engine, the self-reinforcing edge model, the multi-frequency update architecture, the semantic adapter architecture (with llm-orc and clawmarks as the text-domain reference implementation), and three domain consumers that demonstrate Plexus across creative domains (Manza, Trellis, EDDI) — with the understanding that Plexus could serve any domain where structure emerges from composition.
 
 ### 1.5 Scope and Status
 
@@ -164,10 +164,12 @@ No existing system integrates all of these elements:
 | LLM-based extraction | ✓ | ✓ | — | — | ✓ |
 | Incremental/real-time | — | ✓ | — | — | ✓ |
 | Self-reinforcing edges | — | — | ✓ (recall-only) | — | ✓ |
-| Evidence provenance | — | — | — | — | ✓ |
+| Evidence provenance | — | — | — | — | ✓† |
 | Multi-frequency updates | — | — | — | — | ✓ |
 | Event emission for clients | — | — | — | — | ✓ |
 | Content-agnostic (code, text, movement) | — | — | — | — | ✓* |
+
+†Requires a provenance adapter; clawmarks is the reference implementation for text domains.
 
 *Design intent, not yet validated empirically. See §5.3 for evaluation criteria.
 
@@ -179,7 +181,7 @@ Graphiti shares the real-time incremental approach but lacks self-reinforcement,
 
 ### 3.1 Architecture Overview
 
-Plexus is implemented as a Rust-based knowledge graph engine with SQLite storage, exposed via the Model Context Protocol (MCP). Clients send data to Plexus (new nodes, validation signals, etc.); Plexus processes at multiple frequencies and emits events (node created, edge strengthened, cluster formed, etc.) that clients can subscribe to. Plexus has two service dependencies and any number of domain-specific consumers:
+Plexus is implemented as a Rust-based knowledge graph engine with SQLite storage, exposed via the Model Context Protocol (MCP). Clients send data to Plexus (new nodes, validation signals, etc.); Plexus processes at multiple frequencies and emits events (node created, edge strengthened, cluster formed, etc.) that clients can subscribe to. The architecture has three layers: the content-agnostic graph engine, domain-specific semantic adapters, and any number of domain consumers:
 
 ```mermaid
 graph TB
@@ -187,9 +189,10 @@ graph TB
         Plexus["Plexus<br/>(knowledge graph engine)<br/>receives data, emits events"]
     end
 
-    subgraph "Optional Integrations"
-        LLMOrc["llm-orc<br/>(LLM orchestration)"]
-        Clawmarks["clawmarks<br/>(provenance tracking)"]
+    subgraph "Semantic Adapters (domain-specific)"
+        LLMOrc["llm-orc + clawmarks<br/>(text-domain reference adapter:<br/>LLM extraction + provenance)"]
+        MovementAdapter["Viewpoints classifiers +<br/>temporal provenance<br/>(movement-domain adapter)"]
+        OtherAdapter["Deterministic parsers,<br/>manual annotation, etc.<br/>(other domain adapters)"]
     end
 
     subgraph "Domain Consumers (examples)"
@@ -199,10 +202,11 @@ graph TB
         Other["Any MCP client<br/>(notes, research, etc.)"]
     end
 
-    LLMOrc -.->|semantic extraction| Plexus
-    Clawmarks -.->|provenance| Plexus
-    Plexus -.->|extraction requests| LLMOrc
-    Plexus -.->|provenance writes| Clawmarks
+    LLMOrc -->|semantic extraction + provenance| Plexus
+    MovementAdapter -->|gesture classification + provenance| Plexus
+    OtherAdapter -->|domain-specific extraction + provenance| Plexus
+    Plexus -->|extraction requests| LLMOrc
+    Plexus -->|classification requests| MovementAdapter
 
     Manza <-->|data in / events out| Plexus
     Trellis <-->|data in / events out| Plexus
@@ -210,22 +214,29 @@ graph TB
     Other <-->|data in / events out| Plexus
 ```
 
-*[Textual fallback for non-rendering environments: Plexus Core sits at center. Above it, optional integrations (llm-orc for LLM orchestration, clawmarks for provenance) connect via dashed bidirectional arrows. Below it, domain consumers (Manza, Trellis, EDDI, and any MCP client) connect via solid bidirectional arrows representing the data-in/events-out pattern.]*
+*[Textual fallback for non-rendering environments: Plexus Core sits at center. Above it, semantic adapters (llm-orc + clawmarks for text domains, Viewpoints classifiers for movement, deterministic parsers for other domains) connect via solid bidirectional arrows. Below it, domain consumers (Manza, Trellis, EDDI, and any MCP client) connect via solid bidirectional arrows representing the data-in/events-out pattern.]*
 
-*Figure 1: Plexus architecture. The core graph engine (center) receives data from and emits events to domain consumers (bottom) via MCP. Optional integrations (top) provide semantic extraction (llm-orc) and provenance tracking (clawmarks). Dashed lines indicate optional dependencies; solid bidirectional arrows indicate the primary data-in/events-out pattern between Plexus and its consumers.*
+*Figure 1: Plexus architecture. The content-agnostic graph engine (center) receives data from and emits events to domain consumers (bottom) via MCP. Semantic adapters (top) provide the two required domain-specific capabilities — semantic extraction and provenance — with implementations that vary by domain. Solid lines throughout indicate required architectural relationships; the adapter layer is not optional, but its implementation is pluggable.*
 
-Plexus integrates with two services (though neither is strictly required for all use cases):
-- **llm-orc** orchestrates LLM ensembles for semantic extraction — one method for populating the graph's semantic and conceptual layers. Clients that derive semantics through other means (movement classification, deterministic parsing, manual annotation) need not use llm-orc.
-- **clawmarks** records provenance (file, line, evidence span) for concepts in the graph — enables "go to source" from any consuming interface. Clients that don't require source provenance (e.g., real-time performance systems) may operate without clawmarks.
+Plexus defines two required semantic capabilities that each domain must fulfill through a *semantic adapter*:
+
+1. **Semantic extraction**: Populating the graph's relational, semantic, and conceptual layers with domain-appropriate structure. This is the mechanism by which raw content becomes graph nodes and edges above the structural layer.
+2. **Provenance**: Grounding every extracted concept in its source material — the evidence chain from graph node back to the artifact that produced it.
+
+These capabilities are required for Plexus to operate beyond the structural layer, but their implementations are domain-specific and pluggable:
+
+- **Text domains** (code, documents, research): llm-orc orchestrates LLM ensembles for semantic extraction; clawmarks records file/line/evidence-span provenance. This is the reference adapter implementation, validated in [66].
+- **Movement domains** (performance, choreography): Viewpoints-aware classifiers and gesture recognition provide semantic extraction; temporal and spatial provenance (session, timestamp, performer position) grounds the data.
+- **Deterministic domains** (structured code, formal languages): Parser-based extraction (tree-sitter, AST analysis) provides semantic structure; file/line provenance is inherent in the parse output.
+
+The architectural principle is: **Plexus receives nodes and edges from clients and emits events — it is agnostic to how those nodes and edges were derived.** The graph engine does not know or care whether a concept was extracted by an LLM, classified by a gesture recognizer, or produced by a deterministic parser. The semantic adapter is where domain knowledge lives; the engine is where domain-agnostic graph dynamics live.
 
 Plexus does not depend on any particular interface. The domain-specific consumers described in §4 — Manza, Trellis, EDDI — are independent systems that use Plexus to gain semantic graph capabilities in their respective domains:
 - **Manza** is a file viewer and editor where users collate files and folders into "contexts" to build semantic knowledge graphs of codebases and documents. Plexus originated as a subsystem of Manza but is now an independent service.
 - **Trellis** is a creative writing scaffolding system (§4.2) that consumes the graph to surface fragment connections through coaching prompts rather than graph visualization.
 - **EDDI** is an interactive performance system (§4.3) that consumes the graph to drive environmental responses (lighting, sound, projection) rather than visual display.
 
-These consumers illustrate the content-agnostic claim: the same graph engine, the same self-reinforcing dynamics, and the same multi-frequency update model serve code, writing, and movement. Only the domain-specific analyzers and the interface modality differ. Plexus could serve any number of additional domains — workplace note-taking, legal document analysis, scientific research synthesis — with the same architecture. The three examples here are illustrations, not limitations.
-
-Importantly, llm-orc is one method for deriving semantic structure, but Plexus does not require it. Clients can populate the graph using any method appropriate to their domain: EDDI uses Viewpoints movement theory and mathematical heuristics rather than LLM extraction; a code client might use purely deterministic parsing for structural edges; a future client might use other ML models, manual annotation, or domain-specific heuristics. Plexus receives nodes and edges from clients and emits events — it is agnostic to how those nodes and edges were derived.
+These consumers illustrate the content-agnostic claim: the same graph engine, the same self-reinforcing dynamics, and the same multi-frequency update model serve code, writing, and movement. Only the semantic adapters and the interface modality differ. Plexus could serve any number of additional domains — workplace note-taking, legal document analysis, scientific research synthesis — with the same engine and the same adapter interface. The three examples here are illustrations, not limitations.
 
 ### 3.2 Data Model
 
@@ -309,27 +320,46 @@ The movement domain illustrates the principle, even as it remains computationall
 
 We hypothesize that validation-based reinforcement causes the graph to converge on the relationships that matter to the practitioner — validated structures solidify, unvalidated sketches fade, and emergent co-occurrences surface as candidates for validation. Whether this convergence occurs, how quickly it stabilizes, and whether it produces useful structure are empirical questions addressed in §5.2.
 
-### 3.5 llm-orc and clawmarks: Optional Integrations
+### 3.5 Semantic Adapter Architecture
 
-**Minimal configuration:** Plexus operates without llm-orc and clawmarks. In minimal mode, clients send structure directly via MCP (e.g., Manza sends tree-sitter parse results), the graph stores nodes and edges, and clients subscribe to events. This is sufficient for structural-layer feedback on code. What's lost: semantic extraction (no LLM-derived concepts), provenance tracking (no source-line links), and the reinforcement signals from extraction quality. The optional integrations add these capabilities.
+Plexus defines two required functional capabilities that each domain must implement through a semantic adapter:
 
-**llm-orc** provides the LLM orchestration layer. It manages ensemble configurations (YAML files specifying agent chains), handles fan-out parallelism for compositional extraction, and supports multiple model profiles. The separation from Plexus is deliberate: extraction strategies evolve independently of graph storage.
+1. **Semantic extraction adapter**: Transforms domain-specific content into graph nodes and edges at the relational, semantic, and conceptual layers. Must accept raw domain content and produce typed nodes with properties and weighted edges. The structural layer (imports, poses, citations) can be populated by deterministic analysis alone; the upper three layers require a semantic adapter.
+
+2. **Provenance adapter**: Records the evidence chain from every graph concept back to its source material. Must provide: source identifier (file, session, performer), location within source (line, timestamp, spatial position), evidence span (the specific content that produced the concept), and extraction context (session, configuration, confidence).
+
+These interfaces are required — without them, Plexus is limited to structural-layer-only input from clients, and the upper three layers of the graph remain unpopulated. The graph engine operates, but the richer semantic, relational, and conceptual structure that distinguishes Plexus from a simple dependency graph does not emerge.
+
+**Reference implementation (text domains):** llm-orc + clawmarks fulfill these interfaces for text-based domains. **llm-orc** provides the semantic extraction adapter — it manages LLM ensemble configurations (YAML files specifying agent chains), handles fan-out parallelism for compositional extraction, and supports multiple model profiles. **clawmarks** provides the provenance adapter — it records file, line number, evidence text span, and extraction session for every concept. The separation from Plexus is deliberate: extraction strategies evolve independently of graph storage. This reference implementation is validated in [66].
 
 The bidirectional integration goes beyond extraction: llm-orc execution outcomes feed back into Plexus as reinforcement signals. When an ensemble produces high-quality results, the concepts it extracted receive a confidence boost. When extraction fails or produces low-confidence output, the graph marks those regions for re-processing.
 
-### 3.6 clawmarks: Provenance Tracking
+**Other domain adapters** would fulfill the same interfaces differently:
+- **Movement domains**: Viewpoints-aware gesture classifiers for extraction; temporal/spatial provenance (session timestamp, performer position, motion capture frame) for grounding.
+- **Deterministic code analysis**: Tree-sitter or AST-based parsers for extraction; file/line provenance is inherent in parse output.
+- **Manual annotation**: Human-authored concept tagging for extraction; annotation metadata for provenance.
 
-clawmarks provides provenance for every concept in the graph. Each extracted concept links to a clawmark recording the source file, line number, evidence text span, and extraction session (trail). This enables:
+**Minimal mode:** In minimal configuration, clients send structural-layer data directly via MCP (e.g., Manza sends tree-sitter parse results), the graph stores nodes and edges, and clients subscribe to events. This is sufficient for structural-layer feedback. The upper three layers — relational, semantic, conceptual — require a semantic adapter to populate. A system running without any semantic adapter is functional but limited to the same kind of dependency-graph feedback that existing tools already provide.
+
+### 3.6 Provenance Adapter Interface and clawmarks
+
+The provenance adapter interface requires that every concept in the graph traces back to its source material. What "source material" means varies by domain:
+
+- **Text domains**: File path, line number, evidence text span, extraction session
+- **Movement domains**: Rehearsal session, timestamp, performer identifier, spatial coordinates, motion capture frame
+- **Code domains**: File path, line number, AST node identifier, parse context
+
+**clawmarks** is the reference provenance adapter for text domains. Each extracted concept links to a clawmark recording the source file, line number, evidence text span, and extraction session (trail). This enables:
 
 - **"Go to source" UX**: Click a concept node → open the file at the exact line
 - **Audit trails**: Every concept's extraction history is queryable
 - **Confidence grounding**: Concepts with strong evidence spans receive higher confidence
 
-Extraction sessions are organized as trails, providing a temporal narrative of how the graph was populated.
+Extraction sessions are organized as trails, providing a temporal narrative of how the graph was populated. A movement-domain provenance adapter would provide analogous capabilities: click a gesture-vocabulary node → view the rehearsal moment where the gesture was first classified; trace a performer-environment coupling back to the sessions where it strengthened.
 
-### 3.7 Semantic Extraction Layer
+### 3.7 Text-Domain Adapter Validation
 
-The semantic extraction pipeline is validated experimentally in [66]. Key findings that inform the system design:
+The text-domain semantic adapter (llm-orc + clawmarks) is validated experimentally in [66]. That companion paper documents one adapter implementation's design and performance — not the only possible approach, but the first to be empirically tested. Key findings that inform the system design:
 
 - **File tree traversal** provides 100% coverage and exploits organizational structure (directory co-location provides 9.3× stronger semantic signal than explicit links)
 - **Evidence-grounded prompts** achieve 0% hallucination on technical corpora
@@ -337,7 +367,7 @@ The semantic extraction pipeline is validated experimentally in [66]. Key findin
 - **~10s LLM inference floor** on consumer hardware makes synchronous extraction impossible, validating the multi-frequency architecture
 - **2 concurrent workers maximum** before error rates spike
 
-The extraction pipeline routes documents through appropriate ensemble configurations based on content type and size, records provenance via clawmarks, and stores results in the Plexus graph with propagation to sibling documents.
+The extraction pipeline routes documents through appropriate ensemble configurations based on content type and size, records provenance via clawmarks, and stores results in the Plexus graph with propagation to sibling documents. Validating other adapter implementations — movement-domain classifiers, deterministic parsers — is future work that the adapter architecture is designed to accommodate.
 
 ---
 
@@ -430,14 +460,15 @@ Does the graph actually learn? We hypothesize that Hebbian edge dynamics cause c
 
 ### 5.3 Content-Agnostic Operation
 
-**Claim**: The same graph engine serves code, text, and movement domains with only the analyzers differing.
+**Claim**: The same graph engine serves code, text, and movement domains with only the semantic adapters differing. More precisely: content-agnostic engine + domain-specific semantic adapters = Plexus. The engine (nodes, edges, decay, events, MCP) is domain-agnostic; the semantic adapters (extraction + provenance) are required but domain-specific.
 
-**Measurement**: Deploy Plexus with three analyzer sets (tree-sitter for code, narrative parser for fiction, pose tracker for movement) and measure:
+**Measurement**: Deploy Plexus with three semantic adapter implementations (llm-orc + clawmarks for text, deterministic parsers for code, pose tracker + temporal provenance for movement) and measure:
 - Graph structural properties across domains (degree distribution, clustering coefficient, modularity)
 - Whether the self-reinforcing dynamics produce comparable convergence behavior
 - Whether the multi-frequency update model achieves target latencies across domains
+- Whether the semantic adapter interface is expressive enough for all three domains without requiring engine-level modifications
 
-**Falsification criteria** (from §3.4): The content-agnostic claim would be falsified — or reduced to "a family of related domain-specific systems sharing some infrastructure" — if: (1) optimal decay half-lives differ by an order of magnitude or more across domains (e.g., 1 day for code vs. 2 weeks for fiction), or (2) validation mechanisms cannot be expressed through the same edge-weight update API. Comparable convergence behavior across domains would support the stronger claim; divergent optimal parameters would support the weaker but still useful formulation.
+**Falsification criteria** (from §3.4): The content-agnostic claim would be falsified — or reduced to "a family of related domain-specific systems sharing some infrastructure" — if: (1) optimal decay half-lives differ by an order of magnitude or more across domains (e.g., 1 day for code vs. 2 weeks for fiction), (2) validation mechanisms cannot be expressed through the same edge-weight update API, or (3) the semantic adapter interface requires domain-specific extensions to the graph engine itself (rather than domain-specific adapter implementations). Comparable convergence behavior across domains, achieved through the same engine with different adapters, would support the stronger claim; divergent optimal parameters or required engine modifications would support the weaker but still useful formulation.
 
 ### 5.4 Trellis Pilot Study
 
@@ -455,9 +486,9 @@ Plexus proposes that all creative composition shares a common structural dynamic
 
 The theoretical grounding spans external cognition [15]–[18] (with awareness of the cognitive offloading risks identified by [48]–[50]), flow state [19]–[21] (acknowledging the measurement challenges documented by [51]–[52]), memory-inspired learning [28]–[30], and computational movement analysis [31]–[36]. The multi-frequency architecture [37]–[41] makes the system responsive despite the ~10s LLM extraction floor demonstrated in [66]. The self-reinforcing edge model, inspired by Hebbian dynamics but grounded in domain-appropriate validation rather than access frequency, is hypothesized to converge on the relationships that matter to each practitioner rather than presenting a static extraction result.
 
-What distinguishes Plexus from existing knowledge graph systems is the combination of live updating, self-reinforcement, evidence provenance, event emission for client feedback, and content-agnostic operation. No existing system (§2.8) integrates all of these. The closest precedent — Graphiti [25] — shares the real-time incremental approach but targets AI agent memory, not human creative practice, and lacks self-reinforcing dynamics, provenance, and event emission for ambient client feedback.
+What distinguishes Plexus from existing knowledge graph systems is the combination of live updating, self-reinforcement, evidence provenance (via domain-specific provenance adapters), event emission for client feedback, and content-agnostic operation through the semantic adapter architecture — the same engine, the same adapter interfaces, different domain-specific implementations. No existing system (§2.8) integrates all of these. The closest precedent — Graphiti [25] — shares the real-time incremental approach but targets AI agent memory, not human creative practice, and lacks self-reinforcing dynamics, provenance, and event emission for ambient client feedback.
 
-The system is partially built: the Rust graph engine exists, the semantic extraction pipeline is experimentally validated [66], and the llm-orc and clawmarks integrations are operational. What remains is domain consumer development (Manza visualization, Trellis integration, EDDI gesture-to-graph pathway), the self-reinforcing edge dynamics, and — most importantly — empirical validation of the flow-state hypothesis that motivates the entire design.
+The system is partially built: the Rust graph engine exists, the text-domain semantic adapter (llm-orc + clawmarks) is experimentally validated [66], and the adapter integration is operational. What remains is domain consumer development (Manza visualization, Trellis integration, EDDI gesture-to-graph pathway), additional semantic adapter implementations (movement-domain, deterministic), the self-reinforcing edge dynamics, and — most importantly — empirical validation of the flow-state hypothesis that motivates the entire design.
 
 An open question is whether Plexus's cognitive overhead — learning to read the graph, configuring analyzers, occasional attention to the visualization — exceeds the cognitive savings it provides. The ambient design is intended to minimize this overhead, but any external representation imposes some cost, and the net benefit is an empirical question. Not all creators will want continuous structural feedback; some may find it intrusive rather than helpful. The system must be unobtrusive enough that ignoring it is costless.
 
