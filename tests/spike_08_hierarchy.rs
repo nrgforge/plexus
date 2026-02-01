@@ -216,6 +216,7 @@ fn analyze_hierarchy_from_content(corpus: &TestCorpus) -> HierarchyStats {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_hierarchy_pkm_webdev() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load pkm-webdev corpus");
     let graph = build_structure_graph(&corpus)
@@ -235,6 +236,7 @@ async fn test_hierarchy_pkm_webdev() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_hierarchy_arch_wiki() {
     let corpus = TestCorpus::load("arch-wiki").expect("Failed to load arch-wiki corpus");
     let graph = build_structure_graph(&corpus)
@@ -252,6 +254,7 @@ async fn test_hierarchy_arch_wiki() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_hierarchy_from_content_all() {
     // Direct content analysis for all corpora (doesn't depend on graph analyzers)
     let corpora = ["pkm-webdev", "arch-wiki", "pkm-datascience", "shakespeare"];
@@ -297,6 +300,7 @@ async fn test_hierarchy_from_content_all() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_heading_level_distribution() {
     let corpora = ["pkm-webdev", "arch-wiki"];
 

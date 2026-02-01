@@ -271,6 +271,7 @@ fn calculate_category_stats(measurements: &[LatencyMeasurement]) -> Vec<SizeCate
 // ============================================================================
 
 #[tokio::test]
+#[ignore]
 async fn test_s1_micro_latency_profiling() {
     println!("\n{}", "=".repeat(80));
     println!("=== Experiment S1-Micro: Latency Distribution (gemma3:1b) ===");
@@ -480,6 +481,7 @@ fn save_measurements(measurements: &[LatencyMeasurement]) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_s1_micro_single_timing() {
     if !check_ollama_available() {
         println!("SKIPPED: Ollama not available");

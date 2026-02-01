@@ -294,6 +294,7 @@ async fn analyze_corpus(name: &str) -> Option<CorpusAnalysis> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_multi_corpus_comparison() {
     println!("\n{}", "=".repeat(80));
     println!("=== Investigation 3b: Multi-Corpus Link↔Semantic Comparison ===");

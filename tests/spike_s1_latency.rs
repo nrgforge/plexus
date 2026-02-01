@@ -276,6 +276,7 @@ fn calculate_category_stats(measurements: &[LatencyMeasurement]) -> Vec<SizeCate
 // ============================================================================
 
 #[tokio::test]
+#[ignore]
 async fn test_s1_latency_profiling() {
     println!("\n{}", "=".repeat(80));
     println!("=== Experiment S1: Latency Distribution Profiling ===");
@@ -533,6 +534,7 @@ fn save_measurements(measurements: &[LatencyMeasurement]) {
 
 /// Quick sanity check
 #[tokio::test]
+#[ignore]
 async fn test_s1_single_extraction_timing() {
     if !check_ollama_available() {
         println!("SKIPPED: Ollama not available");

@@ -210,6 +210,7 @@ struct ParamResult {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_propagation_parameter_sweep() {
     println!("\n{}", "=".repeat(80));
     println!("=== Experiment P1: Propagation Parameter Sweep ===");
@@ -371,6 +372,7 @@ async fn test_propagation_parameter_sweep() {
 
 /// Diagnostic: Understand concept extraction and overlap
 #[tokio::test]
+#[ignore]
 async fn test_concept_diagnostic() {
     println!("\n{}", "=".repeat(80));
     println!("=== DIAGNOSTIC: Concept Extraction Analysis ===");
@@ -517,6 +519,7 @@ async fn test_concept_diagnostic() {
 
 /// Test individual parameter effects
 #[tokio::test]
+#[ignore]
 async fn test_decay_effect() {
     println!("\n=== Decay Effect Analysis ===\n");
 

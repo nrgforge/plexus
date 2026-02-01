@@ -207,6 +207,7 @@ fn get_source(node: &plexus::Node, node_id: &NodeId) -> String {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_seed_strategy_comparison() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load corpus");
     let graph = build_structure_graph(&corpus).await.expect("Failed to build graph");

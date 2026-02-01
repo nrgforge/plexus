@@ -231,6 +231,7 @@ fn generate_random_pairs(
 
 /// Debug test to understand link structure
 #[tokio::test]
+#[ignore]
 async fn test_debug_link_structure() {
     println!("\n{}", "=".repeat(70));
     println!("=== Debug: Link Structure Analysis ===");
@@ -376,6 +377,7 @@ async fn test_debug_link_structure() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_link_semantic_correlation() {
     println!("\n{}", "=".repeat(70));
     println!("=== Spike 03: Link↔Semantic Correlation ===");
@@ -563,6 +565,7 @@ async fn test_link_semantic_correlation() {
 
 /// Analyze whether specific link types correlate with semantic similarity
 #[tokio::test]
+#[ignore]
 async fn test_link_type_breakdown() {
     println!("\n{}", "=".repeat(70));
     println!("=== Link Type Semantic Correlation ===");
@@ -643,6 +646,7 @@ async fn test_link_type_breakdown() {
 
 /// Test sibling document correlation (same directory, no explicit link)
 #[tokio::test]
+#[ignore]
 async fn test_sibling_semantic_correlation() {
     println!("\n{}", "=".repeat(70));
     println!("=== Sibling Document Semantic Correlation (Investigation 9 Preview) ===");

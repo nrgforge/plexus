@@ -104,6 +104,9 @@ pub trait GraphStore: Send + Sync {
     /// Create or update a context
     fn save_context(&self, context: &Context) -> StorageResult<()>;
 
+    /// Update only the context row (name, description, metadata) without touching nodes/edges
+    fn save_context_metadata(&self, context: &Context) -> StorageResult<()>;
+
     /// Load a context by ID
     fn load_context(&self, id: &ContextId) -> StorageResult<Option<Context>>;
 

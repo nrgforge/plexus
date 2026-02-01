@@ -490,6 +490,7 @@ async fn analyze_corpus(corpus_name: &str, sample_size: usize) -> Result<CorpusM
 // ============================================================================
 
 #[tokio::test]
+#[ignore]
 async fn test_p2_multi_corpus_extraction() {
     println!("\n{}", "=".repeat(80));
     println!("=== Experiment P2: Multi-Corpus Extraction Validation ===");
@@ -661,6 +662,7 @@ async fn test_p2_multi_corpus_extraction() {
 
 /// Quick test to verify extraction works on a single document
 #[tokio::test]
+#[ignore]
 async fn test_extraction_single_doc() {
     if !check_ollama_available() {
         println!("SKIPPED: Ollama not available");

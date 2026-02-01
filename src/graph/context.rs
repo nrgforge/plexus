@@ -5,6 +5,7 @@ use super::node::{Node, NodeId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 /// Unique identifier for a context
@@ -55,13 +56,15 @@ impl From<String> for ContextId {
     }
 }
 
-/// A source (file, directory, or URL) belonging to a context
+/// A source (file, directory, URL, or context reference) belonging to a context
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Source {
     File { path: String },
     Directory { path: String, recursive: bool },
     Url { url: String },
+    /// Reference to another context (for nested contexts)
+    ContextRef { context_id: String },
 }
 
 /// Metadata about a context
@@ -78,6 +81,9 @@ pub struct ContextMetadata {
     /// Sources (files, directories, URLs) belonging to this context
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<Source>,
+    /// Application-specific properties (generic key-value bag)
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub properties: BTreeMap<String, String>,
 }
 
 /// A bounded subgraph representing a workspace or project

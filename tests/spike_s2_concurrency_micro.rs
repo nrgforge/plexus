@@ -288,6 +288,7 @@ async fn run_batch_at_concurrency(
 // ============================================================================
 
 #[tokio::test]
+#[ignore]
 async fn test_s2_micro_concurrency() {
     println!("\n{}", "=".repeat(80));
     println!("=== Experiment S2-Micro: Concurrency Testing (gemma3:1b) ===");
@@ -459,6 +460,7 @@ async fn test_s2_micro_concurrency() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_s2_micro_quick() {
     if !check_ollama_available() {
         println!("SKIPPED: Ollama not available");

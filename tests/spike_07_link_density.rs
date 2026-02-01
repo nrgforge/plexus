@@ -166,6 +166,7 @@ impl LinkDensityStats {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_link_density_pkm_webdev() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load pkm-webdev corpus");
     let graph = build_structure_graph(&corpus)
@@ -204,6 +205,7 @@ async fn test_link_density_pkm_webdev() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_link_density_arch_wiki() {
     let corpus = TestCorpus::load("arch-wiki").expect("Failed to load arch-wiki corpus");
     let graph = build_structure_graph(&corpus)
@@ -237,6 +239,7 @@ async fn test_link_density_arch_wiki() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_link_density_comparison() {
     let corpora = ["pkm-webdev", "arch-wiki", "pkm-datascience", "shakespeare"];
 

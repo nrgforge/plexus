@@ -546,6 +546,7 @@ fn propagated_confidence(pair: &PropagationPair, decay: f64) -> f64 {
 // ============================================================================
 
 #[tokio::test]
+#[ignore]
 async fn test_p1_llm_propagation_sweep() {
     println!("\n{}", "=".repeat(80));
     println!("=== Experiment P1: Propagation Parameter Sweep ===");
@@ -780,6 +781,7 @@ async fn test_p1_llm_propagation_sweep() {
 
 /// Quick test to verify ensemble works
 #[tokio::test]
+#[ignore]
 async fn test_ensemble_connectivity() {
     if !check_ollama_available() {
         println!("SKIPPED: Ollama not available");

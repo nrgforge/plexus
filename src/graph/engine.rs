@@ -1,6 +1,6 @@
 //! PlexusEngine: The main entry point for the knowledge graph
 
-use super::context::{Context, ContextId, Source};
+use super::context::{Context, ContextId, ContextMetadata, Source};
 use super::edge::Edge;
 use super::node::NodeId;
 use crate::query::{FindQuery, PathQuery, QueryResult, PathResult, TraversalResult, TraverseQuery};
@@ -169,6 +169,48 @@ impl PlexusEngine {
         Ok(())
     }
 
+    // === Context Metadata Operations ===
+
+    /// Rename a context
+    pub fn rename_context(&self, id: &ContextId, new_name: &str) -> PlexusResult<()> {
+        let mut context = self.contexts.get_mut(id)
+            .ok_or_else(|| PlexusError::ContextNotFound(id.clone()))?;
+
+        context.name = new_name.to_string();
+        context.metadata.updated_at = Some(Utc::now());
+
+        if let Some(ref store) = self.store {
+            store.save_context_metadata(&context)?;
+        }
+
+        Ok(())
+    }
+
+    /// Delete a context (alias for remove_context that returns bool)
+    pub fn delete_context(&self, id: &ContextId) -> PlexusResult<bool> {
+        Ok(self.remove_context(id)?.is_some())
+    }
+
+    /// Get a context's metadata
+    pub fn get_context_metadata(&self, id: &ContextId) -> Option<ContextMetadata> {
+        self.contexts.get(id).map(|r| r.metadata.clone())
+    }
+
+    /// Update a context's metadata
+    pub fn update_context_metadata(&self, id: &ContextId, metadata: ContextMetadata) -> PlexusResult<()> {
+        let mut context = self.contexts.get_mut(id)
+            .ok_or_else(|| PlexusError::ContextNotFound(id.clone()))?;
+
+        context.metadata = metadata;
+        context.metadata.updated_at = Some(Utc::now());
+
+        if let Some(ref store) = self.store {
+            store.save_context_metadata(&context)?;
+        }
+
+        Ok(())
+    }
+
     // === Query Operations ===
 
     /// Find nodes in a context matching the query criteria
@@ -291,7 +333,7 @@ impl PlexusEngine {
             context.metadata.updated_at = Some(Utc::now());
 
             if let Some(ref store) = self.store {
-                store.save_context(&context)?;
+                store.save_context_metadata(&context)?;
             }
         }
 
@@ -310,7 +352,7 @@ impl PlexusEngine {
         if removed {
             context.metadata.updated_at = Some(Utc::now());
             if let Some(ref store) = self.store {
-                store.save_context(&context)?;
+                store.save_context_metadata(&context)?;
             }
         }
 

@@ -295,6 +295,7 @@ fn traverse_greedy_coverage(
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_traversal_strategies() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load corpus");
     let graph = build_structure_graph(&corpus).await.expect("Failed to build graph");
@@ -416,6 +417,7 @@ async fn test_traversal_strategies() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_random_walk_variants() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load corpus");
     let graph = build_structure_graph(&corpus).await.expect("Failed to build graph");

@@ -8,7 +8,7 @@ mod node;
 #[cfg(test)]
 mod tests;
 
-pub use context::{Context, ContextId, Source};
+pub use context::{Context, ContextId, ContextMetadata, Source};
 pub use edge::{Edge, EdgeId};
 pub use engine::{PlexusEngine, PlexusError, PlexusResult};
 pub use node::{Node, NodeId, PropertyValue};

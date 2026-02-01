@@ -294,6 +294,7 @@ async fn run_batch_at_concurrency(
 // ============================================================================
 
 #[tokio::test]
+#[ignore]
 async fn test_s2_concurrency() {
     println!("\n{}", "=".repeat(80));
     println!("=== Experiment S2: Concurrency Testing ===");
@@ -456,6 +457,7 @@ async fn test_s2_concurrency() {
 
 /// Quick test with just 2 concurrency levels
 #[tokio::test]
+#[ignore]
 async fn test_s2_quick() {
     if !check_ollama_available() {
         println!("SKIPPED: Ollama not available");

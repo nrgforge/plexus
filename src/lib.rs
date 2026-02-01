@@ -31,8 +31,8 @@ pub use analysis::{
     GraphMutation, ResultMerger, SubGraph,
 };
 pub use graph::{
-    ContentType, Context, ContextId, Edge, EdgeId, Node, NodeId, PlexusEngine, PlexusError,
-    PlexusResult, PropertyValue, Source, dimension,
+    ContentType, Context, ContextId, ContextMetadata, Edge, EdgeId, Node, NodeId, PlexusEngine,
+    PlexusError, PlexusResult, PropertyValue, Source, dimension,
 };
 pub use query::{Direction, FindQuery, PathQuery, PathResult, QueryResult, TraversalResult, TraverseQuery};
 pub use provenance::{ChainStatus, ChainView, MarkView, ProvenanceApi};

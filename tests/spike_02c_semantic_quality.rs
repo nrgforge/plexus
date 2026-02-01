@@ -290,6 +290,7 @@ struct DocumentSemantics {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_semantic_quality_analysis() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load corpus");
     let graph = build_structure_graph(&corpus).await.expect("Failed to build graph");

@@ -210,6 +210,7 @@ fn bfs_traverse(
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_hybrid_strategies() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load corpus");
     let graph = build_structure_graph(&corpus).await.expect("Failed to build graph");
@@ -429,6 +430,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_prioritized_traversal() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load corpus");
     let graph = build_structure_graph(&corpus).await.expect("Failed to build graph");

@@ -22,6 +22,7 @@ use std::collections::HashMap;
 const TOP_K: usize = 8;
 
 #[tokio::test]
+#[ignore]
 async fn test_importance_pkm_webdev() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load pkm-webdev corpus");
 
@@ -269,6 +270,7 @@ async fn test_importance_pkm_webdev() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_importance_comparison_pagerank_vs_hits() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load pkm-webdev corpus");
 

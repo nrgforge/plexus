@@ -302,7 +302,7 @@ impl OpenStore for SqliteStore {
 impl GraphStore for SqliteStore {
     // === Context Operations ===
 
-    fn save_context(&self, context: &Context) -> StorageResult<()> {
+    fn save_context_metadata(&self, context: &Context) -> StorageResult<()> {
         let conn = self.conn.lock().unwrap();
         let metadata_json = serde_json::to_string(&context.metadata)?;
 
@@ -322,6 +322,15 @@ impl GraphStore for SqliteStore {
                 metadata_json,
             ],
         )?;
+
+        Ok(())
+    }
+
+    fn save_context(&self, context: &Context) -> StorageResult<()> {
+        // Save the context row (name, description, metadata)
+        self.save_context_metadata(context)?;
+
+        let conn = self.conn.lock().unwrap();
 
         // Delete existing nodes and edges for this context before saving new ones.
         // This ensures that when we save an empty context (after clearing),

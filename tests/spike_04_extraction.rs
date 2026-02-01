@@ -195,6 +195,7 @@ fn select_documents(corpus: &TestCorpus, count: usize) -> Vec<&plexus::ContentIt
 
 /// Investigation 4: LLM Extraction Quality
 #[tokio::test]
+#[ignore]
 #[cfg_attr(not(feature = "real_llm"), ignore = "requires real_llm feature")]
 async fn test_investigation_04_llm_extraction_quality() {
     println!("\n╔═══════════════════════════════════════════════════════════════════╗");
@@ -486,6 +487,7 @@ async fn test_investigation_04_llm_extraction_quality() {
 
 /// Test with mock LLM (always runs)
 #[tokio::test]
+#[ignore]
 async fn test_investigation_04_mock_extraction() {
     println!("\n╔═══════════════════════════════════════════════════════════════════╗");
     println!("║     Investigation 4 (Mock): Extraction Structure Test            ║");

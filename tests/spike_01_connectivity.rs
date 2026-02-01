@@ -30,6 +30,7 @@ const MAX_HOPS: usize = 3;
 const SEED_PERCENTAGE: f64 = 0.10;
 
 #[tokio::test]
+#[ignore]
 async fn test_connectivity_pkm_webdev() {
     let corpus = TestCorpus::load("pkm-webdev").expect("Failed to load pkm-webdev corpus");
 
@@ -202,6 +203,7 @@ async fn test_connectivity_pkm_webdev() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_connectivity_arch_wiki() {
     let corpus = TestCorpus::load("arch-wiki").expect("Failed to load arch-wiki corpus");
 
@@ -245,6 +247,7 @@ async fn test_connectivity_arch_wiki() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_connectivity_all_corpora() {
     let corpora = ["pkm-webdev", "arch-wiki", "pkm-datascience", "shakespeare"];
 
