@@ -1,6 +1,6 @@
 //! PlexusEngine: The main entry point for the knowledge graph
 
-use super::context::{Context, ContextId};
+use super::context::{Context, ContextId, Source};
 use super::edge::Edge;
 use super::node::NodeId;
 use crate::query::{FindQuery, PathQuery, QueryResult, PathResult, TraversalResult, TraverseQuery};
@@ -277,6 +277,51 @@ impl PlexusEngine {
         }
 
         Ok(removed)
+    }
+
+    // === Source Management ===
+
+    /// Add a source to a context
+    pub fn add_source(&self, context_id: &ContextId, source: Source) -> PlexusResult<()> {
+        let mut context = self.contexts.get_mut(context_id)
+            .ok_or_else(|| PlexusError::ContextNotFound(context_id.clone()))?;
+
+        if !context.metadata.sources.contains(&source) {
+            context.metadata.sources.push(source);
+            context.metadata.updated_at = Some(Utc::now());
+
+            if let Some(ref store) = self.store {
+                store.save_context(&context)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Remove a source from a context. Returns true if the source was found and removed.
+    pub fn remove_source(&self, context_id: &ContextId, source: &Source) -> PlexusResult<bool> {
+        let mut context = self.contexts.get_mut(context_id)
+            .ok_or_else(|| PlexusError::ContextNotFound(context_id.clone()))?;
+
+        let before = context.metadata.sources.len();
+        context.metadata.sources.retain(|s| s != source);
+        let removed = context.metadata.sources.len() < before;
+
+        if removed {
+            context.metadata.updated_at = Some(Utc::now());
+            if let Some(ref store) = self.store {
+                store.save_context(&context)?;
+            }
+        }
+
+        Ok(removed)
+    }
+
+    /// List all sources in a context
+    pub fn list_sources(&self, context_id: &ContextId) -> PlexusResult<Vec<Source>> {
+        let context = self.contexts.get(context_id)
+            .ok_or_else(|| PlexusError::ContextNotFound(context_id.clone()))?;
+        Ok(context.metadata.sources.clone())
     }
 
     // === Mutation Helpers ===

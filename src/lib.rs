@@ -20,6 +20,8 @@
 
 pub mod analysis;
 mod graph;
+pub mod mcp;
+pub mod provenance;
 pub mod query;
 pub mod storage;
 
@@ -30,9 +32,10 @@ pub use analysis::{
 };
 pub use graph::{
     ContentType, Context, ContextId, Edge, EdgeId, Node, NodeId, PlexusEngine, PlexusError,
-    PlexusResult, PropertyValue,
+    PlexusResult, PropertyValue, Source, dimension,
 };
 pub use query::{Direction, FindQuery, PathQuery, PathResult, QueryResult, TraversalResult, TraverseQuery};
+pub use provenance::{ChainStatus, ChainView, MarkView, ProvenanceApi};
 pub use storage::{GraphStore, OpenStore, SqliteStore, StorageError, StorageResult};
 
 /// Library version

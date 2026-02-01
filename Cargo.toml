@@ -6,6 +6,10 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/mrilikecoding/plexus"
 
+[[bin]]
+name = "plexus"
+path = "src/bin/plexus.rs"
+
 [features]
 default = []
 # Enable real LLM calls for spike tests; when disabled, tests use mock responses
@@ -21,8 +25,16 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 async-trait = "0.1"
-tokio = { version = "1.0", features = ["sync", "time", "macros", "rt", "process", "io-util"] }
+tokio = { version = "1.0", features = ["full"] }
 pulldown-cmark = "0.10"
+
+# MCP server
+rmcp = { version = "0.14", features = ["server", "transport-io"] }
+schemars = { version = "1.0", features = ["chrono04"] }
+getrandom = "0.2"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -21,10 +21,12 @@ pub mod dimension {
     pub const TEMPORAL: &str = "temporal";
     /// Default dimension for backwards compatibility
     pub const DEFAULT: &str = "default";
+    /// Provenance dimension: chains, marks, and links for tracking decisions
+    pub const PROVENANCE: &str = "provenance";
 
     /// Check if a dimension string is a known core dimension
     pub fn is_core_dimension(dim: &str) -> bool {
-        matches!(dim, STRUCTURE | SEMANTIC | RELATIONAL | TEMPORAL | DEFAULT)
+        matches!(dim, STRUCTURE | SEMANTIC | RELATIONAL | TEMPORAL | DEFAULT | PROVENANCE)
     }
 }
 
@@ -95,6 +97,8 @@ pub enum ContentType {
     Document,
     /// Agent definition
     Agent,
+    /// Provenance tracking (chains, marks, links)
+    Provenance,
 }
 
 impl FromStr for ContentType {
@@ -108,6 +112,7 @@ impl FromStr for ContentType {
             "concept" => Ok(ContentType::Concept),
             "document" => Ok(ContentType::Document),
             "agent" => Ok(ContentType::Agent),
+            "provenance" => Ok(ContentType::Provenance),
             _ => Err(format!("Unknown content type: {}", s)),
         }
     }

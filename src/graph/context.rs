@@ -55,6 +55,15 @@ impl From<String> for ContextId {
     }
 }
 
+/// A source (file, directory, or URL) belonging to a context
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Source {
+    File { path: String },
+    Directory { path: String, recursive: bool },
+    Url { url: String },
+}
+
 /// Metadata about a context
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ContextMetadata {
@@ -66,6 +75,9 @@ pub struct ContextMetadata {
     pub owner: Option<String>,
     /// Tags for categorization
     pub tags: Vec<String>,
+    /// Sources (files, directories, URLs) belonging to this context
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<Source>,
 }
 
 /// A bounded subgraph representing a workspace or project
