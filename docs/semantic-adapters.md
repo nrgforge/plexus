@@ -53,7 +53,7 @@ flowchart TB
 
 **What we know** — concepts, documents, gestures, relationships between them. These live in the structure, semantic, relational, and temporal dimensions.
 
-**How we know it** — which adapter extracted what, from where, with what confidence. This is the provenance dimension. It lets you trace any assertion back to its source.
+**How we know it** — which adapter extracted what, from where, with what confidence. This is the provenance dimension. It lets you trace any assertion back to its source. Provenance is constructed from two layers: the adapter annotates *how* it extracted something (confidence, method, source location), and the engine wraps that with *who* and *when* (adapter identity, timestamp, input context).
 
 Both live in the same graph. A node IS a thing. A provenance mark is a Post-it note stuck inside the page of a book — recording an observation about the modeling process.
 
@@ -68,7 +68,7 @@ flowchart TB
     subgraph trait ["Every Adapter"]
         direction LR
         IN["Input"] --> PROCESS["process()"] --> SINK["sink.emit()
-        Nodes + Edges + Provenance"]
+        Nodes + Edges + Annotations"]
     end
 
     DA["Document Adapter
@@ -86,7 +86,7 @@ An adapter is a **coarse-grained, self-organizing unit**. It owns its entire pro
 
 - **Declares** what input it consumes (`input_kind`) and what dimensions it populates
 - **Emits** mutations progressively — cheap results first, expensive results later
-- **Carries provenance** with every emission so the system can record WHY each mutation happened
+- **Annotates** nodes and edges with what it knows (confidence, method, source location) — the engine combines these annotations with adapter identity and context to build full provenance
 - **Respects cancellation** when input is superseded
 
 An adapter does NOT know about the event system, visualization, persistence, or other adapters.
@@ -148,22 +148,27 @@ The semantic dimension is a shared namespace. When the MovementAdapter produces 
 
 ## Edges: Use It or Lose It
 
-Connections follow Hebbian dynamics — connections that get reinforced survive, connections that don't fade away.
+Connections follow Hebbian dynamics — connections that get reinforced grow stronger, connections that don't become relatively weaker as the graph grows around them. There is no temporal half-life. Weakening is a natural consequence of normalization, not a clock.
+
+The graph stores raw reinforcement weights. Normalized weights are computed at query time via a pluggable strategy — the default normalizes per-node so outgoing weights sum to 1.0. Different consumers can apply different strategies to the same graph.
 
 ```mermaid
 flowchart LR
     New["New edge"] --> Used{"Reinforced?"}
     Used -->|"yes: traversed,
-    confirmed, multi-source"| Stronger["Grows stronger"]
-    Used -->|"no activity"| Weaker["Decays over time"]
-    Weaker --> Gone["Fades to negligible"]
+    confirmed, multi-source"| Stronger["Grows stronger
+    (normalized)"]
+    Used -->|"no new evidence"| Weaker["Relatively weaker
+    as graph grows"]
+    Weaker --> Negligible["Near-zero weight"]
     Stronger -->|"more evidence"| Stronger
+    Negligible -->|"cleanup"| Gone["Removed"]
 
 ```
 
 Confidence comes from evidence diversity, not volume. Four different kinds of evidence → more trustworthy than a hundred of the same kind.
 
-Decay is configured per-context. Manza might use a weekly half-life. Trellis might use months-scale. EDDI might use no decay within a session.
+Negligible edges accumulate in the long tail. Cleanup is a separate concern — either a simple weight threshold or a reflexive adapter that examines the weight distribution and finds a natural cutoff (e.g., power-law tail beyond which edges are indistinguishable from noise).
 
 ---
 

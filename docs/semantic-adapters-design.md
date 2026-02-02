@@ -83,30 +83,37 @@ classDiagram
 
     class AdapterSink {
         <<trait>>
-        +emit(AdapterOutput)
+        +emit(AdapterOutput) Result
     }
 
     class AdapterInput {
         +context_id: ContextId
-        +data: AdapterData
+        +data: Box~dyn Any + Send + Sync~
         +trigger: AdapterTrigger
         +previous: Option~AdapterSnapshot~
     }
 
     class AdapterOutput {
-        +nodes: Vec~Node~
-        +edges: Vec~Edge~
+        +nodes: Vec~AnnotatedNode~
+        +edges: Vec~AnnotatedEdge~
         +removals: Vec~NodeId~
-        +provenance: Vec~ProvenanceEntry~
     }
 
-    class AdapterData {
-        <<enum>>
-        FileContent
-        TextFragment
-        GestureEncoding
-        GraphState
-        Structured
+    class AnnotatedNode {
+        +node: Node
+        +annotation: Option~Annotation~
+    }
+
+    class AnnotatedEdge {
+        +edge: Edge
+        +annotation: Option~Annotation~
+    }
+
+    class Annotation {
+        +confidence: Option~f32~
+        +method: Option~String~
+        +source_location: Option~SourceLocation~
+        +detail: Option~String~
     }
 
     class Schedule {
@@ -125,21 +132,43 @@ classDiagram
         Manual
     }
 
+    class NormalizationStrategy {
+        <<trait>>
+        +normalize(Edge, GraphView) f32
+    }
+
+    class GraphEvent {
+        <<enum>>
+        NodesAdded
+        EdgesAdded
+        NodesRemoved
+        EdgesRemoved
+        WeightsChanged
+    }
+
     class ProvenanceEntry {
-        +description: String
-        +entry_type: ProvenanceEntryType
-        +explains: Vec~NodeId~
-        +confidence: f32
-        +source_location: Option~SourceLocation~
+        +adapter_id: String
+        +timestamp: DateTime
+        +context_id: ContextId
+        +input_summary: String
+        +annotation: Option~Annotation~
+        +node_id: NodeId
     }
 
     SemanticAdapter ..> AdapterInput : receives
     SemanticAdapter ..> AdapterSink : emits through
     AdapterSink ..> AdapterOutput : receives
-    AdapterInput *-- AdapterData
+    AdapterSink ..> GraphEvent : triggers
     AdapterInput *-- AdapterTrigger
-    AdapterOutput *-- ProvenanceEntry
+    AdapterOutput *-- AnnotatedNode
+    AdapterOutput *-- AnnotatedEdge
+    AnnotatedNode *-- Annotation
+    AnnotatedEdge *-- Annotation
     SemanticAdapter *-- Schedule
+
+    Note for AdapterInput "data is opaque to framework.\nAdapter downcasts internally.\nRouter matches by input_kind()."
+    Note for ProvenanceEntry "Constructed by engine,\nnot by adapters.\nCombines framework context\nwith adapter annotations."
+    Note for NormalizationStrategy "Query-time concern.\nRaw weights stored.\nStrategy applied on access."
 ```
 
 ### Bootstrap Trait (Rust)
@@ -163,6 +192,15 @@ pub trait SemanticAdapter: Send + Sync {
     ) -> Result<(), AdapterError>;
 }
 
+/// Input envelope. The framework manages context, trigger, and snapshot.
+/// The data payload is opaque — the adapter downcasts to its expected type.
+pub struct AdapterInput {
+    pub context_id: ContextId,
+    pub data: Box<dyn Any + Send + Sync>,
+    pub trigger: AdapterTrigger,
+    pub previous: Option<AdapterSnapshot>,
+}
+
 pub trait AdapterSink: Send + Sync {
     fn emit(&self, output: AdapterOutput) -> Result<(), AdapterError>;
 }
@@ -171,6 +209,38 @@ pub enum Schedule {
     Periodic { interval_secs: u64 },
     MutationThreshold { count: usize },
     Condition(Box<dyn Fn(&GraphSummary) -> bool + Send + Sync>),
+}
+
+/// Adapter-provided annotation on a node or edge.
+/// The adapter knows *how* it extracted something — confidence, method, source.
+/// The engine wraps this with *who* and *when* to build full provenance.
+pub struct Annotation {
+    pub confidence: Option<f32>,
+    pub method: Option<String>,
+    pub source_location: Option<SourceLocation>,
+    pub detail: Option<String>,
+}
+
+pub struct AnnotatedNode {
+    pub node: Node,
+    pub annotation: Option<Annotation>,
+}
+
+pub struct AnnotatedEdge {
+    pub edge: Edge,
+    pub annotation: Option<Annotation>,
+}
+
+pub struct AdapterOutput {
+    pub nodes: Vec<AnnotatedNode>,
+    pub edges: Vec<AnnotatedEdge>,
+    pub removals: Vec<NodeId>,
+}
+
+/// Query-time normalization. Raw weights are stored; normalized weights
+/// are computed on access. Different consumers can use different strategies.
+pub trait NormalizationStrategy: Send + Sync {
+    fn normalize(&self, edge: &Edge, graph: &GraphView) -> f32;
 }
 ```
 
@@ -231,29 +301,155 @@ sequenceDiagram
     AL->>DA: process(input, sink, cancel)
 
     Note over DA: Phase 1: instant
-    DA->>Sink: emit(file node)
-    Sink->>Engine: commit + provenance
+    DA->>Sink: emit(file node, no annotation)
+    Sink->>Engine: commit nodes + build provenance
     Engine->>UI: event: node_added
 
     Note over DA: Phase 2: chunking
     DA->>Sink: emit(section nodes, contains edges)
-    Sink->>Engine: commit + provenance
+    Sink->>Engine: commit + build provenance
     Engine->>UI: event: nodes_added
 
     Note over DA: Phase 3: cross-refs
     DA->>Sink: emit(citation edges)
-    Sink->>Engine: commit + provenance
+    Sink->>Engine: validate edges, commit + provenance
     Engine->>UI: event: edges_added
 
     Note over DA: Phase 4: LLM via llm-orc
-    DA->>Sink: emit(concept nodes, thematic edges)
-    Sink->>Engine: commit + provenance
+    DA->>Sink: emit(concepts + annotations: conf, method)
+    Sink->>Engine: commit + build provenance from annotations
     Engine->>UI: event: nodes_added
 
     DA->>AL: Ok(()) done
 
     Note over AL: Later: TopologyAdapter triggers
 ```
+
+---
+
+## Provenance Construction
+
+Provenance is split across two layers. The adapter provides epistemological detail (how it knows). The engine provides structural context (who said it, when, from what input).
+
+```mermaid
+flowchart LR
+    subgraph adapter ["Adapter Provides"]
+        A["Annotation
+        confidence: 0.85
+        method: llm-extraction
+        source: file.md:87-92"]
+    end
+
+    subgraph engine ["Engine Provides"]
+        E["Context
+        adapter_id: document-adapter
+        timestamp: T
+        input: file.md changed
+        context_id: manza-session-1"]
+    end
+
+    A --> P
+    E --> P
+
+    P["ProvenanceEntry
+    (stored in graph)"]
+```
+
+- Annotations are **per-node/edge** — confidence varies per extraction
+- Engine context is **per-emission** — same adapter, timestamp, and input for everything in one `sink.emit()` call
+- Nodes emitted without annotation still receive a provenance mark (structural context only)
+- Adapters never construct `ProvenanceEntry` directly
+
+---
+
+## Weight Normalization
+
+Raw edge weights are stored as accumulated reinforcement strength. Normalized weights are computed at query time via a pluggable strategy. This separation means the graph stores ground truth (what happened) and normalization is an interpretive lens.
+
+```mermaid
+flowchart LR
+    subgraph stored ["Stored (ground truth)"]
+        R["edge.weight (raw)
+        accumulated via reinforcement"]
+    end
+
+    subgraph query ["Query Time"]
+        S["NormalizationStrategy"]
+        N["normalized weight"]
+    end
+
+    R --> S --> N
+```
+
+**Default strategy: per-node outgoing divisive normalization.**
+
+```
+w_normalized(i→j) = w_raw(i→j) / Σ_k w_raw(i→k)
+```
+
+For any node, outgoing normalized weights sum to 1.0. This answers "given this concept, what's most strongly related?" — the natural question for graph exploration.
+
+Hebbian weakening emerges naturally: when a new edge from node A is reinforced, every other outgoing edge from A becomes relatively weaker in the normalized view without anyone touching those edges.
+
+**Alternative strategies** (swappable via the trait):
+
+| Strategy | Formula | Use case |
+|---|---|---|
+| Outgoing divisive | `w_ij / Σ_k w_ik` | Exploration, traversal |
+| Incoming divisive | `w_ij / Σ_k w_kj` | Authority, importance |
+| Softmax | `exp(w_ij) / Σ_k exp(w_ik)` | Sharper contrast |
+| Raw | `w_ij` | Debugging, absolute comparison |
+
+---
+
+## Event Catalog
+
+Every `sink.emit()` produces graph mutations. The engine fires events for each mutation type. These are low-level graph events — higher-level events (topology shifts, cross-modal bridges) are modeled as nodes/edges emitted by reflexive adapters, not as special event types.
+
+```mermaid
+flowchart TB
+    emit["sink.emit()"] --> engine["Engine commits"]
+    engine --> NA["NodesAdded
+    node_ids, adapter_id, context_id"]
+    engine --> EA["EdgesAdded
+    edge_ids, adapter_id, context_id"]
+    engine --> NR["NodesRemoved
+    node_ids, adapter_id, context_id"]
+    engine --> ER["EdgesRemoved
+    edge_ids, reason"]
+    engine --> WC["WeightsChanged
+    affected edge_ids"]
+```
+
+| Event | Trigger | Payload |
+|---|---|---|
+| `NodesAdded` | Nodes committed from emission | node IDs, adapter ID, context ID |
+| `EdgesAdded` | Edges committed (after validation) | edge IDs, adapter ID, context ID |
+| `NodesRemoved` | Removals committed from emission | node IDs, adapter ID, context ID |
+| `EdgesRemoved` | Cascade from node removal, or cleanup | edge IDs, reason |
+| `WeightsChanged` | Reinforcement applied | affected edge IDs |
+
+`EdgesRemoved` fires on two paths: cascading removal when a node is deleted (its edges go with it), and cleanup when negligible edges are pruned. The `reason` field distinguishes these.
+
+---
+
+## Sink Semantics
+
+The sink validates and commits each emission atomically. Emissions within one `sink.emit()` call succeed or fail as a unit.
+
+**Validation rules:**
+
+| Condition | Behavior |
+|---|---|
+| Edge references missing endpoint | **Reject** — endpoints must exist in graph or in the same emission |
+| Duplicate node ID (already in graph) | **Upsert** — update properties, merge |
+| Removal of non-existent node | **No-op** |
+| Empty emission (no nodes, edges, or removals) | **No-op** |
+| Self-referencing edge (source == target) | **Allow** |
+
+**Cancellation:** checked between `emit()` calls, not during. Each emission is atomic — if the cancel token fires mid-processing, the adapter sees it on its next check and stops. Already-committed emissions remain valid.
+
+**Error path:** `emit()` returns `Err(AdapterError)` only on validation failure (e.g., edge with missing endpoint not present in the same emission). Infrastructure errors (storage failure) propagate as `AdapterError::Internal`.
 
 ---
 
@@ -340,19 +536,21 @@ flowchart TB
     confidence: 0.15"]
 
     active -->|"evidence"| reinforced
-    active -->|"no activity"| decaying
+    active -->|"no new evidence"| weakening
     weak -->|"confirmed"| reinforced
-    weak -->|"no confirmation"| decaying
+    weak -->|"no confirmation"| weakening
 
     reinforced["Reinforced"] -->|"diverse sources"| strong["Strong
     confidence > 0.7"]
-    reinforced -->|"stops"| decaying
+    reinforced -->|"stops"| weakening
 
-    strong -->|"stops"| decaying
+    strong -->|"stops"| weakening
 
-    decaying["Decaying
-    half-life: per-context"] -->|"new evidence"| reinforced
-    decaying -->|"near zero"| negligible["Negligible"]
+    weakening["Relatively weaker
+    (normalization)"] -->|"new evidence"| reinforced
+    weakening -->|"near zero"| negligible["Negligible"]
+    negligible -->|"threshold or
+    distribution analysis"| removed["Removed"]
 
 ```
 
@@ -368,15 +566,25 @@ flowchart TB
 
 4. **Cancellation via token.** Long-running adapters check a cancel token periodically. Already-emitted mutations remain valid.
 
-5. **Semantic dimension is shared.** All domains contribute concept nodes to the same namespace. `ContentType` disambiguates origin. This enables cross-modal bridging.
+5. **Two-layer provenance.** Adapters annotate per-node/edge (confidence, method, source location). The engine wraps each emission with structural context (adapter ID, timestamp, input context) to construct full `ProvenanceEntry` records. Adapters never build provenance entries directly — they annotate what they know, the framework supplies the rest. Nodes emitted without annotation still receive provenance marks (just without epistemological detail).
 
-6. **Labels bridge modalities.** Shared vocabulary in the semantic dimension — no special unification logic.
+6. **Edge validation.** Edges whose endpoints don't exist in the graph are rejected by the sink. Adapters must emit nodes before (or in the same output as) edges that reference them.
 
-7. **Decay is per-context.** Same adapter, different decay in Manza vs Trellis vs EDDI.
+7. **Semantic dimension is shared.** All domains contribute concept nodes to the same namespace. `ContentType` disambiguates origin. This enables cross-modal bridging.
 
-8. **Reflexive adapters propose, don't merge.** Weak `may_be_related` edges. Graph dynamics (Hebbian reinforcement/decay) determine what's real.
+8. **Labels bridge modalities.** Shared vocabulary in the semantic dimension — no special unification logic.
 
-9. **Cross-adapter dependency via graph state.** External adapters are independent. Reflexive adapters depend on accumulated graph state, not specific adapter outputs.
+9. **No temporal decay.** Edge weights weaken through normalization as the graph grows, not through clock-based half-lives. A quiet graph stays stable — silence isn't evidence against previous observations. Cleanup of negligible edges is a separate concern (threshold or distribution analysis).
+
+10. **Raw weights stored, normalization at query time.** The graph stores accumulated reinforcement strength. Normalized weights are computed on access via a pluggable `NormalizationStrategy`. Different consumers can interpret the same graph differently. Default: per-node outgoing divisive normalization.
+
+11. **Adapter data is opaque.** The framework routes by `input_kind()` string match but never inspects the payload. Adapters downcast `Box<dyn Any>` internally. This keeps the framework decoupled from domain-specific input shapes.
+
+12. **Sink emissions are atomic.** Each `emit()` call validates and commits as a unit. Upsert on duplicate nodes, reject edges with missing endpoints, no-op on empty emissions and missing removals.
+
+13. **Reflexive adapters propose, don't merge.** Weak `may_be_related` edges. Graph dynamics (Hebbian reinforcement + normalization) determine what's real.
+
+14. **Cross-adapter dependency via graph state.** External adapters are independent. Reflexive adapters depend on accumulated graph state, not specific adapter outputs.
 
 ---
 
@@ -388,6 +596,6 @@ flowchart TB
 
 3. **Canonical pointers vs pure emergence.** When `may_be_related` strengthens to high confidence — designate one node as canonical, or keep both with a strong equivalence edge?
 
-4. **Edge garbage collection.** Negligible edges persist indefinitely. Cleanup threshold needed, or is accumulation intentional?
+4. **Edge cleanup strategy.** Simple weight threshold (e.g., w < 0.001) or distribution-aware cutoff (reflexive adapter identifies power-law tail)? Could be both — threshold as a floor, distribution analysis as a refinement.
 
 5. **Session boundaries (EDDI).** Separate session contexts? Same context with temporal windowing? Session metadata on nodes/edges?
