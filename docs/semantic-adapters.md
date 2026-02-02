@@ -1,6 +1,10 @@
 # Semantic Adapters
 
-How Plexus builds knowledge graphs from different kinds of input.
+Plexus is a multi-dimensional knowledge graph engine. It models relationships between concepts, documents, code, movement data, and other domains — storing not just what it knows, but how it came to know it.
+
+**Semantic adapters** are the layer that transforms domain-specific input into graph mutations. A single adapter takes one kind of input (file content, text fragments, gesture encodings, or the graph itself), processes it through however many internal phases it needs, and emits nodes, edges, and provenance into the shared graph.
+
+This document explains the concepts. See [semantic-adapters-design.md](./semantic-adapters-design.md) for the system design and trait definitions.
 
 ---
 
