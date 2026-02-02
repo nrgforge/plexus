@@ -25,19 +25,19 @@ Sources:
 The adapters populate dimensions like this:
 
 ```
- STRUCTURE dimension (DirectoryAdapter, programmatic)
+ STRUCTURE dimension (DocumentAdapter, programmatic phases)
  ├── [biomechanics-papers/] ──contains──▶ [laban-analysis.md]
  ├── [gesture-taxonomy/]    ──contains──▶ [upper-body/reaches.md]
  └── [improvisation-notes/] ──contains──▶ [session-2024-03.md]
      Ontological claim: "these documents exist and are organized this way"
 
- SEMANTIC dimension (DocAdapter, LLM-powered)
+ SEMANTIC dimension (DocumentAdapter, LLM-powered phases)
  ├── [concept:laban-effort] ──related_to──▶ [concept:weight-flow]
  ├── [concept:reach-space]  ──extends────▶  [concept:kinesphere]
  └── [concept:improvisation]──applies────▶  [concept:laban-effort]
      Ontological claim: "these ideas exist and relate this way"
 
- RELATIONAL dimension (LinkAdapter, programmatic)
+ RELATIONAL dimension (DocumentAdapter, cross-reference phases)
  ├── [laban-analysis.md]    ──cites──────▶  [reaches.md]
  └── [session-2024-03.md]   ──references─▶  [laban-analysis.md]
      Ontological claim: "the author made these connections"
@@ -88,18 +88,20 @@ User edits document
 File change event
        │
        ▼
-Adapter(s) re-analyze affected content
+DocumentAdapter.process() begins
        │
-       ▼
-Graph mutations (new nodes, new edges, reinforced edges)
-       │
-       ▼
-Event emitted → UI updates visualization
+       ├── emit: file node (instant)
+       ├── emit: section structure (fast)
+       ├── emit: cross-references (moderate)
+       └── emit: concepts, themes (slow, LLM)
+              │
+              ▼
+       Each emission → engine commit → event → UI updates
 ```
 
-**What adapters produce:** Incremental graph mutations. The user added a section about "somatic awareness" → the semantic adapter extracts a new concept node → cross-dimensional edges link it to the document section → the graph visualization animates the new connections appearing.
+**What adapters produce:** Incremental graph mutations, emitted progressively. The user added a section about "somatic awareness" → the adapter emits structural nodes first, then concept nodes as LLM processing completes → the graph visualization animates the new connections appearing in stages.
 
-**Key requirement:** Incremental analysis. Re-analyzing the entire corpus on every keystroke is not viable. Adapters need to handle deltas: "this section changed, update the relevant subgraph."
+**Key requirement:** Incremental analysis. Re-analyzing the entire corpus on every keystroke is not viable. Adapters need to handle deltas: "this section changed, update the relevant subgraph." Cancellation support ensures that if the file changes again mid-processing, stale work can be abandoned.
 
 ### Scenario 2: Trellis (Accumulative / Periodic)
 
@@ -112,16 +114,19 @@ Event emitted → UI updates visualization
 Fragment arrives (text message, email response)
        │
        ▼
-Adapter analyzes fragment in isolation
+FragmentAdapter.process() begins
        │
-       ▼
-Graph mutations (new nodes, new edges)
-       │
-       ▼
-Periodic: surface connections to the writer
-  - "These 4 fragments from the last month cluster around X"
-  - "This idea from Tuesday echoes something from 3 weeks ago"
-  - "An outline is emerging: [harvested structure]"
+       ├── emit: fragment node, structural analysis
+       └── emit: concepts extracted via LLM
+              │
+              ▼
+       Graph accumulates over weeks
+              │
+              ▼
+       Scheduled: TopologyAdapter detects communities
+              │
+              ▼
+       Surface connections to the writer
 ```
 
 **What adapters produce:** The same currency (nodes, edges, reinforcement) but the *consumption pattern* is different. Trellis doesn't show the graph directly — it queries it to find:
@@ -151,20 +156,17 @@ Segmentation + encoding (in EDDI)
 Encoded gesture with labels sent to Plexus
        │
        ▼
-Adapter maps encoded gesture → graph mutations
-  - New gesture node (or reinforcement of existing one)
-  - Transition edges between sequential gestures
-  - Cluster membership edges
-  - Concept nodes from labels (Laban efforts, Viewpoints, etc.)
+MovementAdapter.process() begins
        │
-       ▼
-Graph topology change detected
-  - New community formed
-  - Hub gesture emerged
-  - Edge crossed strength threshold
-       │
-       ▼
-Event emitted → subscribed client alters environment
+       ├── emit: gesture node with timestamp
+       ├── emit: concept nodes from labels, edges to concepts
+       └── emit: cluster membership edges
+              │
+              ▼
+       Scheduled: TopologyAdapter detects topology change
+              │
+              ▼
+       Event emitted → subscribed client alters environment
 ```
 
 **What adapters produce:** Same currency (nodes, edges, reinforcement) but from a fundamentally different source. Not text. Not files. The adapter here is computational — it receives pre-segmented, pre-encoded gesture representations and maps them into graph vocabulary.
@@ -177,124 +179,89 @@ Event emitted → subscribed client alters environment
 
 ---
 
-## Tiered Knowledge: Cost-Aware Graph Building
+## Progressive Knowledge: Cost-Aware Graph Building
 
-Different kinds of knowledge have different computational costs. The system should be honest about this — emitting knowledge as it becomes available rather than blocking on the most expensive operation.
+Different kinds of knowledge have different computational costs. A single adapter may move through multiple fidelity levels internally, emitting what it knows as soon as it knows it rather than blocking on the most expensive operation.
 
-### The Fidelity Tiers
+### Fidelity Levels
 
-```
-Tier 0 (instant):   "This file exists, is 340KB, lives in /research/"
-                     → structure dimension: file node with size property
-                     Cost: ~0. Filesystem stat.
-
-Tier 1 (fast):      "This file has 5 acts, 23 scenes"
-                     → structure dimension: section nodes, contains edges
-                     Cost: milliseconds–seconds. Requires parsing/chunking.
-                     Note: for large files (Shakespeare play as one TXT),
-                     chunking is unavoidable upfront cost.
-
-Tier 2 (moderate):  "Act 3 Scene 1 contains the 'To be or not to be' soliloquy"
-                     → relational dimension: reference edges, key-passage markers
-                     Cost: seconds. Structural analysis of chunks.
-
-Tier 3 (slow):      "This play explores themes of indecision, mortality, and duty"
-                     → semantic dimension: concept nodes, thematic edges
-                     Cost: seconds–minutes + API cost. LLM processing of chunks.
-
-Tier 4 (background): "The theme of indecision in Hamlet connects to the
-                      concept of 'suspension' in your movement research"
-                     → cross-dimensional reinforcement, community detection
-                     Cost: variable. Graph-wide analysis, potentially LLM-assisted.
-```
-
-Each tier emits events when complete. The graph is always in a partially-built state and that's fine — it's honest about what it knows at each fidelity level. Manza can show the file structure immediately, then animate new semantic connections appearing as Tier 3 completes in the background.
-
-### Tiers Inform Each Other
-
-Cheap tiers inform expensive tiers about where to focus:
+These are not scheduling tiers in the trait — they're a conceptual framework for how adapters organize their internal work. An adapter emits progressively through its sink as each level completes.
 
 ```
-Tier 1 (structural parsing)
+Level 0 (instant):  "This file exists, is 340KB, lives in /research/"
+                    → structure dimension: file node with size property
+                    Cost: ~0. Filesystem stat.
+
+Level 1 (fast):     "This file has 5 acts, 23 scenes"
+                    → structure dimension: section nodes, contains edges
+                    Cost: milliseconds–seconds. Requires parsing/chunking.
+                    Note: for large files (Shakespeare play as one TXT),
+                    chunking is unavoidable upfront cost.
+
+Level 2 (moderate): "Act 3 Scene 1 contains the 'To be or not to be' soliloquy"
+                    → relational dimension: reference edges, key-passage markers
+                    Cost: seconds. Structural analysis of chunks.
+
+Level 3 (slow):     "This play explores themes of indecision, mortality, and duty"
+                    → semantic dimension: concept nodes, thematic edges
+                    Cost: seconds–minutes + API cost. LLM processing of chunks.
+                    May involve llm-orc ensembles with multiple sub-stages,
+                    each emitting partial results as agents in the DAG complete.
+```
+
+Each emission triggers events. The graph is always in a partially-built state and that's fine — it's honest about what it knows at each fidelity level. Manza can show the file structure immediately, then animate new semantic connections appearing as LLM processing completes in the background.
+
+### Early Levels Inform Later Levels
+
+Cheap work informs expensive work about where to focus:
+
+```
+Level 1 (structural parsing)
   │
   ├── Chunks the file into processable sections
   │   (load-bearing: bad chunking ruins downstream extraction)
   │
   └── Detects which chunks changed (for incremental updates)
         │
-        ├──▶ Tier 2 only re-analyzes changed chunks
-        └──▶ Tier 3 only sends changed chunks to LLM
+        ├──▶ Level 2 only re-analyzes changed chunks
+        └──▶ Level 3 only sends changed chunks to LLM
 ```
 
-This means the structural adapter isn't just producing structure nodes — it's producing the chunking strategy that all downstream tiers depend on. The structural adapter's section boundaries become the units of incremental reprocessing.
+This means the structural phase isn't just producing structure nodes — it's producing the chunking strategy that all downstream phases depend on. The section boundaries become the units of incremental reprocessing. All of this happens inside the adapter; the adapter layer doesn't orchestrate the handoff.
 
-### Tiers Apply to All Domains
+### File-Type-Dependent Strategies
 
-The movement domain has its own tier structure:
+The adapter encapsulates domain complexity. For a DocumentAdapter handling file content:
 
 ```
-Tier 0 (instant):   "A gesture was received, session timestamp X"
-                     → structure: gesture node with timestamp
+Level 1 strategy varies by file type:
+  ├── .md  → header-based parsing (programmatic)
+  ├── .pdf → layout extraction via llm-orc
+  ├── .txt → structure probing via llm-orc (ambiguous formatting)
+  ├── .docx → structural extraction via llm-orc
+  └── code → tree-sitter parsing
 
-Tier 1 (fast):      "This gesture has encoding [0.8, 0.2, 0.9, ...]
-                      and labels [sudden, strong, indirect]"
-                     → semantic: concept nodes (sudden, strong, indirect)
-                     → edges: gesture ──exhibits──▶ concept:sudden
-
-Tier 2 (moderate):  "This gesture clusters with gestures 42, 87, 103"
-                     → relational: cluster membership edges
-                     → reinforcement: shared-cluster edges strengthen
-
-Tier 3 (slow):      "A new movement community has emerged around
-                      'explosive-direct' gestures in this session"
-                     → community detection, topology-change events
-                     Cost: depends on graph size and analysis frequency
+The adapter layer doesn't know about any of this.
+It just receives mutations as they're emitted through the sink.
 ```
 
-### Cost Implications for the Adapter Trait
+### Fidelity Levels Apply to All Domains
 
-The tiered model suggests adapters should declare their tier/cost level:
+The movement domain has its own internal progression:
 
-```rust
-pub trait SemanticAdapter: Send + Sync {
-    // ... existing methods ...
-
-    /// Processing tier — determines scheduling priority and parallelism.
-    ///
-    /// Lower tiers run first and may inform higher tiers.
-    /// Multiple adapters at the same tier can run in parallel.
-    fn tier(&self) -> AdapterTier;
-}
-
-pub enum AdapterTier {
-    /// Instant: filesystem, metadata, trivial computation
-    /// Always runs synchronously before other tiers.
-    Instant,
-
-    /// Fast: parsing, chunking, structural analysis
-    /// Runs quickly, may produce chunking that informs later tiers.
-    Fast,
-
-    /// Moderate: cross-reference analysis, pattern matching
-    /// May run in background, emits events on completion.
-    Moderate,
-
-    /// Slow: LLM calls, expensive computation
-    /// Always runs in background, emits events on completion.
-    Slow,
-
-    /// Background: graph-wide analysis, community detection, cross-adapter unification
-    /// Runs periodically or on significant graph changes.
-    Background,
-}
 ```
+Level 0 (instant):  "A gesture was received, session timestamp X"
+                    → structure: gesture node with timestamp
 
-The adapter layer uses tiers to schedule work:
-1. Run all `Instant` adapters synchronously → emit events
-2. Run all `Fast` adapters (parallel) → emit events → feed chunking to later tiers
-3. Queue `Moderate` adapters in background → emit events on completion
-4. Queue `Slow` adapters in background → emit events on completion
-5. Schedule `Background` adapters periodically or on topology thresholds
+Level 1 (fast):     "This gesture has encoding [0.8, 0.2, 0.9, ...]
+                     and labels [sudden, strong, indirect]"
+                    → semantic: concept nodes (sudden, strong, indirect)
+                    → edges: gesture ──exhibits──▶ concept:sudden
+
+Level 2 (moderate): "This gesture clusters with gestures 42, 87, 103"
+                    → relational: cluster membership edges
+                    → reinforcement: shared-cluster edges strengthen
+```
 
 ---
 
@@ -307,7 +274,7 @@ The most valuable signal in the system occurs when independent adapters, operati
 The semantic dimension is a shared namespace of labeled concepts. Adapters from any domain contribute to it by producing concept nodes with meaningful labels.
 
 ```
-DocAdapter reads a paper about Laban Movement Analysis:
+DocumentAdapter reads a paper about Laban Movement Analysis:
   → extracts concept node: concept:sudden
   → extracts concept node: concept:strong
   → extracts concept node: concept:kinesphere
@@ -321,11 +288,11 @@ MovementAdapter receives a gesture from EDDI:
   → creates edges: gesture ──exhibits──▶ concept:sudden
 ```
 
-When the MovementAdapter produces `concept:sudden` and that node already exists (created by DocAdapter from text), the edge from the gesture to the concept is reinforced by a new, independent source. The system sees:
+When the MovementAdapter produces `concept:sudden` and that node already exists (created by DocumentAdapter from text), the edge from the gesture to the concept is reinforced by a new, independent source. The system sees:
 
 ```
 concept:sudden
-  ├── created by: DocAdapter (from laban-analysis.md:87)
+  ├── created by: DocumentAdapter (from laban-analysis.md:87)
   ├── reinforced by: MovementAdapter (from gesture encoding)
   │
   │   Reinforcement type: MultipleAnalyzers
@@ -363,41 +330,49 @@ Every domain can participate in the shared semantic namespace as long as its ada
 | Concern | Manza | Trellis | EDDI |
 |---------|-------|---------|------|
 | **Input trigger** | File change event | Async fragment arrival | Gesture segmented upstream |
-| **Analysis mode** | Incremental (delta from Tier 1) | Isolated (single fragment) | Per-gesture (discrete events) |
+| **Analysis mode** | Incremental (delta-aware) | Isolated (single fragment) | Per-gesture (discrete events) |
 | **Source material** | Files (text, code) | Text fragments | Encoded gestures + labels |
 | **Extraction method** | LLM + programmatic | LLM + programmatic | Algorithmic + label vocabulary |
 | **Primary output** | Graph viz updates | Surfaced connections | Topology-change events |
 | **Timescale** | Seconds (edit cycle) | Days/weeks/months | Milliseconds (frame time) |
 | **Decay relevance** | Medium (weekly half-life) | Low (months-scale memory) | None within session, configurable across |
-| **Cost profile** | Tiers 0–3 on file change | Tiers 1–3 per fragment | Tiers 0–2 per gesture, Tier 3 periodic |
+| **Internal complexity** | File-type branching, chunking, LLM via llm-orc | Fragment parsing, LLM extraction | Label mapping, feature clustering |
 
 ---
 
 ## The Adapter Trait
 
-A semantic adapter should be broader than `ContentAnalyzer`. It needs to:
+### Design Principles
 
-1. **Declare its input contract** — what kind of data it consumes
-2. **Declare its output dimensions** — which dimensions it populates
-3. **Declare its processing tier** — how expensive it is (determines scheduling)
-4. **Produce the universal currency** — nodes, edges, and reinforcement evidence
-5. **Carry provenance metadata** — so the system can automatically record WHY each mutation happened
+A semantic adapter is a **coarse-grained, self-organizing unit**. It owns its entire processing pipeline internally — from cheap structural work through expensive LLM extraction. It emits graph mutations progressively through a sink as each internal phase completes.
 
 The adapter does NOT need to:
-- Know about the event system (that's the engine's job)
+- Know about the event system (the adapter layer handles event emission on each sink emission)
 - Know about visualization (that's the lens system's job)
-- Manage its own provenance (the adapter layer wraps this automatically)
+- Manage its own provenance persistence (the adapter layer converts ProvenanceEntry into provenance marks automatically)
 - Handle persistence (the engine handles this)
 - Know about other adapters (cross-adapter reinforcement happens through shared concept nodes)
+- Coordinate phase ordering with other adapters (internal phases are the adapter's business)
+
+The adapter DOES need to:
+- Declare its input contract — what kind of data it consumes
+- Declare its output dimensions — which dimensions it populates
+- Declare its trigger — input-driven or scheduled
+- Emit mutations progressively through the sink
+- Include provenance metadata with each emission
+- Respect cancellation
 
 ### Proposed Trait Shape
 
 ```rust
 /// A semantic adapter transforms domain-specific input into graph mutations.
 ///
-/// Unlike ContentAnalyzer (which assumes file-based content analysis),
-/// SemanticAdapter is domain-agnostic. It receives typed input and produces
-/// graph mutations with provenance metadata.
+/// Adapters are coarse-grained: a single adapter may perform multiple internal
+/// phases (structural parsing, cross-reference analysis, LLM extraction) and
+/// emit results progressively through the sink as each phase completes.
+///
+/// Adapters are either input-triggered (schedule() returns None) or
+/// scheduled (schedule() returns a trigger condition for graph-state analysis).
 #[async_trait]
 pub trait SemanticAdapter: Send + Sync {
     /// Unique identifier
@@ -411,21 +386,63 @@ pub trait SemanticAdapter: Send + Sync {
 
     /// The type of input this adapter accepts.
     ///
-    /// Used by the engine to route data to the right adapter.
-    /// Examples: "file_content", "text_fragment", "gesture_encoding"
+    /// Used by the adapter layer to route data to the right adapter.
+    /// Examples: "file_content", "text_fragment", "gesture_encoding", "graph_state"
     fn input_kind(&self) -> &str;
 
-    /// Processing tier — determines scheduling priority and parallelism.
-    fn tier(&self) -> AdapterTier;
-
-    /// Process input and produce graph mutations.
+    /// When should this adapter run?
     ///
-    /// The AdapterInput is domain-specific (file bytes, text string,
-    /// gesture encoding, etc). The AdapterOutput is universal:
-    /// nodes, edges, reinforcement evidence, and provenance metadata.
-    async fn process(&self, input: &AdapterInput) -> Result<AdapterOutput, AdapterError>;
+    /// Returns None for input-triggered adapters (they run when matching
+    /// input arrives). Returns Some(Schedule) for scheduled adapters
+    /// (they run on a timer, mutation threshold, or graph condition).
+    fn schedule(&self) -> Option<Schedule> { None }
+
+    /// Process input and emit graph mutations progressively.
+    ///
+    /// The adapter calls sink.emit() whenever it has mutations ready —
+    /// once at the end for simple adapters, multiple times for adapters
+    /// with internal phases or long-running LLM ensembles.
+    ///
+    /// Each emission is committed to the engine immediately and triggers
+    /// events to consumers. The adapter controls emission granularity.
+    ///
+    /// The cancel token should be checked periodically (before each phase,
+    /// before each LLM call). If cancelled, the adapter should return
+    /// promptly. Mutations already emitted remain in the graph.
+    async fn process(
+        &self,
+        input: &AdapterInput,
+        sink: &dyn AdapterSink,
+        cancel: &CancellationToken,
+    ) -> Result<(), AdapterError>;
 }
 
+/// Receives progressive emissions from an adapter.
+///
+/// Each call to emit() triggers: graph mutation commit, provenance mark
+/// creation, and event emission to consumers. The adapter layer owns this.
+pub trait AdapterSink: Send + Sync {
+    /// Emit a batch of mutations. Can be called any number of times
+    /// during a single process() invocation.
+    fn emit(&self, output: AdapterOutput) -> Result<(), AdapterError>;
+}
+
+/// Trigger conditions for scheduled adapters.
+pub enum Schedule {
+    /// Run every N seconds
+    Periodic { interval_secs: u64 },
+
+    /// Run after N new mutations in the context since last run
+    MutationThreshold { count: usize },
+
+    /// Run when a custom condition is met against graph state
+    Condition(Box<dyn Fn(&GraphSummary) -> bool + Send + Sync>),
+}
+```
+
+### Input and Output Types
+
+```rust
 /// Domain-specific input to an adapter
 pub struct AdapterInput {
     /// The context this input belongs to
@@ -465,6 +482,12 @@ pub enum AdapterData {
         timestamp: DateTime<Utc>,
     },
 
+    /// Graph state snapshot (for reflexive/scheduled adapters)
+    GraphState {
+        context_id: ContextId,
+        scope: ReflexiveScope,
+    },
+
     /// Generic structured data (for domains not yet enumerated)
     Structured(serde_json::Value),
 }
@@ -476,24 +499,24 @@ pub enum AdapterTrigger {
     FragmentReceived,
     /// A gesture was segmented from stream (EDDI)
     GestureSegmented,
+    /// Scheduled trigger condition was met
+    Scheduled,
     /// Manual/programmatic invocation
     Manual,
 }
 
-pub enum AdapterTier {
-    /// Instant: filesystem, metadata, trivial computation
-    Instant,
-    /// Fast: parsing, chunking, structural analysis
-    Fast,
-    /// Moderate: cross-reference analysis, pattern matching
-    Moderate,
-    /// Slow: LLM calls, expensive computation
-    Slow,
-    /// Background: graph-wide analysis, community detection
-    Background,
+pub enum ReflexiveScope {
+    /// Examine everything in the context
+    Full,
+    /// Examine only nodes/edges added since the given timestamp
+    Since(DateTime<Utc>),
+    /// Examine a specific set of nodes
+    Nodes(Vec<NodeId>),
 }
 
-/// Universal output from any adapter
+/// Universal output from any adapter emission.
+///
+/// A single process() call may produce many of these via sink.emit().
 pub struct AdapterOutput {
     /// Nodes to add or update
     pub nodes: Vec<Node>,
@@ -539,7 +562,7 @@ pub enum ProvenanceEntryType {
 
 ### The Adapter Layer (Orchestration)
 
-The adapter layer sits between raw input and the engine. It schedules adapters by tier, routes data, and handles provenance automatically:
+The adapter layer sits between raw input and the engine. Its job is simple: route input, provide sinks, commit emissions, manage scheduled adapters.
 
 ```
   Raw Input (file change / fragment / gesture / ...)
@@ -548,18 +571,25 @@ The adapter layer sits between raw input and the engine. It schedules adapters b
   ┌──────────────────────────────────────────────────┐
   │              Adapter Layer                        │
   │                                                   │
+  │  Input-triggered path:                            │
   │  1. Route to adapter(s) by input_kind             │
-  │  2. Schedule by tier:                             │
-  │     Instant → sync, immediate                     │
-  │     Fast → parallel, quick                        │
-  │     Moderate → background, emit on complete        │
-  │     Slow → background, emit on complete            │
-  │     Background → periodic / threshold-triggered    │
-  │  3. Merge outputs (dedup nodes, combine evidence)  │
-  │  4. Create provenance marks from ProvenanceEntry   │
-  │  5. Commit mutations to engine                     │
+  │  2. Spawn each adapter with a sink + cancel token │
+  │  3. On each sink.emit():                          │
+  │     a. Dedup nodes, combine reinforcement         │
+  │     b. Create provenance marks                    │
+  │     c. Commit mutations to engine                 │
+  │     d. Fire events to consumers                   │
   │                                                   │
-  │  Fast tiers feed chunking/context to slow tiers    │
+  │  Scheduled path:                                  │
+  │  1. Monitor trigger conditions per adapter         │
+  │  2. When condition met, invoke process() with      │
+  │     GraphState input + sink + cancel token         │
+  │  3. Same commit/event pipeline as above            │
+  │                                                   │
+  │  Cancellation:                                    │
+  │  When new input supersedes in-flight work          │
+  │  (e.g., file changed again), cancel the token.    │
+  │  Already-emitted mutations remain in the graph.    │
   └──────────────────────────────────────────────────┘
        │                    │
        ▼                    ▼
@@ -573,48 +603,49 @@ The adapter layer sits between raw input and the engine. It schedules adapters b
 
 ### Relationship to Existing ContentAnalyzer
 
-`ContentAnalyzer` becomes one *kind* of `SemanticAdapter` — specifically, one that handles `AdapterData::FileContent`. The existing analyzers (MarkdownStructureAnalyzer, LinkAnalyzer, SemanticAnalyzer) can be wrapped or refactored to implement `SemanticAdapter` instead, with `input_kind() = "file_content"`.
+`ContentAnalyzer` becomes one *kind* of `SemanticAdapter` — specifically, one whose `input_kind` is `"file_content"`. The existing analyzers (MarkdownStructureAnalyzer, LinkAnalyzer, SemanticAnalyzer) can either be wrapped as internal phases of a single DocumentAdapter, or individually wrapped to implement `SemanticAdapter`.
 
-This is a generalization, not a replacement. The analysis orchestrator and result merger still apply to the file-content case. The adapter layer is the broader concept that encompasses non-file, non-text, non-LLM input sources.
+The recommended path: a single DocumentAdapter that uses the existing analyzers internally as phases, emitting through the sink as each completes. This preserves the existing analysis logic while fitting the new trait shape.
 
 ---
 
 ## Reflexive Adapters: The Graph Refining Itself
 
-External adapters (structure, semantic, relational, movement) take input from outside and build the graph. But the graph also needs processes that operate on the graph itself — examining its own structure, proposing connections, detecting emergent patterns. These are **reflexive adapters**: their input is graph state, and their output is graph mutations.
+External adapters (document, fragment, movement) take input from outside and build the graph. But the graph also needs processes that operate on the graph itself — examining its own structure, proposing connections, detecting emergent patterns. These are **reflexive adapters**: their input is graph state, and their output is graph mutations.
 
-Reflexive adapters are the same `SemanticAdapter` trait with `input_kind = "graph_state"`, running at Tier 4 (Background). They fit the same architecture — they produce nodes, edges, reinforcement, and provenance — but their trigger is graph-internal rather than external.
+Reflexive adapters implement the same `SemanticAdapter` trait with `input_kind = "graph_state"` and a `schedule()` that returns their trigger condition. They fit the same architecture — they produce nodes, edges, reinforcement, and provenance — but their trigger is graph-internal rather than external.
 
 ### The Layered Picture
 
 ```
-  External Adapters (Tiers 0–3)
-  ├── StructureAdapter (Tier 0/1): file tree, chunking
-  ├── RelationalAdapter (Tier 2): links, references
-  ├── SemanticAdapter (Tier 3): LLM concept extraction
-  └── MovementAdapter (Tier 1/2): gesture encoding + labels
+  External Adapters (input-triggered)
+  ├── DocumentAdapter: file content → structure, relations, concepts
+  ├── FragmentAdapter: text fragments → structure, concepts
+  └── MovementAdapter: gesture encodings → structure, concepts, clusters
            │
            ▼
       Graph accumulates
            │
            ▼
-  Reflexive Adapters (Tier 4 / Background)
+  Reflexive Adapters (scheduled)
   ├── NormalizationAdapter: propose relationships between similar concepts
   ├── TopologyAdapter: community detection, hub identification
   └── CoherenceAdapter: cross-adapter reconciliation
            │
            ▼
-      Graph refines itself
+      Graph refines itself (via sink.emit())
            │
            ▼
       Events emitted (communities found, concepts linked, etc.)
 ```
 
+Cross-adapter dependency is handled naturally: reflexive adapters don't depend on specific external adapters — they depend on accumulated graph state. The schedule mechanism ensures they run only when the graph has changed enough to warrant analysis.
+
 ### Three Reflexive Concerns
 
 **1. Concept Normalization (NormalizationAdapter)**
 
-The label-based bridging mechanism works when labels match exactly (`concept:sudden` from both text and movement). But in practice, you get near-misses: "sudden" vs "suddenness" vs "abrupt." The NormalizationAdapter finds these candidate pairs using fuzzy matching, potentially LLM-assisted.
+The label-based bridging mechanism works when labels match exactly (`concept:sudden` from both text and movement). But in practice, you get near-misses: "sudden" vs "suddenness" vs "abrupt." The NormalizationAdapter finds these candidate pairs using fuzzy matching, potentially LLM-assisted (via llm-orc).
 
 **Critical design principle: propose, don't merge.** Two similarly-labeled concepts could be entirely different things depending on context. "Sudden" in Laban effort theory and "sudden" in software engineering ("sudden failure mode") are the same label but different concepts — their graph neighborhoods are completely different. Destructively merging nodes based on label similarity would lose real distinctions.
 
@@ -638,23 +669,21 @@ Community detection, hub identification, and structural pattern recognition. Thi
 - **Hub identification**: finds high-degree nodes that serve as conceptual anchor points. In Manza, these are the core concepts in a research collection. In EDDI, these are the dominant movement qualities in a session.
 - **Topology-change events**: the primary output for EDDI. "A new community formed," "a hub emerged," "two communities merged." These events drive environmental responses.
 
-Trigger: periodic or threshold-based ("50 new edges since last run").
+Schedule: `MutationThreshold { count: N }` — runs after enough graph change to warrant re-analysis. Different contexts may configure different thresholds.
 
 **3. Cross-Adapter Coherence (CoherenceAdapter)**
 
-More subtle than normalization. This handles cases where different adapters contribute to overlapping concept space with potentially inconsistent semantics. For example, DocAdapter and MovementAdapter both reference "effort" but with subtly different scopes.
+More subtle than normalization. This handles cases where different adapters contribute to overlapping concept space with potentially inconsistent semantics. For example, DocumentAdapter and MovementAdapter both reference "effort" but with subtly different scopes.
 
 The CoherenceAdapter examines nodes that have edges from multiple adapter sources and assesses whether the adapter contributions are consistent. Where they diverge, it can flag the divergence (provenance mark of type `Question`) rather than trying to resolve it — surfacing the tension for human review or for the graph's own dynamics to settle.
 
-Trigger: when a new adapter source contributes to a concept that already has contributions from other adapters.
+Schedule: `Condition` — triggered when a concept node receives contributions from a new adapter source that differs from existing sources.
 
 ### Reflexive Adapters in the Trait System
 
-Reflexive adapters implement the same `SemanticAdapter` trait:
-
 ```rust
 struct NormalizationAdapter {
-    similarity_threshold: f32,  // minimum similarity to propose a link
+    similarity_threshold: f32,
 }
 
 #[async_trait]
@@ -663,44 +692,25 @@ impl SemanticAdapter for NormalizationAdapter {
     fn name(&self) -> &str { "Concept Normalization" }
     fn dimensions(&self) -> Vec<&str> { vec!["semantic"] }
     fn input_kind(&self) -> &str { "graph_state" }
-    fn tier(&self) -> AdapterTier { AdapterTier::Background }
 
-    async fn process(&self, input: &AdapterInput) -> Result<AdapterOutput, AdapterError> {
-        // input.data is AdapterData::GraphState { context_id, ... }
-        // 1. Find concept nodes with similar labels
-        // 2. For each candidate pair, assess similarity (LLM or embedding distance)
-        // 3. Create may_be_related edges with low initial confidence
-        // 4. Record provenance for each proposed link
-        todo!()
+    fn schedule(&self) -> Option<Schedule> {
+        Some(Schedule::MutationThreshold { count: 50 })
     }
-}
-```
 
-This means `AdapterData` needs a variant for graph-state input:
-
-```rust
-pub enum AdapterData {
-    // ... existing variants ...
-
-    /// Graph state snapshot (for reflexive adapters)
-    /// The adapter receives a view of the current graph and produces
-    /// mutations based on structural analysis.
-    GraphState {
-        context_id: ContextId,
-        /// Which nodes/edges to examine (can be filtered by the adapter layer
-        /// to only include what's changed since the adapter's last run)
-        scope: ReflexiveScope,
-    },
-}
-
-pub enum ReflexiveScope {
-    /// Examine everything in the context
-    Full,
-    /// Examine only nodes/edges added since the given timestamp
-    Since(DateTime<Utc>),
-    /// Examine a specific set of nodes (e.g., "all concept nodes
-    /// that have been touched by multiple adapters")
-    Nodes(Vec<NodeId>),
+    async fn process(
+        &self,
+        input: &AdapterInput,
+        sink: &dyn AdapterSink,
+        cancel: &CancellationToken,
+    ) -> Result<(), AdapterError> {
+        // input.data is AdapterData::GraphState { context_id, scope }
+        // 1. Find concept nodes with similar labels
+        // 2. For each candidate pair (checking cancel between pairs):
+        //    a. Assess similarity (LLM via llm-orc, or embedding distance)
+        //    b. Create may_be_related edge with low initial confidence
+        //    c. sink.emit() with the proposed edge + provenance
+        Ok(())
+    }
 }
 ```
 
@@ -708,23 +718,35 @@ pub enum ReflexiveScope {
 
 ## Design Decisions
 
-### 1. Gesture segmentation is EDDI's responsibility
+### 1. Adapters are coarse-grained and self-organizing
+A single adapter owns its entire processing pipeline — from cheap structural work through expensive LLM extraction. Internal phase ordering, file-type branching, and llm-orc delegation are the adapter's business, not the framework's. The adapter layer just routes input and commits emissions.
+
+### 2. Sink-based progressive emission
+Adapters emit mutations through a sink, calling `sink.emit()` whenever they have results ready. Simple adapters emit once at the end. Complex adapters (multi-phase, llm-orc ensembles) emit multiple times as sub-stages complete. Each emission is committed immediately and triggers events. The graph is always in a partially-built state and that's fine.
+
+### 3. Two trigger modes: input-driven and scheduled
+Input-triggered adapters run when matching input arrives (file change, fragment, gesture). Scheduled adapters run when a trigger condition is met (timer, mutation threshold, graph condition). Both use the same `process(input, sink, cancel)` interface. This replaces the tier-based scheduling model.
+
+### 4. Cancellation via token
+Long-running adapters receive a cancellation token. When input is superseded (e.g., file changes again during processing), the token is cancelled. The adapter checks it periodically and exits cleanly. Mutations already emitted remain valid — they were correct at the time of emission.
+
+### 5. Gesture segmentation is EDDI's responsibility
 Plexus receives pre-segmented, pre-encoded gesture representations. The `process()` method handles discrete events, same as any other adapter. EDDI owns signal processing; Plexus owns graph building and topology analysis.
 
-### 2. The semantic dimension is shared across all domains
+### 6. The semantic dimension is shared across all domains
 "Semantic" means "meaning in this domain" and the `ContentType` on the node disambiguates origin. Text concepts and gesture qualities live in the same dimension. This is what enables cross-modal bridging — if they were in separate dimensions, shared concepts would be separate nodes instead of reinforcing each other.
 
-### 3. Labels bridge modalities
+### 7. Labels bridge modalities
 The labels that accompany input data are load-bearing for cross-adapter connections. A gesture with Laban effort labels connects to text about Laban theory through the same concept nodes. No special unification logic required — shared vocabulary in the semantic dimension handles it naturally.
 
-### 4. Decay is configured per-context
-The same adapter may serve different applications (DocAdapter in both Manza and Trellis), but decay behavior differs by use case. Context-level decay configuration lets applications set appropriate timescales without coupling decay to adapter logic.
+### 8. Decay is configured per-context
+The same adapter may serve different applications (DocumentAdapter in both Manza and Trellis), but decay behavior differs by use case. Context-level decay configuration lets applications set appropriate timescales without coupling decay to adapter logic.
 
-### 5. Cheap tiers inform expensive tiers
-Structural parsing (Tier 1) produces the chunking that semantic extraction (Tier 3) depends on. For incremental updates, Tier 1 identifies which chunks changed, so Tier 3 only re-processes the delta. This keeps LLM costs proportional to what actually changed, not the size of the entire corpus.
-
-### 6. Reflexive adapters propose, they don't merge
+### 9. Reflexive adapters propose, they don't merge
 Concept normalization and cross-adapter coherence create weak `may_be_related` edges rather than destructively merging nodes. Two similarly-labeled concepts may be entirely different depending on context — their graph neighborhoods are the real signal about equivalence. The graph's own reinforcement dynamics (Hebbian: connections that get used survive, those that don't fade) determine which proposed relationships are real. This preserves information and avoids false unification.
+
+### 10. Cross-adapter dependency is handled by graph state
+Adapters don't depend on each other directly. External adapters are independent (routed by input kind, no inter-adapter coordination). Reflexive adapters depend on accumulated graph state, not on specific adapter outputs. The schedule mechanism ensures reflexive adapters run when the graph has accumulated enough new material.
 
 ---
 
@@ -732,8 +754,10 @@ Concept normalization and cross-adapter coherence create weak `may_be_related` e
 
 1. **Incremental state management:** The `AdapterSnapshot` concept needs design work. For text, this is likely "which chunks have I processed and what did I produce." For movement, it might be "current cluster centroids." Should this state live in the adapter, in the context, or in a separate state store?
 
-2. **Chunking as a first-class concept:** Since Tier 1 chunking is load-bearing for all downstream tiers, should chunks be represented in the graph (as structure-dimension nodes) or managed as adapter-internal state? If they're in the graph, other adapters can reference them. If they're internal, the coupling is looser.
+2. **Chunking as a first-class concept:** Since structural chunking is load-bearing for downstream phases within the DocumentAdapter, should chunks be represented in the graph (as structure-dimension nodes) or managed as adapter-internal state? If they're in the graph, other adapters and queries can reference them. If they're internal, the coupling is looser.
 
-3. **Background tier scheduling:** What triggers Tier 4 (Background) processing? Options: periodic timer, threshold on graph mutations since last run ("50 new nodes added, time for community detection"), or event-driven ("a new adapter source contributed to a concept that already had 3 sources"). Different reflexive adapters likely need different triggers.
+3. **Canonical pointers vs. pure emergence:** When the NormalizationAdapter's `may_be_related` edges do get reinforced and two concepts are clearly the same, should the system eventually designate one as canonical (with the other having a `same_as` pointer), or should they remain as two nodes with a strong equivalence edge permanently? Canonical pointers simplify queries but add a concept of "primary" that may be arbitrary. Strong equivalence edges are more honest but create permanent duplication in the graph.
 
-4. **Canonical pointers vs. pure emergence:** When the NormalizationAdapter's `may_be_related` edges do get reinforced and two concepts are clearly the same, should the system eventually designate one as canonical (with the other having a `same_as` pointer), or should they remain as two nodes with a strong equivalence edge permanently? Canonical pointers simplify queries but add a concept of "primary" that may be arbitrary. Strong equivalence edges are more honest but create permanent duplication in the graph.
+4. **Edge garbage collection:** Edges that decay to near-zero persist indefinitely. Over long timescales with many reflexive proposals, this could accumulate dead weight. Should there be a cleanup threshold, or is accumulation intentional?
+
+5. **Session boundary semantics:** Within-session vs cross-session patterns in EDDI are described as "distinct" but the mechanism for distinguishing them needs design. Separate session contexts? Same context with temporal windowing? Session metadata on nodes/edges?

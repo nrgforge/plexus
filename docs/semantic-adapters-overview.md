@@ -57,57 +57,50 @@ flowchart TB
 
 ## Adapters: One Interface, Many Domains
 
-Every adapter does the same thing: take input, produce graph mutations. They differ in what they consume and how expensive they are.
+Every adapter does the same thing: take input, emit graph mutations through a sink. They differ in what they consume and how complex they are internally — but the interface is the same.
 
 ```mermaid
 flowchart TB
     subgraph trait ["Every Adapter"]
         direction LR
-        IN["Input"] --> PROCESS["process()"] --> OUT["Nodes + Edges
-        + Provenance"]
+        IN["Input"] --> PROCESS["process()"] --> SINK["sink.emit()
+        Nodes + Edges + Provenance"]
     end
 
     DA["Document Adapter
-    reads files, uses LLM"] -.-> trait
+    reads files, uses LLM
+    multiple internal phases"] -.-> trait
     MA["Movement Adapter
     reads gestures, uses labels"] -.-> trait
     NA["Normalization Adapter
-    reads the graph itself"] -.-> trait
+    reads the graph itself
+    runs on a schedule"] -.-> trait
 
     style trait fill:#e3f2fd,stroke:#1565c0
 ```
 
-This uniformity is the point. The graph engine doesn't care whether a concept came from a research paper or a dancer's movement — it's a concept node either way.
+This uniformity is the point. The graph engine doesn't care whether a concept came from a research paper or a dancer's movement — it's a concept node either way. An adapter can be as simple or as complex as it needs to be internally; the framework only sees what comes out of the sink.
 
 ---
 
 ## Cheap First, Expensive Later
 
-Not all knowledge costs the same to extract. The system works in tiers, emitting what it knows as soon as it knows it.
+Not all knowledge costs the same to extract. A single adapter works through progressively more expensive phases internally, emitting what it knows as soon as it knows it.
 
 ```mermaid
 flowchart LR
-    subgraph t0 ["Tier 0: Instant"]
-        A0["File exists, 340KB"]
-    end
-    subgraph t1 ["Tier 1: Fast"]
-        A1["5 sections found"]
-    end
-    subgraph t3 ["Tier 3: Slow"]
-        A3["Themes: mortality,
+    subgraph phases ["Inside One Adapter"]
+        direction LR
+        A0["emit: file exists, 340KB"] --> A1["emit: 5 sections found"] --> A3["emit: themes - mortality,
         duty, indecision"]
     end
 
-    t0 -->|feeds| t1 -->|feeds| t3
-
-    style t0 fill:#e8f5e9,stroke:#2e7d32
-    style t1 fill:#fff3e0,stroke:#f57c00
-    style t3 fill:#fce4ec,stroke:#c62828
+    style phases fill:#e3f2fd,stroke:#1565c0
 ```
 
-Tier 0 is free (filesystem metadata). Tier 1 is cheap (parsing). Tier 3 is expensive (LLM calls). Each tier emits events when done, so the UI can show structure immediately and fill in semantics as they arrive.
+The first emission is free (filesystem metadata). The second is cheap (parsing). The third is expensive (LLM calls). Each emission triggers events immediately, so the UI can show structure while semantics are still being extracted in the background.
 
-Crucially, cheap tiers tell expensive tiers where to focus. Tier 1 identifies which sections changed, so Tier 3 only sends the delta to the LLM — not the whole file.
+Crucially, cheap phases inform expensive phases. Structural parsing identifies which sections changed, so the LLM phase only processes the delta — not the whole file.
 
 ---
 

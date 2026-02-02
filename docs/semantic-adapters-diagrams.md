@@ -19,30 +19,28 @@ flowchart TB
     subgraph adapter_layer ["Adapter Layer"]
         direction TB
         Router["Input Router"]
-        Scheduler["Tier Scheduler"]
+        SchedMon["Schedule Monitor"]
 
-        subgraph external_adapters ["External Adapters"]
-            SA_struct["Structure Adapter
-            Tier 0-1"]
-            SA_rel["Relational Adapter
-            Tier 2"]
-            SA_sem["Semantic Adapter
-            Tier 3, LLM"]
+        subgraph input_adapters ["Input-Triggered Adapters"]
+            SA_doc["Document Adapter
+            file content"]
+            SA_frag["Fragment Adapter
+            text fragments"]
             SA_move["Movement Adapter
-            Tier 1-2"]
+            gesture encodings"]
         end
 
-        subgraph reflexive_adapters ["Reflexive Adapters"]
+        subgraph reflexive_adapters ["Scheduled Adapters"]
             RA_norm["Normalization
-            Tier 4, LLM"]
+            LLM-assisted"]
             RA_topo["Topology
-            Tier 4, algorithmic"]
+            algorithmic"]
             RA_cohere["Coherence
-            Tier 4, LLM"]
+            LLM-assisted"]
         end
 
-        Merger["Output Merger"]
-        ProvGen["Provenance Generator"]
+        Sink["AdapterSink
+        commit + provenance"]
     end
 
     subgraph engine ["PlexusEngine"]
@@ -61,27 +59,24 @@ flowchart TB
     TF --> Router
     GE --> Router
 
-    Router --> Scheduler
-    Scheduler --> SA_struct
-    Scheduler --> SA_rel
-    Scheduler --> SA_sem
-    Scheduler --> SA_move
+    Router --> SA_doc
+    Router --> SA_frag
+    Router --> SA_move
 
-    SA_struct --> Merger
-    SA_rel --> Merger
-    SA_sem --> Merger
-    SA_move --> Merger
+    SA_doc --> Sink
+    SA_frag --> Sink
+    SA_move --> Sink
 
-    Merger --> ProvGen
-    ProvGen --> Graph
-    ProvGen --> Prov
+    Sink --> Graph
+    Sink --> Prov
 
-    Graph --> RA_norm
-    Graph --> RA_topo
-    Graph --> RA_cohere
-    RA_norm --> Merger
-    RA_topo --> Merger
-    RA_cohere --> Merger
+    Graph --> SchedMon
+    SchedMon --> RA_norm
+    SchedMon --> RA_topo
+    SchedMon --> RA_cohere
+    RA_norm --> Sink
+    RA_topo --> Sink
+    RA_cohere --> Sink
 
     Graph --> Events
     Events --> Manza
@@ -145,45 +140,45 @@ flowchart LR
 
 ---
 
-## 3. Tiered Knowledge Pipeline
+## 3. Progressive Emission Pipeline
 
-How a single file change cascades through processing tiers, with each tier emitting events as it completes.
+How a single file change flows through one adapter's internal phases, with each phase emitting through the sink.
 
 ```mermaid
 sequenceDiagram
     participant App as Application
     participant AL as Adapter Layer
-    participant T0 as Tier 0: Instant
-    participant T1 as Tier 1: Fast
-    participant T2 as Tier 2: Moderate
-    participant T3 as Tier 3: Slow (LLM)
-    participant T4 as Tier 4: Background
+    participant DA as DocumentAdapter
+    participant Sink as AdapterSink
     participant Engine as PlexusEngine
     participant UI as Consumer (UI/Client)
 
     App->>AL: File changed: essay.md
-    AL->>T0: Route to StructureAdapter
-    T0->>Engine: file node (exists, 340KB)
+    AL->>DA: process(input, sink, cancel)
+
+    Note over DA: Phase 1: instant
+    DA->>Sink: emit(file node, 340KB)
+    Sink->>Engine: commit + provenance
     Engine->>UI: event: node_added (file)
 
-    AL->>T1: Route to StructureAdapter (chunking)
-    T1->>Engine: section nodes, contains edges
+    Note over DA: Phase 2: fast (chunking)
+    DA->>Sink: emit(section nodes, contains edges)
+    Sink->>Engine: commit + provenance
     Engine->>UI: event: nodes_added (5 sections)
-    T1-->>AL: chunk boundaries for downstream
 
-    AL->>T2: Route to RelationalAdapter (background)
-    Note over T2: Uses chunk boundaries from T1
-    T2->>Engine: citation edges, reference edges
+    Note over DA: Phase 3: moderate (cross-refs)
+    DA->>Sink: emit(citation edges)
+    Sink->>Engine: commit + provenance
     Engine->>UI: event: edges_added (references)
 
-    AL->>T3: Route to SemanticAdapter (background)
-    Note over T3: Only processes changed chunks
-    T3->>Engine: concept nodes, thematic edges
+    Note over DA: Phase 4: slow (LLM via llm-orc)
+    DA->>Sink: emit(concept nodes, thematic edges)
+    Sink->>Engine: commit + provenance
     Engine->>UI: event: nodes_added (concepts)
 
-    Note over T4: Triggered by mutation threshold
-    T4->>Engine: may_be_related edges, community nodes
-    Engine->>UI: event: topology_changed
+    DA->>AL: Ok(()) — done
+
+    Note over AL: Later: scheduled TopologyAdapter triggers
 ```
 
 ---
@@ -303,43 +298,44 @@ Side-by-side comparison of how Manza, Trellis, and EDDI interact with the same u
 flowchart LR
     subgraph manza ["Manza - Continuous (seconds)"]
         direction TB
-        m1["File edit"] --> m2["Tier 0-1: structure"]
-        m2 --> m3["Tier 2: relations
-        background"]
-        m2 --> m4["Tier 3: semantics
-        background, LLM"]
-        m3 --> m5(["event: edges_added"])
-        m4 --> m6(["event: concepts_added"])
-        m6 --> m7["File edit again"]
-        m7 --> m8["Tier 0-1: delta only"]
-        m8 --> m9["Tier 3: changed chunks only"]
+        m1["File edit"] --> m2["DocumentAdapter emits
+        structure, then relations,
+        then concepts via LLM"]
+        m2 --> m3(["events at each emission"])
+        m3 --> m4["File edit again"]
+        m4 --> m5["cancel previous, restart
+        delta-only on changed chunks"]
     end
 
     subgraph trellis ["Trellis - Accumulative (weeks)"]
         direction TB
         t1["Fragment arrives
-        Week 1"] --> t2["Tier 1-3: analyze"]
+        Week 1"] --> t2["FragmentAdapter emits
+        structure + concepts"]
         t2 --> t3["...days pass..."]
         t3 --> t4["Fragment arrives
         Week 3"]
-        t4 --> t5["Tier 1-3: analyze"]
-        t5 --> t6["Tier 4: community
-        detection triggered"]
+        t4 --> t5["FragmentAdapter emits
+        structure + concepts"]
+        t5 --> t6["TopologyAdapter triggers:
+        community detected"]
         t6 --> t7(["Surface: implicit
         outline harvested"])
     end
 
     subgraph eddi ["EDDI - Streaming (milliseconds)"]
         direction TB
-        e1["Gesture 1"] --> e2["Tier 0-1: node + labels"]
-        e3["Gesture 2"] --> e4["Tier 0-1: node + labels"]
-        e5["Gesture 3"] --> e6["Tier 0-1: node + labels"]
-        e2 --> e7["Tier 2: clustering"]
+        e1["Gesture 1"] --> e2["MovementAdapter emits
+        node + labels + cluster"]
+        e3["Gesture 2"] --> e4["MovementAdapter emits
+        node + labels + cluster"]
+        e5["Gesture 3"] --> e6["MovementAdapter emits
+        node + labels + cluster"]
+        e2 --> e7["TopologyAdapter triggers"]
         e4 --> e7
         e6 --> e7
-        e7 --> e8["Tier 4: topology check"]
-        e8 --> e9(["event: hub_emerged"])
-        e8 --> e10(["event: community_formed"])
+        e7 --> e8(["event: hub_emerged"])
+        e7 --> e9(["event: community_formed"])
     end
 
     style manza fill:#e1f5fe,stroke:#0288d1
@@ -361,8 +357,13 @@ classDiagram
         +name() str
         +dimensions() Vec~str~
         +input_kind() str
-        +tier() AdapterTier
-        +process(AdapterInput) Result~AdapterOutput~
+        +schedule() Option~Schedule~
+        +process(AdapterInput, AdapterSink, CancellationToken)
+    }
+
+    class AdapterSink {
+        <<trait>>
+        +emit(AdapterOutput)
     }
 
     class AdapterInput {
@@ -388,13 +389,11 @@ classDiagram
         Structured
     }
 
-    class AdapterTier {
+    class Schedule {
         <<enum>>
-        Instant
-        Fast
-        Moderate
-        Slow
-        Background
+        Periodic
+        MutationThreshold
+        Condition
     }
 
     class AdapterTrigger {
@@ -402,6 +401,7 @@ classDiagram
         FileChanged
         FragmentReceived
         GestureSegmented
+        Scheduled
         Manual
     }
 
@@ -414,73 +414,65 @@ classDiagram
     }
 
     SemanticAdapter ..> AdapterInput : receives
-    SemanticAdapter ..> AdapterOutput : produces
+    SemanticAdapter ..> AdapterSink : emits through
+    AdapterSink ..> AdapterOutput : receives
     AdapterInput *-- AdapterData
     AdapterInput *-- AdapterTrigger
     AdapterOutput *-- ProvenanceEntry
-    SemanticAdapter *-- AdapterTier
+    SemanticAdapter *-- Schedule
 ```
 
 ---
 
 ## 8. Concrete Adapter Implementations
 
-How the abstract trait maps to specific adapter instances, organized by input kind and tier.
+How the abstract trait maps to specific adapter instances, organized by input kind and trigger mode.
 
 ```mermaid
 flowchart TB
     trait["SemanticAdapter trait
     id, name, dimensions,
-    input_kind, tier, process"]
+    input_kind, schedule, process"]
 
-    subgraph file_content ["input_kind: file_content"]
+    subgraph input_triggered ["Input-Triggered Adapters (schedule = None)"]
         direction LR
-        da["DirectoryAdapter
-        Tier: Instant
-        Dim: structure"]
-        msa["MarkdownStructureAdapter
-        Tier: Fast
-        Dim: structure
-        Produces chunk boundaries"]
-        la["LinkAdapter
-        Tier: Moderate
-        Dim: relational"]
-        llm["LLMSemanticAdapter
-        Tier: Slow
-        Dim: semantic
-        Requires LLM"]
-    end
-
-    subgraph gesture_encoding ["input_kind: gesture_encoding"]
+        da["DocumentAdapter
+        input_kind: file_content
+        Dims: structure, semantic, relational
+        Internal phases: file-type detection,
+        chunking, cross-refs, LLM via llm-orc"]
+        fa["FragmentAdapter
+        input_kind: text_fragment
+        Dims: structure, semantic
+        Internal phases: parsing, LLM extraction"]
         ma["MovementAdapter
-        Tier: Fast
-        Dim: semantic
-        Uses label vocabulary"]
+        input_kind: gesture_encoding
+        Dims: structure, semantic
+        Internal phases: node creation,
+        label mapping, clustering"]
     end
 
-    subgraph graph_state ["input_kind: graph_state"]
+    subgraph scheduled ["Scheduled Adapters (schedule = Some)"]
         direction LR
         na["NormalizationAdapter
-        Tier: Background
-        Proposes may_be_related
-        Requires LLM"]
+        input_kind: graph_state
+        Schedule: MutationThreshold
+        Proposes may_be_related edges"]
         ta["TopologyAdapter
-        Tier: Background
-        Communities and hubs
-        Algorithmic"]
+        input_kind: graph_state
+        Schedule: MutationThreshold
+        Communities and hubs"]
         ca["CoherenceAdapter
-        Tier: Background
-        Cross-adapter conflicts
-        Requires LLM"]
+        input_kind: graph_state
+        Schedule: Condition
+        Cross-adapter conflicts"]
     end
 
-    trait -.-> file_content
-    trait -.-> gesture_encoding
-    trait -.-> graph_state
+    trait -.-> input_triggered
+    trait -.-> scheduled
 
-    style file_content fill:#e1f5fe,stroke:#0288d1
-    style gesture_encoding fill:#fce4ec,stroke:#c62828
-    style graph_state fill:#fff3e0,stroke:#f57c00
+    style input_triggered fill:#e1f5fe,stroke:#0288d1
+    style scheduled fill:#fff3e0,stroke:#f57c00
 ```
 
 ---
@@ -666,9 +658,9 @@ flowchart TB
 
 ---
 
-## 12. Adapter Layer Scheduling
+## 12. Adapter Layer Orchestration
 
-How the tier scheduler orchestrates parallel and sequential adapter execution.
+How the adapter layer routes input, manages sinks, and monitors scheduled adapters.
 
 ```mermaid
 flowchart TB
@@ -676,74 +668,71 @@ flowchart TB
 
     input --> route{"Route by input_kind"}
 
-    route -->|file_content| fc_adapters
-    route -->|text_fragment| tf_adapters
-    route -->|gesture_encoding| ge_adapters
+    route -->|file_content| da
+    route -->|text_fragment| fa
+    route -->|gesture_encoding| ma
 
-    subgraph fc_adapters ["File Content Pipeline"]
+    subgraph da ["DocumentAdapter"]
         direction TB
-        fc_t0["Tier 0: DirectoryAdapter
-        sync, immediate"]
-        fc_t1["Tier 1: MarkdownStructureAdapter
-        parallel, fast"]
-        fc_t2["Tier 2: LinkAdapter
-        background"]
-        fc_t3["Tier 3: LLMSemanticAdapter
-        background, expensive"]
-
-        fc_t0 --> fc_t1
-        fc_t1 -->|chunk boundaries| fc_t2
-        fc_t1 -->|chunk boundaries| fc_t3
+        da_spawn["Spawn with sink + cancel token"]
+        da_p1["Phase: file node"]
+        da_p2["Phase: chunking"]
+        da_p3["Phase: cross-refs"]
+        da_p4["Phase: LLM via llm-orc"]
+        da_spawn --> da_p1
+        da_p1 -->|sink.emit| da_p2
+        da_p2 -->|sink.emit| da_p3
+        da_p3 -->|sink.emit| da_p4
+        da_p4 -->|sink.emit| da_done["Ok - done"]
     end
 
-    subgraph tf_adapters ["Text Fragment Pipeline"]
+    subgraph fa ["FragmentAdapter"]
         direction TB
-        tf_t1["Tier 1: FragmentStructureAdapter
-        fast"]
-        tf_t3["Tier 3: LLMSemanticAdapter
-        background"]
-
-        tf_t1 --> tf_t3
+        fa_spawn["Spawn with sink + cancel token"]
+        fa_p1["Phase: parse + structure"]
+        fa_p2["Phase: LLM extraction"]
+        fa_spawn --> fa_p1
+        fa_p1 -->|sink.emit| fa_p2
+        fa_p2 -->|sink.emit| fa_done["Ok - done"]
     end
 
-    subgraph ge_adapters ["Gesture Encoding Pipeline"]
+    subgraph ma ["MovementAdapter"]
         direction TB
-        ge_t0["Tier 0: GestureNodeAdapter
-        instant"]
-        ge_t1["Tier 1: LabelMappingAdapter
-        fast"]
-        ge_t2["Tier 2: ClusterAdapter
-        moderate"]
-
-        ge_t0 --> ge_t1
-        ge_t1 --> ge_t2
+        ma_spawn["Spawn with sink + cancel token"]
+        ma_p1["Phase: gesture node"]
+        ma_p2["Phase: label mapping"]
+        ma_p3["Phase: clustering"]
+        ma_spawn --> ma_p1
+        ma_p1 -->|sink.emit| ma_p2
+        ma_p2 -->|sink.emit| ma_p3
+        ma_p3 -->|sink.emit| ma_done["Ok - done"]
     end
 
-    fc_adapters --> merge
-    tf_adapters --> merge
-    ge_adapters --> merge
+    da -->|each emission| engine
+    fa -->|each emission| engine
+    ma -->|each emission| engine
 
-    merge["Merger - dedup, combine reinforcement"]
-    merge --> provgen["Provenance Generator"]
-    provgen --> engine["PlexusEngine"]
+    engine["PlexusEngine
+    commit + provenance + events"]
 
-    engine --> threshold{"Mutation threshold reached?"}
-    threshold -->|yes| reflexive
+    engine --> monitor{"Schedule monitor"}
 
-    subgraph reflexive ["Reflexive Adapters (Tier 4)"]
-        r_norm["NormalizationAdapter"]
-        r_topo["TopologyAdapter"]
-        r_cohere["CoherenceAdapter"]
+    subgraph scheduled ["Scheduled Adapters"]
+        r_norm["NormalizationAdapter
+        trigger: 50 new mutations"]
+        r_topo["TopologyAdapter
+        trigger: 50 new mutations"]
+        r_cohere["CoherenceAdapter
+        trigger: multi-source concept"]
     end
 
-    reflexive --> merge
+    monitor -->|condition met| scheduled
+    scheduled -->|sink.emit| engine
 
-    threshold -->|no| done[/Wait for next input/]
-
-    style fc_adapters fill:#e1f5fe,stroke:#0288d1
-    style tf_adapters fill:#e8f5e9,stroke:#388e3c
-    style ge_adapters fill:#fce4ec,stroke:#c62828
-    style reflexive fill:#fff3e0,stroke:#f57c00
+    style da fill:#e1f5fe,stroke:#0288d1
+    style fa fill:#e8f5e9,stroke:#388e3c
+    style ma fill:#fce4ec,stroke:#c62828
+    style scheduled fill:#fff3e0,stroke:#f57c00
 ```
 
 ---
