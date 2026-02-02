@@ -210,8 +210,6 @@ flowchart TB
         trigger: Condition"]
     end
 
-    style input_triggered fill:#e1f5fe,stroke:#0288d1
-    style scheduled fill:#fff3e0,stroke:#f57c00
 ```
 
 ---
@@ -286,9 +284,6 @@ flowchart LR
     sec1 -.->|found_in| c1
     mark1 -.->|derived| c1
 
-    style structure fill:#e1f5fe,stroke:#0288d1
-    style semantic fill:#f3e5f5,stroke:#7b1fa2
-    style provenance fill:#fff3e0,stroke:#f57c00
 ```
 
 ---
@@ -319,10 +314,6 @@ flowchart TB
     spawn with sink + cancel"]
     scheduled -->|each emission| engine
 
-    style da fill:#e1f5fe,stroke:#0288d1
-    style fa fill:#e8f5e9,stroke:#388e3c
-    style ma fill:#fce4ec,stroke:#c62828
-    style scheduled fill:#fff3e0,stroke:#f57c00
 ```
 
 **Input-triggered path:** Route by `input_kind` → spawn adapter with sink + cancel token → each `sink.emit()` commits mutations, creates provenance marks, fires events.
@@ -363,12 +354,6 @@ flowchart TB
     half-life: per-context"] -->|"new evidence"| reinforced
     decaying -->|"near zero"| negligible["Negligible"]
 
-    style active fill:#fff3e0,stroke:#f57c00
-    style weak fill:#fbe9e7,stroke:#bf360c
-    style reinforced fill:#e8f5e9,stroke:#2e7d32
-    style strong fill:#c8e6c9,stroke:#1b5e20
-    style decaying fill:#ffecb3,stroke:#ff8f00
-    style negligible fill:#efebe9,stroke:#795548
 ```
 
 ---

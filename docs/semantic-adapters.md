@@ -45,8 +45,6 @@ flowchart TB
 
     M1 -.->|explains| N1
 
-    style what fill:#f3e5f5,stroke:#7b1fa2
-    style how fill:#fff3e0,stroke:#f57c00
 ```
 
 **What we know** — concepts, documents, gestures, relationships between them. These live in the structure, semantic, relational, and temporal dimensions.
@@ -78,7 +76,6 @@ flowchart TB
     reads the graph itself
     runs on a schedule"] -.-> trait
 
-    style trait fill:#e3f2fd,stroke:#1565c0
 ```
 
 An adapter is a **coarse-grained, self-organizing unit**. It owns its entire processing pipeline internally. The framework only sees what comes out of the sink. An adapter:
@@ -104,7 +101,6 @@ flowchart LR
         duty, indecision"]
     end
 
-    style phases fill:#e3f2fd,stroke:#1565c0
 ```
 
 Each emission triggers events immediately. The UI can show structure while semantics are still being extracted in the background. Cheap phases inform expensive phases — structural parsing identifies which sections changed, so the LLM phase only processes the delta.
@@ -138,10 +134,6 @@ flowchart TB
     concept_sudden --> result["Sources: 2 - doc, movement
     Confidence: high"]
 
-    style doc_path fill:#e3f2fd,stroke:#1565c0
-    style move_path fill:#fce4ec,stroke:#c62828
-    style shared fill:#f3e5f5,stroke:#7b1fa2
-    style result fill:#e8f5e9,stroke:#2e7d32
 ```
 
 The semantic dimension is a shared namespace. When the MovementAdapter produces `concept:sudden` and it already exists (created by the DocumentAdapter from text), the system sees independent agreement across modalities — strong evidence.
@@ -163,9 +155,6 @@ flowchart LR
     Weaker --> Gone["Fades to negligible"]
     Stronger -->|"more evidence"| Stronger
 
-    style Stronger fill:#e8f5e9,stroke:#2e7d32
-    style Weaker fill:#fff3e0,stroke:#f57c00
-    style Gone fill:#efebe9,stroke:#795548
 ```
 
 Confidence comes from evidence diversity, not volume. Four different kinds of evidence → more trustworthy than a hundred of the same kind.
@@ -186,7 +175,6 @@ flowchart TB
     examine the graph"]
     Reflexive -->|"propose weak edges"| Graph
 
-    style Graph fill:#f3e5f5,stroke:#7b1fa2
 ```
 
 Three concerns:
@@ -227,9 +215,6 @@ flowchart TB
         E1 --> E2 --> E3
     end
 
-    style manza fill:#e1f5fe,stroke:#0288d1
-    style trellis fill:#e8f5e9,stroke:#388e3c
-    style eddi fill:#fce4ec,stroke:#c62828
 ```
 
 **Manza** — an editor. The graph is a living companion to writing. Continuous input, seconds-scale feedback, progressive emission lets the UI animate graph growth.
