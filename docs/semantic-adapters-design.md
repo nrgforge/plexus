@@ -4,6 +4,20 @@ Technical design for the adapter layer. See [semantic-adapters.md](./semantic-ad
 
 ---
 
+## Terminology
+
+Three distinct concepts describe how "sure" the system is. They are not interchangeable.
+
+| Term | Lives on | Meaning |
+|---|---|---|
+| **Weight** (raw) | Edge | Accumulated Hebbian reinforcement strength. Stored. Increases when any source reinforces the edge. Ground truth — never decays on a clock. |
+| **Normalized weight** | Edge (computed) | Relative importance, computed at query time via `NormalizationStrategy`. Not stored. Different consumers can apply different strategies to the same raw weights. |
+| **Annotation confidence** | `Annotation` (provenance) | A single adapter's certainty about a single extraction. Lives in provenance, not on the edge. Range 0.0–1.0. |
+
+**Evidence diversity** — "how corroborated is this edge?" — is derived by querying provenance (count distinct adapter IDs, source types, and contexts that contributed to an edge). It is not a stored field.
+
+---
+
 ## System Overview
 
 ```mermaid
@@ -58,9 +72,11 @@ flowchart TB
     SchedMon --> RA_norm
     SchedMon --> RA_topo
     SchedMon --> RA_cohere
-    RA_norm --> Sink
-    RA_topo --> Sink
-    RA_cohere --> Sink
+    PSink["ProposalSink"]
+    RA_norm --> PSink
+    RA_topo --> PSink
+    RA_cohere --> PSink
+    PSink --> Sink
 
     Graph --> Events
 ```
@@ -82,7 +98,13 @@ classDiagram
     }
 
     class AdapterSink {
-        <<trait>>
+        <<async trait>>
+        +emit(AdapterOutput) Result
+    }
+
+    class ProposalSink {
+        <<wraps AdapterSink>>
+        +weight_cap: f32
         +emit(AdapterOutput) Result
     }
 
@@ -157,6 +179,7 @@ classDiagram
 
     SemanticAdapter ..> AdapterInput : receives
     SemanticAdapter ..> AdapterSink : emits through
+    ProposalSink ..|> AdapterSink : implements
     AdapterSink ..> AdapterOutput : receives
     AdapterSink ..> GraphEvent : triggers
     AdapterInput *-- AdapterTrigger
@@ -169,6 +192,7 @@ classDiagram
     Note for AdapterInput "data is opaque to framework.\nAdapter downcasts internally.\nRouter matches by input_kind()."
     Note for ProvenanceEntry "Constructed by engine,\nnot by adapters.\nCombines framework context\nwith adapter annotations."
     Note for NormalizationStrategy "Query-time concern.\nRaw weights stored.\nStrategy applied on access."
+    Note for ProposalSink "Given to reflexive adapters.\nClamps weight, rejects non-\nmay_be_related edges,\nrejects node removals."
 ```
 
 ### Bootstrap Trait (Rust)
@@ -201,8 +225,22 @@ pub struct AdapterInput {
     pub previous: Option<AdapterSnapshot>,
 }
 
+/// Async sink. The adapter awaits each emission and receives validation
+/// feedback (e.g., rejected edges). The adapter layer spawns `process()`
+/// as a background task — async emit does not block other adapters.
+/// Adapters wrapping synchronous sources can bridge internally via a channel.
+#[async_trait]
 pub trait AdapterSink: Send + Sync {
-    fn emit(&self, output: AdapterOutput) -> Result<(), AdapterError>;
+    async fn emit(&self, output: AdapterOutput) -> Result<(), AdapterError>;
+}
+
+/// Constrained sink given to reflexive adapters. Enforces the
+/// propose-don't-merge invariant: clamps edge weights, rejects
+/// non-may_be_related edges, rejects node removals.
+/// Implements AdapterSink — the adapter's process() signature is unchanged.
+pub struct ProposalSink {
+    inner: Box<dyn AdapterSink>,
+    weight_cap: f32, // configurable per adapter registration
 }
 
 pub enum Schedule {
@@ -530,18 +568,18 @@ flowchart TB
         ref["Reflexive adapter"]
     end
 
-    ext --> active["weight: 1.0
-    confidence: 0.0"]
-    ref --> weak["weight: 0.3
-    confidence: 0.15"]
+    ext --> active["weight: 1.0"]
+    ref --> weak["weight: 0.3"]
 
     active -->|"evidence"| reinforced
     active -->|"no new evidence"| weakening
     weak -->|"confirmed"| reinforced
     weak -->|"no confirmation"| weakening
 
-    reinforced["Reinforced"] -->|"diverse sources"| strong["Strong
-    confidence > 0.7"]
+    reinforced["Reinforced
+    weight increases"] -->|"diverse sources"| strong["Strong
+    high weight, multiple
+    provenance entries"]
     reinforced -->|"stops"| weakening
 
     strong -->|"stops"| weakening
@@ -560,7 +598,7 @@ flowchart TB
 
 1. **Adapters are coarse-grained.** One adapter owns its full pipeline. Internal phase ordering, file-type branching, and llm-orc delegation are the adapter's business.
 
-2. **Sink-based progressive emission.** `sink.emit()` commits immediately and fires events. The graph is always partially built — that's correct, not an error state.
+2. **Sink-based progressive emission (async).** `await sink.emit()` commits immediately and fires events. The graph is always partially built — that's correct, not an error state.
 
 3. **Two trigger modes.** Input-triggered (run on matching input) and scheduled (run on timer/threshold/condition). Same `process(input, sink, cancel)` interface.
 
@@ -582,7 +620,7 @@ flowchart TB
 
 12. **Sink emissions are atomic.** Each `emit()` call validates and commits as a unit. Upsert on duplicate nodes, reject edges with missing endpoints, no-op on empty emissions and missing removals.
 
-13. **Reflexive adapters propose, don't merge.** Weak `may_be_related` edges. Graph dynamics (Hebbian reinforcement + normalization) determine what's real.
+13. **Reflexive adapters propose, don't merge — enforced by ProposalSink.** The framework gives reflexive adapters a `ProposalSink` that clamps edge weights, only allows `may_be_related` edges, and rejects node removals. Graph dynamics (Hebbian reinforcement + normalization) determine what's real.
 
 14. **Cross-adapter dependency via graph state.** External adapters are independent. Reflexive adapters depend on accumulated graph state, not specific adapter outputs.
 
@@ -590,12 +628,23 @@ flowchart TB
 
 ## Open Questions
 
-1. **AdapterSnapshot design.** What does incremental state look like per domain? File: chunk hashes + output node IDs. Movement: cluster centroids. Graph state: timestamp of last run. Likely adapter-specific.
+### Needs spike (blocks adapter implementation)
 
-2. **Chunking as graph nodes.** Should chunks be structure-dimension nodes (queryable, referenceable) or adapter-internal state (looser coupling)?
+1. **Reinforcement mechanics.** The system describes Hebbian reinforcement but never defines the operation. What happens to `edge.weight` when:
+   - A second adapter emits an edge that already exists?
+   - A reflexive adapter confirms a `may_be_related` edge?
+   - The same adapter re-emits an edge on re-processing (e.g., file re-saved)?
 
-3. **Canonical pointers vs pure emergence.** When `may_be_related` strengthens to high confidence — designate one node as canonical, or keep both with a strong equivalence edge?
+   Candidates: additive increment, multiplicative boost, source-diversity-weighted increment. The spike should also resolve whether reinforcement is implicit (sink detects duplicate edge and reinforces) or explicit (adapter calls a separate reinforcement API).
 
-4. **Edge cleanup strategy.** Simple weight threshold (e.g., w < 0.001) or distribution-aware cutoff (reflexive adapter identifies power-law tail)? Could be both — threshold as a floor, distribution analysis as a refinement.
+### Deferred
 
-5. **Session boundaries (EDDI).** Separate session contexts? Same context with temporal windowing? Session metadata on nodes/edges?
+2. **AdapterSnapshot design.** What does incremental state look like per domain? File: chunk hashes + output node IDs. Movement: cluster centroids. Graph state: timestamp of last run. Likely adapter-specific.
+
+3. **Chunking as graph nodes.** Should chunks be structure-dimension nodes (queryable, referenceable) or adapter-internal state (looser coupling)?
+
+4. **Canonical pointers vs pure emergence.** When `may_be_related` strengthens to high weight — designate one node as canonical, or keep both with a strong equivalence edge?
+
+5. **Edge cleanup strategy.** Simple weight threshold (e.g., w < 0.001) or distribution-aware cutoff (reflexive adapter identifies power-law tail)? Could be both — threshold as a floor, distribution analysis as a refinement.
+
+6. **Session boundaries (EDDI).** Separate session contexts? Same context with temporal windowing? Session metadata on nodes/edges?

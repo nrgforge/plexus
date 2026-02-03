@@ -85,7 +85,7 @@ flowchart TB
 An adapter is a **coarse-grained, self-organizing unit**. It owns its entire processing pipeline internally. The framework only sees what comes out of the sink. An adapter:
 
 - **Declares** what input it consumes (`input_kind`) and what dimensions it populates
-- **Emits** mutations progressively — cheap results first, expensive results later
+- **Emits** mutations progressively — cheap results first, expensive results later. Each emission is validated atomically: edges whose endpoints don't exist (in the graph or in the same emission) are rejected. Emit nodes before or alongside edges that reference them.
 - **Annotates** nodes and edges with what it knows (confidence, method, source location) — the engine combines these annotations with adapter identity and context to build full provenance
 - **Respects cancellation** when input is superseded
 
@@ -136,7 +136,7 @@ flowchart TB
     map1 -->|"creates or finds"| concept_sudden
 
     concept_sudden --> result["Sources: 2 - doc, movement
-    Confidence: high"]
+    Evidence diversity: high"]
 
 ```
 
@@ -166,7 +166,7 @@ flowchart LR
 
 ```
 
-Confidence comes from evidence diversity, not volume. Four different kinds of evidence → more trustworthy than a hundred of the same kind.
+How corroborated is an edge? Query its provenance — count the distinct adapters, source types, and contexts that contributed to it. Four different kinds of evidence are more trustworthy than a hundred of the same kind. This is a derived query, not a stored field.
 
 Negligible edges accumulate in the long tail. Cleanup is a separate concern — either a simple weight threshold or a reflexive adapter that examines the weight distribution and finds a natural cutoff (e.g., power-law tail beyond which edges are indistinguishable from noise).
 
@@ -192,7 +192,7 @@ Three concerns:
 - **Topology** — community detection, hub identification, topology-change events
 - **Coherence** — flags when different adapters contribute inconsistently to the same concept
 
-**Reflexive adapters propose, they never merge.** Two similarly-labeled concepts may be entirely different depending on context. The graph's own reinforcement dynamics determine which proposed connections are real. The adapter accelerates discovery; the graph disposes.
+**Reflexive adapters propose, they never merge.** This is enforced structurally: the framework gives reflexive adapters a `ProposalSink` that clamps edge weights, only allows `may_be_related` edges, and rejects node removals. Two similarly-labeled concepts may be entirely different depending on context. The graph's own reinforcement dynamics — cross-adapter co-occurrence, community formation — determine which proposed connections are real. The adapter accelerates discovery; the graph disposes.
 
 ---
 

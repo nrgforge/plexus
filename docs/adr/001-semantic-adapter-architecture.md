@@ -34,14 +34,17 @@ An adapter owns its entire processing pipeline. Internal phase ordering, file-ty
 - *Fine-grained pipeline stages* — framework orchestrates individual phases (parse, chunk, extract). Rejected: phase ordering varies by domain and file type. A PDF and a markdown file need entirely different phase sequences. Externalizing this creates a combinatorial configuration problem.
 - *Tier-based scheduling* — adapters declare a tier (instant/fast/moderate/slow) and the framework schedules by tier. Rejected: tier assignment is file-type-dependent within a single adapter (markdown structure extraction is instant; PDF structure extraction requires LLM). Tiers belong inside the adapter, not in the framework.
 
-### 2. Sink-based progressive emission
+### 2. Sink-based progressive emission (async)
 
-Adapters receive an `AdapterSink` and call `sink.emit()` whenever they have results. Each emission commits immediately to the graph and fires events. The graph is always partially built — that is correct, not an error state.
+Adapters receive an `AdapterSink` and `await sink.emit()` whenever they have results. Each emission commits immediately to the graph and fires events. The graph is always partially built — that is correct, not an error state.
+
+`emit()` is async: the adapter awaits each emission and receives validation feedback (e.g., rejected edges with missing endpoints). The adapter layer spawns `process()` as a background task — async emit does not block other adapters. Adapters wrapping synchronous sources (e.g., a C library callback) can bridge internally via a channel.
 
 **Alternatives considered:**
 
 - *Return a complete result* — `process()` returns a single `AdapterOutput` when done. Rejected: blocks the UI until the slowest phase completes. A DocumentAdapter doing LLM extraction would produce no graph mutations for seconds or minutes.
 - *Return a stream* — `process()` returns `Stream<AdapterOutput>`. Considered viable but less ergonomic for adapters that delegate to llm-orc ensembles with their own async event flows. The sink model lets the adapter push from any internal context.
+- *Fire-and-forget emit* — `emit()` sends into a channel and returns immediately. Rejected: loses validation feedback (adapter never learns an emission was rejected) and backpressure (fast adapters can flood the engine). Since `process()` is already async and adapters wrapping llm-orc are already awaiting MCP calls, async emit adds no complexity.
 
 ### 3. Two trigger modes
 
@@ -54,6 +57,8 @@ Input-triggered adapters run when matching input arrives (`schedule() = None`). 
 ### 4. Opaque adapter data
 
 The framework routes input to adapters by matching `input_kind()` strings. The data payload is `Box<dyn Any + Send + Sync>` — the adapter downcasts internally. The framework never inspects the payload.
+
+If the downcast fails (wrong type for the matched adapter), the adapter returns `Err(AdapterError::InvalidInput)`. The framework logs the error and continues — one adapter's type mismatch does not affect others. This is a programming error (router bug or input producer bug), not a runtime condition.
 
 **Alternatives considered:**
 
@@ -82,6 +87,8 @@ Each `sink.emit()` call validates and commits as a unit.
 | Empty emission | **No-op** |
 | Self-referencing edge | **Allow** |
 
+**Adapter authors must emit nodes before or in the same emission as edges that reference them.** This is a consequence of the rejection rule: an edge pointing to a node that doesn't exist yet is invalid. Progressive emission (Decision 2) naturally produces this ordering — structural nodes first, relationship edges later — but adapters that build complex subgraphs in a single emission must include all referenced endpoints.
+
 Cancellation is checked between `emit()` calls, not during. Each emission is atomic.
 
 ### 7. No temporal decay — Hebbian normalization
@@ -105,17 +112,32 @@ Hebbian weakening emerges naturally: when a new edge from node A is reinforced, 
 
 ### 8. Shared semantic dimension with label-based bridging
 
-All domains contribute concept nodes to the same semantic namespace. `ContentType` disambiguates origin. Cross-modal bridging happens through shared vocabulary — when a MovementAdapter produces `concept:sudden` and a DocumentAdapter already created that concept from text, the system sees independent agreement across modalities.
+All domains contribute concept nodes to the same semantic namespace. `ContentType` (a field on `Node`, defined in the Plexus core spec) disambiguates origin. Each adapter uses whatever vocabulary its domain produces — a MovementAdapter uses Laban terms, a DocumentAdapter uses whatever the LLM extracts. Adapters do not coordinate vocabulary.
 
-No special unification logic. Labels are the bridge.
+When independent adapters happen to produce the same label (e.g., both emit `concept:sudden`), the system sees automatic cross-modal agreement — strong evidence. When they use different labels for related concepts (e.g., "abrupt" vs "sudden"), the NormalizationAdapter's near-miss detection proposes `may_be_related` edges. Graph dynamics determine which proposals are real.
 
-### 9. Reflexive adapters propose, don't merge
+No special unification logic. Labels are the bridge where vocabulary overlaps; the NormalizationAdapter bridges where it doesn't.
+
+### 9. Reflexive adapters propose, don't merge — enforced by ProposalSink
 
 Scheduled adapters that examine the graph (NormalizationAdapter, TopologyAdapter, CoherenceAdapter) emit weak `may_be_related` edges. They never merge nodes or overwrite data. Graph dynamics — Hebbian reinforcement and normalization — determine which proposed connections are real.
 
+This invariant is enforced structurally, not by convention. The framework gives reflexive adapters a `ProposalSink` (a constrained wrapper around `AdapterSink`) instead of the full sink. The adapter's `process()` signature is unchanged — it still receives `&dyn AdapterSink` — but the implementation it receives enforces:
+
+| Operation | ProposalSink behavior |
+|---|---|
+| Emit edge with weight > cap | **Clamp** to cap (configurable per adapter) |
+| Emit edge with relationship ≠ `may_be_related` | **Reject** |
+| Emit node removal | **Reject** |
+| Emit node (e.g., topology metadata) | **Allow** |
+| Emit annotation | **Allow** |
+
+Two concepts may appear similar (e.g., "sudden" in text and movement) but differ entirely in context. The reflexive adapter proposes the connection; reinforcement from actual cross-adapter co-occurrence validates it. Community formation and continued edge strengthening are the signals for real relationships, not any single adapter's judgment.
+
 **Alternatives considered:**
 
-- *Auto-merge on high confidence* — when a `may_be_related` edge exceeds a threshold, merge the two nodes. Rejected: two similarly-labeled concepts may be entirely different in context. Merging is destructive and irreversible. Strong equivalence edges preserve both nodes and their distinct provenance.
+- *Auto-merge on high weight* — when a `may_be_related` edge exceeds a weight threshold, merge the two nodes. Rejected: two similarly-labeled concepts may be entirely different in context. Merging is destructive and irreversible. Strong equivalence edges preserve both nodes and their distinct provenance.
+- *Convention only* — document the constraint, trust adapter authors. Rejected: this is a core architectural invariant. A reflexive adapter that removes nodes or overwrites strong edges could corrupt the graph irreversibly. The ProposalSink makes violation impossible rather than merely discouraged.
 
 ### 10. Five low-level graph events
 
@@ -158,14 +180,18 @@ External adapters are independent — they don't know about each other. Reflexiv
 
 ## Open Questions
 
-These are deferred to future ADRs or implementation discovery:
+### Needs spike (blocks adapter implementation)
 
-1. **AdapterSnapshot design.** Incremental state is likely adapter-specific (file: chunk hashes, movement: cluster centroids, graph: timestamp of last run).
+1. **Reinforcement mechanics.** What happens to `edge.weight` when a second adapter emits an edge that already exists? When a reflexive adapter confirms a `may_be_related` edge? When the same adapter re-emits an edge on re-processing? The documents describe Hebbian reinforcement as a property of the system but never define the operation. This blocks adapter development — you can't write an adapter that emits edges without knowing the contract. Candidates to explore in a spike: additive increment, multiplicative boost, source-diversity-weighted increment, or some combination. The spike should also clarify whether reinforcement is the sink's responsibility (implicit on duplicate edge) or an explicit adapter action.
 
-2. **Chunking as graph nodes.** Should chunks be structure-dimension nodes (queryable, referenceable) or adapter-internal state?
+### Deferred to future ADRs or implementation discovery
 
-3. **Canonical pointers vs pure emergence.** When `may_be_related` strengthens to high confidence — designate one node as canonical, or keep both with a strong equivalence edge?
+2. **AdapterSnapshot design.** Incremental state is likely adapter-specific (file: chunk hashes, movement: cluster centroids, graph: timestamp of last run).
 
-4. **Edge cleanup strategy.** Simple weight threshold, distribution-aware cutoff (power-law tail), or both?
+3. **Chunking as graph nodes.** Should chunks be structure-dimension nodes (queryable, referenceable) or adapter-internal state?
 
-5. **Session boundaries (EDDI).** Separate session contexts, temporal windowing, or session metadata on nodes/edges?
+4. **Canonical pointers vs pure emergence.** When `may_be_related` strengthens to high weight — designate one node as canonical, or keep both with a strong equivalence edge?
+
+5. **Edge cleanup strategy.** Simple weight threshold, distribution-aware cutoff (power-law tail), or both?
+
+6. **Session boundaries (EDDI).** Separate session contexts, temporal windowing, or session metadata on nodes/edges?
