@@ -339,14 +339,14 @@ fn create_directory_hierarchy(
             for doc_id in doc_ids {
                 // dir contains doc
                 let mut edge = Edge::new(dir_node_id.clone(), doc_id.clone(), "contains");
-                edge.weight = weight;
+                edge.raw_weight = weight;
                 edge.source_dimension = "structure".to_string();
                 edge.target_dimension = "structure".to_string();
                 edges.push(edge);
 
                 // doc contained_by dir
                 let mut reverse = Edge::new(doc_id.clone(), dir_node_id.clone(), "contained_by");
-                reverse.weight = weight * 0.8;
+                reverse.raw_weight = weight * 0.8;
                 reverse.source_dimension = "structure".to_string();
                 reverse.target_dimension = "structure".to_string();
                 edges.push(reverse);
@@ -364,14 +364,14 @@ fn create_directory_hierarchy(
             {
                 // parent contains child
                 let mut edge = Edge::new(parent_id.clone(), child_id.clone(), "contains");
-                edge.weight = weight;
+                edge.raw_weight = weight;
                 edge.source_dimension = "structure".to_string();
                 edge.target_dimension = "structure".to_string();
                 edges.push(edge);
 
                 // child contained_by parent
                 let mut reverse = Edge::new(child_id.clone(), parent_id.clone(), "contained_by");
-                reverse.weight = weight * 0.8;
+                reverse.raw_weight = weight * 0.8;
                 reverse.source_dimension = "structure".to_string();
                 reverse.target_dimension = "structure".to_string();
                 edges.push(reverse);
@@ -398,7 +398,7 @@ fn create_reverse_edges(context: &Context, weight: f32) -> Vec<Edge> {
         };
 
         let mut reverse = Edge::new(e.target.clone(), e.source.clone(), reverse_rel);
-        reverse.weight = reverse_weight;
+        reverse.raw_weight = reverse_weight;
         reverse.source_dimension = e.target_dimension.clone();
         reverse.target_dimension = e.source_dimension.clone();
         edges.push(reverse);
@@ -438,12 +438,12 @@ fn create_sibling_edges(context: &Context, weight: f32) -> Vec<Edge> {
         for i in 0..doc_ids.len() {
             for j in (i + 1)..doc_ids.len() {
                 let mut edge_ab = Edge::new(doc_ids[i].clone(), doc_ids[j].clone(), "sibling");
-                edge_ab.weight = weight;
+                edge_ab.raw_weight = weight;
                 edge_ab.source_dimension = "structural".to_string();
                 edge_ab.target_dimension = "structural".to_string();
 
                 let mut edge_ba = Edge::new(doc_ids[j].clone(), doc_ids[i].clone(), "sibling");
-                edge_ba.weight = weight;
+                edge_ba.raw_weight = weight;
                 edge_ba.source_dimension = "structural".to_string();
                 edge_ba.target_dimension = "structural".to_string();
 

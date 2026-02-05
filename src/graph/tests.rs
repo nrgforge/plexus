@@ -19,28 +19,15 @@ fn contract_node_fixture() -> Value {
     })
 }
 
-/// Contract fixture: Edge from plexus-integration-contract.md
+/// Contract fixture: Edge (ADR-001 aligned — raw_weight only, no reinforcements)
 fn contract_edge_fixture() -> Value {
     json!({
         "id": "edge:security-to-senior",
         "source": "agent:security-reviewer",
         "target": "agent:senior-reviewer",
         "relationship": "depends_on",
-        "weight": 1.0,
-        "strength": 0.87,
-        "confidence": 0.91,
-        "reinforcements": [
-            {
-                "type": "SuccessfulExecution",
-                "timestamp": "2025-11-30T10:23:00Z",
-                "context_id": "code-review-ensemble",
-                "metadata": {
-                    "outcome": "Found 3 vulnerabilities"
-                }
-            }
-        ],
+        "raw_weight": 0.87,
         "created_at": "2025-11-29T08:00:00Z",
-        "last_reinforced": "2025-11-30T10:23:00Z",
         "properties": {}
     })
 }
@@ -65,7 +52,7 @@ mod serialization_tests {
     use super::*;
     use crate::graph::{
         context::Context,
-        edge::{Edge, Reinforcement, ReinforcementType},
+        edge::Edge,
         node::{ContentType, Node, NodeId, PropertyValue},
     };
 
@@ -101,41 +88,6 @@ mod serialization_tests {
 
         let ct: ContentType = serde_json::from_str("\"code\"").unwrap();
         assert_eq!(ct, ContentType::Code);
-    }
-
-    #[test]
-    fn reinforcement_type_field_renamed() {
-        let r = Reinforcement::new(ReinforcementType::SuccessfulExecution);
-        let json = serde_json::to_value(&r).unwrap();
-
-        // Should have "type" not "reinforcement_type"
-        assert!(json.get("type").is_some());
-        assert!(json.get("reinforcement_type").is_none());
-        assert_eq!(json["type"], "SuccessfulExecution");
-    }
-
-    #[test]
-    fn reinforcement_optional_fields_skipped_when_none() {
-        let r = Reinforcement::new(ReinforcementType::UserValidation);
-        let json = serde_json::to_value(&r).unwrap();
-
-        // Optional fields should not be present when None
-        assert!(json.get("context_id").is_none());
-        assert!(json.get("metadata").is_none());
-    }
-
-    #[test]
-    fn reinforcement_roundtrip() {
-        let r = Reinforcement::new(ReinforcementType::CoOccurrence)
-            .in_context("test-context")
-            .with_metadata("source", "analyzer:test");
-
-        let json = serde_json::to_string(&r).unwrap();
-        let r2: Reinforcement = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(r.reinforcement_type, r2.reinforcement_type);
-        assert_eq!(r.context_id, r2.context_id);
-        assert_eq!(r.metadata, r2.metadata);
     }
 
     #[test]
@@ -205,8 +157,7 @@ mod serialization_tests {
         assert_eq!(edge.source.as_str(), "agent:security-reviewer");
         assert_eq!(edge.target.as_str(), "agent:senior-reviewer");
         assert_eq!(edge.relationship, "depends_on");
-        assert_eq!(edge.reinforcements.len(), 1);
-        assert_eq!(edge.reinforcements[0].reinforcement_type, ReinforcementType::SuccessfulExecution);
+        assert_eq!(edge.raw_weight, 0.87);
     }
 
     #[test]
@@ -241,26 +192,16 @@ mod serialization_tests {
     fn serialized_edge_has_contract_structure() {
         let source = NodeId::from_string("node:a");
         let target = NodeId::from_string("node:b");
-        let mut edge = Edge::new(source, target, "calls");
-        edge.reinforce(Reinforcement::new(ReinforcementType::UserValidation));
+        let edge = Edge::new(source, target, "calls");
 
         let json = serde_json::to_value(&edge).unwrap();
 
-        // Verify structure matches contract
+        // Verify structure matches ADR-001 contract
         assert!(json["id"].is_string(), "id should be a string");
         assert_eq!(json["source"], "node:a");
         assert_eq!(json["target"], "node:b");
         assert_eq!(json["relationship"], "calls");
-        assert!(json["weight"].is_number());
-        assert!(json["strength"].is_number());
-        assert!(json["confidence"].is_number());
-        assert!(json["reinforcements"].is_array());
+        assert!(json["raw_weight"].is_number());
         assert!(json["created_at"].is_string());
-        assert!(json["last_reinforced"].is_string());
-
-        // Check reinforcement uses "type" not "reinforcement_type"
-        let reinforcement = &json["reinforcements"][0];
-        assert!(reinforcement.get("type").is_some());
-        assert!(reinforcement.get("reinforcement_type").is_none());
     }
 }

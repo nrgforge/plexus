@@ -6,7 +6,7 @@
 //! # Core Concepts
 //!
 //! - **Nodes**: Universal representation of entities (functions, concepts, etc.)
-//! - **Edges**: Relationships with self-reinforcing strength that decay over time
+//! - **Edges**: Directed connections with raw weights (Hebbian reinforcement, no temporal decay)
 //! - **Contexts**: Bounded subgraphs representing workspaces or projects
 //!
 //! # Example

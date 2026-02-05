@@ -411,7 +411,7 @@ impl SemanticAnalyzer {
                     &relationship,
                     "semantic",
                 );
-                edge.strength = rel.confidence as f32;
+                edge.raw_weight = rel.confidence as f32;
                 edge.properties.insert(
                     "_source_content".into(),
                     PropertyValue::String(source_id.to_string()),

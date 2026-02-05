@@ -194,7 +194,7 @@ impl ContentAnalyzer for MockSemanticAnalyzer {
                             "co_occurs",
                             "semantic",
                         );
-                        edge.strength = 0.5; // Default co-occurrence strength
+                        edge.raw_weight = 0.5; // Default co-occurrence raw weight
                         result.add_edge(edge);
                     }
                 }
