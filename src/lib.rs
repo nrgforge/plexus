@@ -18,6 +18,7 @@
 //! // Engine is ready for use
 //! ```
 
+pub mod adapter;
 pub mod analysis;
 mod graph;
 pub mod mcp;
@@ -25,6 +26,10 @@ pub mod provenance;
 pub mod query;
 pub mod storage;
 
+pub use adapter::{
+    AdapterError, AdapterSink, Annotation, AnnotatedEdge, AnnotatedNode,
+    EmitResult, Emission, Rejection, RejectionReason, Removal,
+};
 pub use analysis::{
     AnalysisCapability, AnalysisConfig, AnalysisError, AnalysisOrchestrator, AnalysisResult,
     AnalysisScope, AnalyzerRegistry, ConflictStrategy, ContentAnalyzer, ContentId, ContentItem,
