@@ -2,7 +2,7 @@
 
 Derived from ADR-001 and the domain model. Each scenario is refutable — it can be clearly true or false against running software. All terms follow the domain model vocabulary.
 
-**Scope:** Everything except reinforcement mechanics (blocked — needs spike).
+**Scope:** Adapter layer behavior including reinforcement mechanics (ADR-003).
 
 ---
 
@@ -15,7 +15,7 @@ The engine validates each item in an emission independently. Valid items commit;
 **When** an adapter emits an emission containing node A, node B, and an edge A→B
 **Then** the engine commits all three mutations
 **And** node A and node B exist in the graph
-**And** edge A→B exists in the graph with the emitted raw weight
+**And** edge A→B exists in the graph with a contribution from the emitting adapter
 **And** `emit()` returns a result with no rejections
 
 ### Scenario: Edge referencing a missing endpoint is rejected; valid items still commit
@@ -92,10 +92,10 @@ The engine validates each item in an emission independently. Valid items commit;
 The ProposalSink intercepts emissions from reflexive adapters before the engine sees them. It enforces the propose-don't-merge invariant structurally.
 
 ### Scenario: may_be_related edge passes through ProposalSink
-**Given** a reflexive adapter with a ProposalSink (weight cap = 0.3)
-**When** the adapter emits an emission containing edge A→B with relationship `may_be_related` and raw weight 0.2
+**Given** a reflexive adapter with a ProposalSink (contribution cap = 0.3)
+**When** the adapter emits an emission containing edge A→B with relationship `may_be_related` and contribution value 0.2
 **Then** the ProposalSink forwards the emission to the engine
-**And** the engine commits edge A→B with raw weight 0.2
+**And** the engine commits edge A→B with contribution 0.2 from the adapter
 
 ### Scenario: Non-may_be_related edge is rejected by ProposalSink
 **Given** a reflexive adapter with a ProposalSink
@@ -104,11 +104,11 @@ The ProposalSink intercepts emissions from reflexive adapters before the engine 
 **And** the edge does not reach the engine
 **And** `emit()` returns a result listing the edge as rejected with reason "invalid relationship type"
 
-### Scenario: Edge raw weight exceeding cap is clamped
-**Given** a reflexive adapter with a ProposalSink (weight cap = 0.3)
-**When** the adapter emits an emission containing edge A→B with relationship `may_be_related` and raw weight 0.8
-**Then** the ProposalSink clamps the raw weight to 0.3
-**And** the engine commits edge A→B with raw weight 0.3
+### Scenario: Contribution value exceeding cap is clamped
+**Given** a reflexive adapter with a ProposalSink (contribution cap = 0.3)
+**When** the adapter emits an emission containing edge A→B with relationship `may_be_related` and contribution value 0.8
+**Then** the ProposalSink clamps the contribution value to 0.3
+**And** the engine commits edge A→B with contribution 0.3 from the adapter
 
 ### Scenario: Node removal is rejected by ProposalSink
 **Given** a reflexive adapter with a ProposalSink
@@ -182,7 +182,7 @@ The engine constructs provenance entries by combining adapter-provided annotatio
 
 ## Feature: Query-Time Normalization
 
-Raw weights are stored. Normalized weights are computed at query time via a pluggable normalization strategy. The graph stores ground truth; normalization is an interpretive lens.
+Per-adapter contributions are stored. Raw weights are computed from contributions via scale normalization. Normalized weights are computed from raw weights at query time via a pluggable normalization strategy. Normalization is an interpretive lens.
 
 ### Scenario: Default per-node outgoing divisive normalization
 **Given** node A with outgoing edges: A→B (raw weight 3.0), A→C (raw weight 1.0), A→D (raw weight 1.0)
@@ -426,15 +426,110 @@ The schedule monitor evaluates trigger conditions and fires reflexive adapters.
 
 ---
 
-## Not Covered (Blocked by Reinforcement Spike)
+## Feature: Per-Adapter Contribution Tracking
 
-The following scenarios cannot be written until reinforcement and multi-source convergence mechanics are defined:
+Each edge stores per-adapter contributions as `HashMap<AdapterId, f32>`. When an adapter emits an edge that already exists, the engine replaces that adapter's contribution slot with the new value (latest-value-replace). See ADR-003 Decision 1.
 
-- **WeightsChanged event:** When does it fire? What triggers raw weight changes?
-- **Duplicate edge emission:** When adapter emits an edge that already exists, does the raw weight change? How?
-- **Re-processing behavior:** Same adapter re-emits the same edge (e.g., file re-saved). Upsert? Reinforce? No-op?
-- **Reflexive confirmation:** A reflexive adapter proposes `may_be_related`. Later, actual co-occurrence "confirms" it. What changes?
-- **Evidence diversity computation:** Derived from provenance entries, but the query semantics depend on whether re-emission creates new provenance entries or updates existing ones.
-- **Property merge on multi-source upsert:** When two adapters emit the same concept with different properties, what merge semantics apply? Last-writer-wins? Union? Thin nodes with detail in provenance only?
+### Scenario: First emission creates contribution slot
+**Given** a graph containing node A and node B
+**When** adapter "code-coverage" emits an emission containing edge A→B with contribution value 5.0
+**Then** edge A→B exists in the graph
+**And** edge A→B has contributions {"code-coverage": 5.0}
 
-These will be added as a second batch of scenarios after the reinforcement spike.
+### Scenario: Same adapter re-emits same value — idempotent
+**Given** edge A→B exists with contributions {"code-coverage": 5.0}
+**When** adapter "code-coverage" emits an emission containing edge A→B with contribution value 5.0
+**Then** edge A→B contributions are unchanged: {"code-coverage": 5.0}
+**And** no `WeightsChanged` event fires
+
+### Scenario: Same adapter emits higher value — contribution increases
+**Given** edge A→B exists with contributions {"code-coverage": 5.0}
+**When** adapter "code-coverage" emits an emission containing edge A→B with contribution value 8.0
+**Then** edge A→B contributions are {"code-coverage": 8.0}
+**And** a `WeightsChanged` event fires for edge A→B
+
+### Scenario: Same adapter emits lower value — contribution decreases
+**Given** edge A→B exists with contributions {"code-coverage": 8.0}
+**When** adapter "code-coverage" emits an emission containing edge A→B with contribution value 3.0
+**Then** edge A→B contributions are {"code-coverage": 3.0}
+**And** a `WeightsChanged` event fires for edge A→B
+
+### Scenario: Different adapter emits same edge — cross-source reinforcement
+**Given** edge A→B exists with contributions {"code-coverage": 5.0}
+**When** adapter "systems-architecture" emits an emission containing edge A→B with contribution value 0.7
+**Then** edge A→B contributions are {"code-coverage": 5.0, "systems-architecture": 0.7}
+**And** a `WeightsChanged` event fires for edge A→B
+
+### Scenario: Re-processing with unchanged results is idempotent across all edges
+**Given** adapter "code-coverage" has previously emitted edges A→B (5.0) and A→C (3.0)
+**When** adapter "code-coverage" re-processes the same input and emits the same edges with the same contribution values
+**Then** no contributions change
+**And** no `WeightsChanged` events fire
+
+### Scenario: Reflexive proposal then external confirmation — independent contribution slots
+**Given** reflexive adapter "normalization-adapter" has proposed edge concept:sudden→concept:abrupt via ProposalSink with contribution value 0.2
+**And** edge concept:sudden→concept:abrupt exists with contributions {"normalization-adapter": 0.2}
+**When** adapter "document-adapter" independently emits edge concept:sudden→concept:abrupt with contribution value 0.85
+**Then** edge contributions are {"normalization-adapter": 0.2, "document-adapter": 0.85}
+**And** a `WeightsChanged` event fires
+**And** the edge's raw weight reflects both contributions (stronger than either alone)
+
+---
+
+## Feature: Scale Normalization
+
+The engine normalizes each adapter's contributions to a comparable scale before summing into raw weight. Scale normalization uses divide-by-range: `(value - min) / (max - min)` per adapter across all of that adapter's edges. See ADR-003 Decision 2.
+
+### Scenario: Single adapter, single edge — degenerate case normalizes to 1.0
+**Given** adapter "code-coverage" has emitted exactly one edge: A→B with contribution 5.0
+**When** the engine computes the scale-normalized contribution
+**Then** code-coverage min = 5.0, max = 5.0, range = 0.0
+**And** the scale-normalized contribution for A→B is 1.0 (degenerate case)
+**And** raw weight of A→B = 1.0
+
+### Scenario: Single adapter, multiple edges — min maps to 0.0, max maps to 1.0
+**Given** adapter "code-coverage" has emitted contributions: A→B = 2.0, A→C = 10.0, A→D = 18.0
+**When** the engine computes scale-normalized contributions
+**Then** code-coverage min = 2.0, max = 18.0, range = 16.0
+**And** scale-normalized A→B = (2 - 2) / 16 = 0.0
+**And** scale-normalized A→C = (10 - 2) / 16 = 0.5
+**And** scale-normalized A→D = (18 - 2) / 16 = 1.0
+
+### Scenario: Two adapters on different scales — normalization prevents scale dominance
+**Given** adapter "code-coverage" has contributions: A→B = 2.0, A→C = 18.0, A→D = 14.0
+**And** adapter "movement" has contributions: A→B = 400.0, A→C = 100.0, A→D = 350.0
+**When** the engine applies divide-by-range scale normalization per adapter
+**Then** code-coverage (min=2, max=18, range=16): A→B = 0.0, A→C = 1.0, A→D = 0.75
+**And** movement (min=100, max=400, range=300): A→B = 1.0, A→C = 0.0, A→D = 0.833
+**And** raw weight A→D = 0.75 + 0.833 = 1.583 (highest — strong in both domains)
+**And** raw weight A→B = 0.0 + 1.0 = 1.0
+**And** raw weight A→C = 1.0 + 0.0 = 1.0
+**And** A→D ranks first despite not being the maximum in either adapter's native scale
+
+### Scenario: Signed adapter range normalizes correctly
+**Given** adapter "sentiment" has contributions: A→B = -0.8, A→C = 0.5, A→D = 1.0
+**When** the engine computes scale-normalized contributions
+**Then** sentiment min = -0.8, max = 1.0, range = 1.8
+**And** scale-normalized A→B = (-0.8 - (-0.8)) / 1.8 = 0.0
+**And** scale-normalized A→C = (0.5 - (-0.8)) / 1.8 = 0.722
+**And** scale-normalized A→D = (1.0 - (-0.8)) / 1.8 = 1.0
+
+### Scenario: New emission extending adapter's range shifts all that adapter's scale-normalized values
+**Given** adapter "code-coverage" has contributions: A→B = 5.0, A→C = 15.0
+**And** scale-normalized values are A→B = 0.0, A→C = 1.0 (min=5, max=15)
+**When** adapter "code-coverage" emits edge A→D with contribution 25.0
+**Then** code-coverage min = 5.0, max = 25.0, range = 20.0 (range extended)
+**And** scale-normalized A→B = (5 - 5) / 20 = 0.0
+**And** scale-normalized A→C = (15 - 5) / 20 = 0.5 (was 1.0 — shifted)
+**And** scale-normalized A→D = (25 - 5) / 20 = 1.0
+**And** raw weights for A→B and A→C change even though their contributions did not
+
+---
+
+## Not Covered (Open Questions)
+
+The following scenarios cannot be written until their design questions are resolved:
+
+- **Property merge on multi-source upsert:** When two adapters emit the same node with different properties, what merge semantics apply? See domain model Open Question 1 (sub-question).
+- **Evidence diversity bonus:** Should edges confirmed by more adapters rank higher than edges with equal total weight from fewer adapters? See ADR-003 Open Question 1.
+- **Contribution removal:** ADR-003 mentions removing an adapter's contribution, but the mechanism (explicit API? emit with value 0? separate operation?) is not defined.
