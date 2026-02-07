@@ -3,7 +3,7 @@
 //! Intercepts emissions before the engine sees them. Enforces the
 //! propose-don't-merge invariant structurally:
 //! - Only `may_be_related` edges allowed
-//! - Edge raw weights clamped to a configurable cap
+//! - Contribution values clamped to a configurable cap
 //! - Node removals rejected
 //! - Nodes and annotations pass through
 
@@ -20,12 +20,12 @@ pub const ALLOWED_RELATIONSHIP: &str = "may_be_related";
 /// `&dyn AdapterSink` — but the implementation enforces proposal constraints.
 pub struct ProposalSink<S: AdapterSink> {
     inner: S,
-    weight_cap: f32,
+    contribution_cap: f32,
 }
 
 impl<S: AdapterSink> ProposalSink<S> {
-    pub fn new(inner: S, weight_cap: f32) -> Self {
-        Self { inner, weight_cap }
+    pub fn new(inner: S, contribution_cap: f32) -> Self {
+        Self { inner, contribution_cap }
     }
 }
 
@@ -57,9 +57,9 @@ impl<S: AdapterSink> AdapterSink for ProposalSink<S> {
                 continue;
             }
 
-            // Clamp weight to cap
-            if annotated_edge.edge.raw_weight > self.weight_cap {
-                annotated_edge.edge.raw_weight = self.weight_cap;
+            // Clamp contribution value to cap
+            if annotated_edge.edge.raw_weight > self.contribution_cap {
+                annotated_edge.edge.raw_weight = self.contribution_cap;
             }
 
             filtered_edges.push(annotated_edge);

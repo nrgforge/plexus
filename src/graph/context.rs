@@ -160,7 +160,8 @@ impl Context {
     /// - **Dimension-distinct**: Edges with same source/target/relationship but different
     ///   dimensions are stored as separate edges (preserves multi-dimensional richness)
     /// - **Exact duplicate**: When the same edge (source/target/relationship/dimensions) already
-    ///   exists, the existing edge is updated: raw_weight takes the max, properties merge.
+    ///   exists, contributions are merged per-adapter-slot (ADR-003) and properties merge.
+    ///   For edges without contributions, raw_weight falls back to max for backward compat.
     /// - **Cross-dimensional**: When the same logical edge appears in multiple dimensions,
     ///   a `_cross_dim_count` property tracks how many dimensions it spans.
     pub fn add_edge(&mut self, edge: Edge) {
@@ -194,11 +195,10 @@ impl Context {
             for (adapter_id, value) in &edge.contributions {
                 existing.contributions.insert(adapter_id.clone(), *value);
             }
-            // Update raw_weight: if incoming edge has contributions, recompute
-            // from contributions sum; otherwise fall back to max for backward compat
-            if !edge.contributions.is_empty() {
-                existing.raw_weight = existing.contributions.values().sum();
-            } else {
+            // raw_weight: for edges with contributions, the caller is responsible
+            // for calling recompute_raw_weights() after all edges are committed.
+            // For edges without contributions, fall back to max for backward compat.
+            if edge.contributions.is_empty() {
                 existing.raw_weight = existing.raw_weight.max(edge.raw_weight);
             }
             for (k, v) in edge.properties {

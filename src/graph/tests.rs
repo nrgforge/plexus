@@ -19,7 +19,7 @@ fn contract_node_fixture() -> Value {
     })
 }
 
-/// Contract fixture: Edge (ADR-001 aligned — raw_weight only, no reinforcements)
+/// Contract fixture: Edge (ADR-001/ADR-003 aligned — contributions + raw_weight)
 fn contract_edge_fixture() -> Value {
     json!({
         "id": "edge:security-to-senior",

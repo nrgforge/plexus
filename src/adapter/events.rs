@@ -34,7 +34,7 @@ pub enum GraphEvent {
         /// "cascade" when caused by node removal, "direct" otherwise
         reason: String,
     },
-    /// Edge weights were changed (deferred — needs reinforcement spike)
+    /// Edge weights were changed (fires when an adapter's contribution differs from stored value)
     WeightsChanged {
         edge_ids: Vec<EdgeId>,
         adapter_id: String,
