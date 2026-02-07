@@ -189,9 +189,18 @@ impl Context {
         }
 
         if let Some(idx) = exact_match_idx {
-            // Exact duplicate - update existing edge
+            // Exact duplicate - merge contributions per-adapter (ADR-003)
             let existing = &mut self.edges[idx];
-            existing.raw_weight = existing.raw_weight.max(edge.raw_weight);
+            for (adapter_id, value) in &edge.contributions {
+                existing.contributions.insert(adapter_id.clone(), *value);
+            }
+            // Update raw_weight: if incoming edge has contributions, recompute
+            // from contributions sum; otherwise fall back to max for backward compat
+            if !edge.contributions.is_empty() {
+                existing.raw_weight = existing.contributions.values().sum();
+            } else {
+                existing.raw_weight = existing.raw_weight.max(edge.raw_weight);
+            }
             for (k, v) in edge.properties {
                 existing.properties.insert(k, v);
             }
@@ -248,6 +257,56 @@ impl Context {
     /// Get the number of edges
     pub fn edge_count(&self) -> usize {
         self.edges.len()
+    }
+
+    /// Recompute raw_weight on all edges using scale normalization (ADR-003).
+    ///
+    /// For each adapter, computes min and max contribution values across all edges.
+    /// Each contribution is scale-normalized via divide-by-range:
+    ///   `(value - min) / (max - min)`
+    /// mapping to [0, 1]. Degenerate case (min == max) normalizes to 1.0.
+    /// raw_weight = sum of scale-normalized contributions across all adapters.
+    pub fn recompute_raw_weights(&mut self) {
+        use std::collections::HashMap;
+
+        if self.edges.is_empty() {
+            return;
+        }
+
+        // Collect per-adapter min/max across all edges
+        let mut adapter_ranges: HashMap<String, (f32, f32)> = HashMap::new();
+        for edge in &self.edges {
+            for (adapter_id, value) in &edge.contributions {
+                let entry = adapter_ranges.entry(adapter_id.clone()).or_insert((*value, *value));
+                if *value < entry.0 {
+                    entry.0 = *value;
+                }
+                if *value > entry.1 {
+                    entry.1 = *value;
+                }
+            }
+        }
+
+        // Recompute raw_weight for each edge
+        for edge in &mut self.edges {
+            if edge.contributions.is_empty() {
+                continue; // Leave raw_weight as-is for edges without contributions
+            }
+
+            let mut sum = 0.0f32;
+            for (adapter_id, value) in &edge.contributions {
+                if let Some(&(min, max)) = adapter_ranges.get(adapter_id) {
+                    let range = max - min;
+                    let normalized = if range == 0.0 {
+                        1.0 // Degenerate case: single value → 1.0
+                    } else {
+                        (value - min) / range
+                    };
+                    sum += normalized;
+                }
+            }
+            edge.raw_weight = sum;
+        }
     }
 
     /// Update the last modified timestamp

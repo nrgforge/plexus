@@ -243,6 +243,7 @@ impl SqliteStore {
             source_dimension,
             target_dimension,
             relationship,
+            contributions: std::collections::HashMap::new(),
             raw_weight: raw_weight as f32,
             created_at: DateTime::parse_from_rfc3339(&created_at)
                 .map_err(|e| StorageError::DateParse(e.to_string()))?

@@ -79,6 +79,7 @@ impl AdapterSink for EngineSink {
 
         // Phase 2: Validate and commit edges
         let mut committed_edge_ids: Vec<EdgeId> = Vec::new();
+        let mut weights_changed_edge_ids: Vec<EdgeId> = Vec::new();
         for annotated_edge in emission.edges {
             let edge = &annotated_edge.edge;
             let source_exists = ctx.get_node(&edge.source).is_some();
@@ -100,10 +101,46 @@ impl AdapterSink for EngineSink {
                 continue;
             }
 
-            let edge_id = annotated_edge.edge.id.clone();
-            ctx.add_edge(annotated_edge.edge);
+            let mut edge_to_commit = annotated_edge.edge;
+
+            // ADR-003: Set contribution for the emitting adapter
+            let contribution_value = edge_to_commit.raw_weight;
+            if !adapter_id.is_empty() {
+                edge_to_commit.contributions.insert(
+                    adapter_id.clone(),
+                    contribution_value,
+                );
+            }
+
+            // ADR-003: Detect contribution change for WeightsChanged event
+            let mut contribution_changed = false;
+            if !adapter_id.is_empty() {
+                if let Some(existing) = ctx.edges.iter().find(|e| {
+                    e.source == edge_to_commit.source
+                        && e.target == edge_to_commit.target
+                        && e.relationship == edge_to_commit.relationship
+                        && e.source_dimension == edge_to_commit.source_dimension
+                        && e.target_dimension == edge_to_commit.target_dimension
+                }) {
+                    let old_value = existing.contributions.get(&adapter_id);
+                    let new_value = Some(&contribution_value);
+                    contribution_changed = old_value != new_value;
+                }
+            }
+
+            let edge_id = edge_to_commit.id.clone();
+            ctx.add_edge(edge_to_commit);
             result.edges_committed += 1;
-            committed_edge_ids.push(edge_id);
+            committed_edge_ids.push(edge_id.clone());
+
+            if contribution_changed {
+                weights_changed_edge_ids.push(edge_id);
+            }
+        }
+
+        // ADR-003: Recompute raw weights via scale normalization
+        if !committed_edge_ids.is_empty() {
+            ctx.recompute_raw_weights();
         }
 
         // Phase 3: Process removals
@@ -154,6 +191,13 @@ impl AdapterSink for EngineSink {
                 adapter_id: adapter_id.clone(),
                 context_id: context_id.clone(),
                 reason: "cascade".to_string(),
+            });
+        }
+        if !weights_changed_edge_ids.is_empty() {
+            result.events.push(GraphEvent::WeightsChanged {
+                edge_ids: weights_changed_edge_ids,
+                adapter_id: adapter_id.clone(),
+                context_id: context_id.clone(),
             });
         }
 
@@ -704,5 +748,486 @@ mod tests {
         assert_eq!(result.events.len(), 2);
         assert!(matches!(&result.events[0], GraphEvent::NodesAdded { .. }));
         assert!(matches!(&result.events[1], GraphEvent::EdgesAdded { .. }));
+    }
+
+    // ================================================================
+    // ADR-003 Reinforcement Mechanics Scenarios
+    // ================================================================
+
+    fn make_sink_with_adapter(adapter_id: &str) -> (EngineSink, Arc<Mutex<Context>>) {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let fw = FrameworkContext {
+            adapter_id: adapter_id.to_string(),
+            context_id: "test-context".to_string(),
+            input_summary: None,
+        };
+        let sink = EngineSink::new(ctx.clone()).with_framework_context(fw);
+        (sink, ctx)
+    }
+
+    // === Scenario: First emission creates contribution slot ===
+    #[tokio::test]
+    async fn first_emission_creates_contribution_slot() {
+        let (sink, ctx) = make_sink_with_adapter("code-coverage");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+        }
+
+        let mut e = edge("A", "B");
+        e.raw_weight = 5.0;
+
+        let result = sink.emit(Emission::new().with_edge(e)).await.unwrap();
+        assert_eq!(result.edges_committed, 1);
+
+        let ctx = ctx.lock().unwrap();
+        let edge = &ctx.edges[0];
+        assert_eq!(edge.contributions.get("code-coverage"), Some(&5.0));
+    }
+
+    // === Scenario: Same adapter re-emits same value — idempotent ===
+    #[tokio::test]
+    async fn same_adapter_same_value_idempotent() {
+        let (sink, ctx) = make_sink_with_adapter("code-coverage");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+        }
+
+        // First emission
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 5.0;
+        sink.emit(Emission::new().with_edge(e1)).await.unwrap();
+
+        // Re-emit same value
+        let mut e2 = edge("A", "B");
+        e2.raw_weight = 5.0;
+        let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        assert_eq!(ctx.edge_count(), 1);
+        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&5.0));
+
+        // No WeightsChanged event should fire
+        let weights_changed = result.events.iter()
+            .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
+        assert!(!weights_changed, "idempotent re-emission should not fire WeightsChanged");
+    }
+
+    // === Scenario: Same adapter emits higher value — contribution increases ===
+    #[tokio::test]
+    async fn same_adapter_higher_value_increases() {
+        let (sink, ctx) = make_sink_with_adapter("code-coverage");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+        }
+
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 5.0;
+        sink.emit(Emission::new().with_edge(e1)).await.unwrap();
+
+        let mut e2 = edge("A", "B");
+        e2.raw_weight = 8.0;
+        let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&8.0));
+
+        // WeightsChanged event should fire
+        let weights_changed = result.events.iter()
+            .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
+        assert!(weights_changed, "changed contribution should fire WeightsChanged");
+    }
+
+    // === Scenario: Same adapter emits lower value — contribution decreases ===
+    #[tokio::test]
+    async fn same_adapter_lower_value_decreases() {
+        let (sink, ctx) = make_sink_with_adapter("code-coverage");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+        }
+
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 8.0;
+        sink.emit(Emission::new().with_edge(e1)).await.unwrap();
+
+        let mut e2 = edge("A", "B");
+        e2.raw_weight = 3.0;
+        let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&3.0));
+
+        let weights_changed = result.events.iter()
+            .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
+        assert!(weights_changed, "changed contribution should fire WeightsChanged");
+    }
+
+    // === Scenario: Different adapter emits same edge — cross-source reinforcement ===
+    #[tokio::test]
+    async fn different_adapter_cross_source_reinforcement() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+
+        {
+            let mut c = ctx.lock().unwrap();
+            c.add_node(node("A"));
+            c.add_node(node("B"));
+        }
+
+        // First adapter
+        let fw1 = FrameworkContext {
+            adapter_id: "code-coverage".to_string(),
+            context_id: "test-context".to_string(),
+            input_summary: None,
+        };
+        let sink1 = EngineSink::new(ctx.clone()).with_framework_context(fw1);
+
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 5.0;
+        sink1.emit(Emission::new().with_edge(e1)).await.unwrap();
+
+        // Second adapter
+        let fw2 = FrameworkContext {
+            adapter_id: "systems-architecture".to_string(),
+            context_id: "test-context".to_string(),
+            input_summary: None,
+        };
+        let sink2 = EngineSink::new(ctx.clone()).with_framework_context(fw2);
+
+        let mut e2 = edge("A", "B");
+        e2.raw_weight = 0.7;
+        let result = sink2.emit(Emission::new().with_edge(e2)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        assert_eq!(ctx.edge_count(), 1);
+        let edge = &ctx.edges[0];
+        assert_eq!(edge.contributions.get("code-coverage"), Some(&5.0));
+        assert_eq!(edge.contributions.get("systems-architecture"), Some(&0.7));
+
+        let weights_changed = result.events.iter()
+            .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
+        assert!(weights_changed, "cross-source reinforcement should fire WeightsChanged");
+    }
+
+    // === Scenario: Re-processing with unchanged results is idempotent across all edges ===
+    #[tokio::test]
+    async fn reprocessing_unchanged_is_idempotent() {
+        let (sink, ctx) = make_sink_with_adapter("code-coverage");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+            ctx.add_node(node("C"));
+        }
+
+        // First processing
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 5.0;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 3.0;
+        sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
+
+        // Re-processing with same values
+        let mut e1r = edge("A", "B");
+        e1r.raw_weight = 5.0;
+        let mut e2r = edge("A", "C");
+        e2r.raw_weight = 3.0;
+        let result = sink.emit(Emission::new().with_edge(e1r).with_edge(e2r)).await.unwrap();
+
+        // No contribution changes
+        let ctx = ctx.lock().unwrap();
+        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&5.0));
+        assert_eq!(ctx.edges[1].contributions.get("code-coverage"), Some(&3.0));
+
+        // No WeightsChanged events
+        let weights_changed = result.events.iter()
+            .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
+        assert!(!weights_changed, "idempotent re-processing should not fire WeightsChanged");
+    }
+
+    // === Scenario: Reflexive proposal then external confirmation ===
+    #[tokio::test]
+    async fn reflexive_proposal_then_external_confirmation() {
+        use crate::adapter::ProposalSink;
+
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+
+        {
+            let mut c = ctx.lock().unwrap();
+            c.add_node(node("sudden"));
+            c.add_node(node("abrupt"));
+        }
+
+        // Reflexive adapter proposes via ProposalSink
+        let fw_reflexive = FrameworkContext {
+            adapter_id: "normalization-adapter".to_string(),
+            context_id: "test-context".to_string(),
+            input_summary: None,
+        };
+        let engine_sink = EngineSink::new(ctx.clone()).with_framework_context(fw_reflexive);
+        let proposal_sink = ProposalSink::new(engine_sink, 0.5);
+
+        let proposal_edge = Edge::new(
+            NodeId::from_string("sudden"),
+            NodeId::from_string("abrupt"),
+            "may_be_related",
+        );
+        let mut proposal = proposal_edge;
+        proposal.raw_weight = 0.2;
+        proposal_sink.emit(Emission::new().with_edge(proposal)).await.unwrap();
+
+        {
+            let c = ctx.lock().unwrap();
+            assert_eq!(c.edges[0].contributions.get("normalization-adapter"), Some(&0.2));
+        }
+
+        // External adapter confirms independently
+        let fw_external = FrameworkContext {
+            adapter_id: "document-adapter".to_string(),
+            context_id: "test-context".to_string(),
+            input_summary: None,
+        };
+        let external_sink = EngineSink::new(ctx.clone()).with_framework_context(fw_external);
+
+        let mut confirm_edge = Edge::new(
+            NodeId::from_string("sudden"),
+            NodeId::from_string("abrupt"),
+            "may_be_related",
+        );
+        confirm_edge.raw_weight = 0.85;
+        let result = external_sink.emit(Emission::new().with_edge(confirm_edge)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        let edge = &ctx.edges[0];
+        assert_eq!(edge.contributions.get("normalization-adapter"), Some(&0.2));
+        assert_eq!(edge.contributions.get("document-adapter"), Some(&0.85));
+        assert_eq!(edge.contributions.len(), 2);
+
+        // Raw weight: each adapter has one edge (degenerate case → 1.0 each)
+        // raw_weight = 1.0 + 1.0 = 2.0
+        assert!((edge.raw_weight - 2.0).abs() < 1e-6,
+            "raw weight should be sum of scale-normalized contributions: expected 2.0, got {}",
+            edge.raw_weight);
+
+        let weights_changed = result.events.iter()
+            .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
+        assert!(weights_changed);
+    }
+
+    // ================================================================
+    // ADR-003 Scale Normalization Scenarios
+    // ================================================================
+
+    // === Scenario: Single adapter, single edge — degenerate case normalizes to 1.0 ===
+    #[tokio::test]
+    async fn scale_norm_degenerate_case() {
+        let (sink, ctx) = make_sink_with_adapter("code-coverage");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+        }
+
+        let mut e = edge("A", "B");
+        e.raw_weight = 5.0;
+        sink.emit(Emission::new().with_edge(e)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        let edge = &ctx.edges[0];
+        // Single edge from single adapter: min=5, max=5, range=0 → normalize to 1.0
+        assert!((edge.raw_weight - 1.0).abs() < 1e-6,
+            "degenerate case should normalize to 1.0, got {}", edge.raw_weight);
+    }
+
+    // === Scenario: Single adapter, multiple edges — min→0.0, max→1.0 ===
+    #[tokio::test]
+    async fn scale_norm_min_max_mapping() {
+        let (sink, ctx) = make_sink_with_adapter("code-coverage");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+            ctx.add_node(node("C"));
+            ctx.add_node(node("D"));
+        }
+
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 2.0;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 10.0;
+        let mut e3 = edge("A", "D");
+        e3.raw_weight = 18.0;
+        sink.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // code-coverage min=2, max=18, range=16
+        // A→B: (2-2)/16 = 0.0
+        // A→C: (10-2)/16 = 0.5
+        // A→D: (18-2)/16 = 1.0
+        let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
+        let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
+        let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
+
+        assert!((ab.raw_weight - 0.0).abs() < 1e-6, "A→B should be 0.0, got {}", ab.raw_weight);
+        assert!((ac.raw_weight - 0.5).abs() < 1e-6, "A→C should be 0.5, got {}", ac.raw_weight);
+        assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
+    }
+
+    // === Scenario: Two adapters on different scales — normalization prevents dominance ===
+    #[tokio::test]
+    async fn scale_norm_prevents_dominance() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+
+        {
+            let mut c = ctx.lock().unwrap();
+            c.add_node(node("A"));
+            c.add_node(node("B"));
+            c.add_node(node("C"));
+            c.add_node(node("D"));
+        }
+
+        // code-coverage: A→B=2, A→C=18, A→D=14
+        let fw_cc = FrameworkContext {
+            adapter_id: "code-coverage".to_string(),
+            context_id: "test-context".to_string(),
+            input_summary: None,
+        };
+        let sink_cc = EngineSink::new(ctx.clone()).with_framework_context(fw_cc);
+
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 2.0;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 18.0;
+        let mut e3 = edge("A", "D");
+        e3.raw_weight = 14.0;
+        sink_cc.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
+
+        // movement: A→B=400, A→C=100, A→D=350
+        let fw_mv = FrameworkContext {
+            adapter_id: "movement".to_string(),
+            context_id: "test-context".to_string(),
+            input_summary: None,
+        };
+        let sink_mv = EngineSink::new(ctx.clone()).with_framework_context(fw_mv);
+
+        let mut e4 = edge("A", "B");
+        e4.raw_weight = 400.0;
+        let mut e5 = edge("A", "C");
+        e5.raw_weight = 100.0;
+        let mut e6 = edge("A", "D");
+        e6.raw_weight = 350.0;
+        sink_mv.emit(Emission::new().with_edge(e4).with_edge(e5).with_edge(e6)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
+        let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
+        let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
+
+        // code-coverage (min=2, max=18, range=16): B=0.0, C=1.0, D=0.75
+        // movement (min=100, max=400, range=300): B=1.0, C=0.0, D=0.833
+        // raw_weight A→D = 0.75 + 0.833 = 1.583 (highest)
+        // raw_weight A→B = 0.0 + 1.0 = 1.0
+        // raw_weight A→C = 1.0 + 0.0 = 1.0
+        assert!(ad.raw_weight > ab.raw_weight,
+            "A→D ({}) should rank higher than A→B ({})", ad.raw_weight, ab.raw_weight);
+        assert!(ad.raw_weight > ac.raw_weight,
+            "A→D ({}) should rank higher than A→C ({})", ad.raw_weight, ac.raw_weight);
+
+        let expected_ad = 0.75 + (250.0 / 300.0); // 0.75 + 0.8333
+        assert!((ad.raw_weight - expected_ad).abs() < 1e-3,
+            "A→D should be ~{:.3}, got {}", expected_ad, ad.raw_weight);
+    }
+
+    // === Scenario: Signed adapter range normalizes correctly ===
+    #[tokio::test]
+    async fn scale_norm_signed_range() {
+        let (sink, ctx) = make_sink_with_adapter("sentiment");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+            ctx.add_node(node("C"));
+            ctx.add_node(node("D"));
+        }
+
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = -0.8;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 0.5;
+        let mut e3 = edge("A", "D");
+        e3.raw_weight = 1.0;
+        sink.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // sentiment min=-0.8, max=1.0, range=1.8
+        // A→B: (-0.8 - (-0.8)) / 1.8 = 0.0
+        // A→C: (0.5 - (-0.8)) / 1.8 = 1.3/1.8 ≈ 0.722
+        // A→D: (1.0 - (-0.8)) / 1.8 = 1.8/1.8 = 1.0
+        let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
+        let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
+        let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
+
+        assert!((ab.raw_weight - 0.0).abs() < 1e-6, "A→B should be 0.0, got {}", ab.raw_weight);
+        assert!((ac.raw_weight - 0.722).abs() < 1e-3, "A→C should be ~0.722, got {}", ac.raw_weight);
+        assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
+    }
+
+    // === Scenario: New emission extending range shifts all that adapter's values ===
+    #[tokio::test]
+    async fn scale_norm_range_extension_shifts() {
+        let (sink, ctx) = make_sink_with_adapter("code-coverage");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+            ctx.add_node(node("C"));
+            ctx.add_node(node("D"));
+        }
+
+        // First emission: A→B=5, A→C=15
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 5.0;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 15.0;
+        sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
+
+        {
+            let c = ctx.lock().unwrap();
+            let ac = c.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
+            assert!((ac.raw_weight - 1.0).abs() < 1e-6, "A→C should be 1.0 before range extension");
+        }
+
+        // New emission extends range: A→D=25
+        let mut e3 = edge("A", "D");
+        e3.raw_weight = 25.0;
+        sink.emit(Emission::new().with_edge(e3)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // code-coverage min=5, max=25, range=20
+        // A→B: (5-5)/20 = 0.0
+        // A→C: (15-5)/20 = 0.5 (was 1.0 — shifted)
+        // A→D: (25-5)/20 = 1.0
+        let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
+        let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
+        let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
+
+        assert!((ab.raw_weight - 0.0).abs() < 1e-6, "A→B should be 0.0, got {}", ab.raw_weight);
+        assert!((ac.raw_weight - 0.5).abs() < 1e-6, "A→C should be 0.5 (shifted), got {}", ac.raw_weight);
+        assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
     }
 }

@@ -9,7 +9,7 @@ mod node;
 mod tests;
 
 pub use context::{Context, ContextId, ContextMetadata, Source};
-pub use edge::{Edge, EdgeId};
+pub use edge::{AdapterId, Edge, EdgeId};
 pub use engine::{PlexusEngine, PlexusError, PlexusResult};
 pub use node::{Node, NodeId, PropertyValue};
 

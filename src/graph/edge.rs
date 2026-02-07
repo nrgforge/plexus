@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Adapter ID type for contribution tracking (ADR-003)
+pub type AdapterId = String;
+
 /// Unique identifier for an edge
 ///
 /// Serializes as a plain string (UUID or semantic ID)
@@ -56,9 +59,10 @@ impl From<String> for EdgeId {
 
 /// A directed edge in the knowledge graph
 ///
-/// Carries a raw weight (accumulated Hebbian reinforcement) and a relationship type.
+/// Carries per-adapter contributions and a relationship type.
+/// Raw weight is computed from scale-normalized contributions.
 /// Normalized weights are computed at query time, not stored.
-/// See ADR-001: Semantic Adapter Architecture
+/// See ADR-001, ADR-003.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edge {
     /// Unique identifier
@@ -75,7 +79,13 @@ pub struct Edge {
     pub target_dimension: String,
     /// Type of relationship (e.g., "calls", "depends_on", "may_be_related")
     pub relationship: String,
-    /// Accumulated Hebbian reinforcement strength. Ground truth — never decays on a clock.
+    /// Per-adapter contribution values (ADR-003).
+    /// Each adapter's slot stores the value from its most recent emission.
+    #[serde(default)]
+    pub contributions: HashMap<AdapterId, f32>,
+    /// Combined strength across all contributions. Ground truth for query-time
+    /// normalization — never decays on a clock. Updated by the engine when
+    /// contributions change.
     pub raw_weight: f32,
     /// When the edge was created
     pub created_at: DateTime<Utc>,
@@ -98,6 +108,7 @@ impl Edge {
             source_dimension: dimension::DEFAULT.to_string(),
             target_dimension: dimension::DEFAULT.to_string(),
             relationship: relationship.into(),
+            contributions: HashMap::new(),
             raw_weight: 1.0,
             created_at: Utc::now(),
             properties: HashMap::new(),
@@ -119,6 +130,7 @@ impl Edge {
             source_dimension: dim_str.clone(),
             target_dimension: dim_str,
             relationship: relationship.into(),
+            contributions: HashMap::new(),
             raw_weight: 1.0,
             created_at: Utc::now(),
             properties: HashMap::new(),
@@ -140,10 +152,19 @@ impl Edge {
             source_dimension: source_dim.into(),
             target_dimension: target_dim.into(),
             relationship: relationship.into(),
+            contributions: HashMap::new(),
             raw_weight: 1.0,
             created_at: Utc::now(),
             properties: HashMap::new(),
         }
+    }
+
+    /// Set a contribution for an adapter (builder pattern).
+    ///
+    /// Replaces any existing contribution from this adapter.
+    pub fn with_contribution(mut self, adapter_id: impl Into<String>, value: f32) -> Self {
+        self.contributions.insert(adapter_id.into(), value);
+        self
     }
 
     /// Check if this edge crosses dimension boundaries
