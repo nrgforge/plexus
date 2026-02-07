@@ -32,29 +32,33 @@ The design space for multi-source weight management has been explored across kno
 
 **Hebbian learning** in neural networks provides the theoretical grounding. The classical rule — "neurons that fire together wire together" — is additive and unbounded. Every successful system built on Hebbian principles adds a normalization mechanism: Oja's rule (unit-norm convergence), BCM theory (sliding threshold), or soft bounds (decaying learning rate near maximum). Miconi's differentiable plasticity separates fixed weights (stable baseline) from plastic traces (Hebbian accumulation with decay), letting the system learn per-connection how much plasticity to allow.
 
-**CRDTs** offer the most elegant structural analogy. A G-Counter tracks increments per-replica, taking the maximum within each replica during merge and summing across replicas for the total. This provides exactly the semantics we need: same-source re-emission is idempotent (max), cross-source agreement is additive (sum). The merge function is a structural property of the data type — no replica can override it.
+**CRDTs** offer a useful structural analogy. A G-Counter tracks increments per-replica, taking the maximum within each replica during merge and summing across replicas for the total. The key insight is the per-replica decomposition: each source gets its own slot, and the aggregate is computed from all slots. The merge function is a structural property of the data type — no replica can override it.
 
-## The G-Counter Pattern Applied
+## Per-Adapter Contribution Tracking
 
-Map the CRDT insight onto the adapter architecture:
+The CRDT insight maps onto the adapter architecture:
 
 - Each edge stores per-adapter contributions: `HashMap<AdapterId, f32>`
-- When an adapter emits an edge that already exists, the engine takes `max(existing_contribution, new_contribution)` for that adapter's slot
-- The edge's `raw_weight` is the sum across all adapter contributions
+- When an adapter emits an edge that already exists, the engine replaces that adapter's contribution slot with the new value
+- The edge's raw weight is the sum across all scale-normalized adapter contributions
 
-The CodeCoverageAdapter emits weight proportional to test coverage for a relationship. Re-running the same suite emits the same weight; `max(3, 3) = 3`, no change. Adding a test emits a higher weight; `max(3, 4) = 4`, update. The MovementAdapter emits weight reflecting cumulative gesture importance. Each meaningful repetition produces a higher value in the adapter's internal accounting; the max catches the update. Both adapters get the semantics they need from the same engine-level rule, because each adapter owns the computation of *what its weight means*.
+The G-Counter pattern inspired this decomposition, but the merge rule diverges from a true G-Counter. A G-Counter uses `max` within each replica, which means values can only increase — a monotonicity constraint. This is actively harmful for Plexus: if tests are deleted, the CodeCoverageAdapter needs to emit a lower contribution and have the engine honor it. If evidence is retracted or reassessed, the adapter's slot should reflect the current state, not the historical peak. Latest-value-replace handles both increases and decreases while remaining naturally idempotent for unchanged values — emitting 3 twice still gives 3. The G-Counter's commutativity guarantee is unnecessary since adapters emit sequentially (each awaits `emit()`), so out-of-order writes cannot occur.
+
+The CodeCoverageAdapter emits a contribution proportional to test coverage for a relationship. Re-running the same suite emits the same value; replace(3, 3) = 3, no change. Adding a test emits a higher value; replace(3, 4) = 4, update. Deleting a test emits a lower value; replace(4, 3) = 3, the edge correctly weakens. The MovementAdapter emits a contribution reflecting cumulative gesture importance. Each meaningful repetition produces a higher value in the adapter's internal accounting; the replace catches the update. Both adapters get the semantics they need from the same engine-level rule, because each adapter owns the computation of *what its contribution value means*.
 
 In the cross-modal case — a DocumentAdapter has extracted the concept "sudden" from Laban literature and a MovementAdapter has observed sudden gestures in performance — each contributes independently to the same edge. The sum of their contributions reflects cross-modal agreement without either adapter knowing the other exists.
 
 ## The Scale Problem
 
-The G-Counter pattern has one critical failure mode: scale dominance. When adapters emit weights on fundamentally different scales, naive summation lets the highest-magnitude adapter drown out all others.
+The per-adapter contribution pattern has one critical failure mode: scale dominance. When adapters emit weights on fundamentally different scales, naive summation lets the highest-magnitude adapter drown out all others.
 
 A numerical spike confirmed this. With a CodeCoverageAdapter emitting on a 1–20 scale (test counts) and a MovementAdapter emitting on a 1–500 scale (gesture repetitions), an edge with 2 tests and 400 gestures (raw sum: 402) outranks an edge with 18 tests and 300 gestures (raw sum: 318) — even though the second edge is stronger in *both* domains relative to its peers. The movement scale makes code coverage invisible.
 
 The fix is per-adapter normalization before summing. The engine normalizes each adapter's contributions to a comparable range, then sums the normalized values. With normalization, the edge strong in both domains correctly ranks first.
 
-This normalization can happen on either side — the adapter could self-normalize before emitting, or the engine could normalize per-adapter internally. But having the engine do it is the better choice. Adapters should not need to know what scale other adapters use. A MovementAdapter emitting gesture counts on 0–500 and a MidiAdapter emitting note velocities on 0–127 should both just work. The engine already handles structural provenance context (adapter ID, timestamp, input summary); handling scale normalization is a natural extension of that responsibility.
+This normalization can happen on either side — the adapter could self-normalize before emitting, or the engine could normalize per-adapter internally. But having the engine do it is the better choice. Adapters should not need to know what scale other adapters use. A MovementAdapter emitting gesture counts on 0–500, a MidiAdapter emitting note velocities on 0–127, and a SentimentAdapter emitting polarity on -1.0–1.0 should all just work. The engine already handles structural provenance context (adapter ID, timestamp, input summary); handling scale normalization is a natural extension of that responsibility. The initial normalization function — divide-by-range (`(value - min) / (max - min)`) — maps any adapter's contributions to [0, 1] regardless of whether its native scale is signed or unsigned.
+
+This produces a three-layer weight model: contributions (stored per-adapter on each edge), raw weight (computed by the engine from scale-normalized contributions), and normalized weight (computed at query time by consumers per ADR-001 Decision 7). Scale normalization and query-time normalization serve different purposes — the former ensures fairness across sources, the latter provides an interpretive lens for relative importance per-node. Both are necessary.
 
 ## Source Diversity
 
@@ -68,8 +72,10 @@ The per-adapter contribution model resolves ADR-001's Open Question 1 (reinforce
 
 **Edge storage grows.** Each edge carries a HashMap instead of a single f32. This is the price of provenance. The payoff: full attribution (who contributed what), clean rollback (remove an adapter's contribution without recalculation), and natural WeightsChanged event firing (when any adapter's contribution changes).
 
-**raw_weight becomes a computed property.** It is no longer a stored f32 but the sum of normalized per-adapter contributions. Query-time normalization (OutgoingDivisive, Softmax) operates on this computed value, unchanged from the current design.
+**Contributions can decrease.** Unlike a G-Counter, latest-value-replace allows an adapter to lower its assessment. Deleted tests, retracted evidence, and reassessed relationships are first-class operations. The engine stores whatever the adapter says its current contribution is.
+
+**raw_weight becomes a computed property.** It is no longer a stored f32 but the sum of scale-normalized per-adapter contributions. Query-time normalization (OutgoingDivisive, Softmax) operates on this computed value, unchanged from the current design.
 
 **Adapters are fully independent.** No adapter needs to know about any other adapter's existence, scale, or update semantics. The engine mediates. This aligns with ADR-001 Decision 11 (cross-adapter dependency via graph state, not direct coupling).
 
-**The engine's merge rule is universal.** Max-within-adapter, normalize-per-adapter, sum-across-adapters. No per-adapter configuration, no strategy registration, no merge hints. The rule is structural — part of the data type, not a runtime decision.
+**The engine's merge rule is universal.** Replace-per-adapter, scale-normalize-per-adapter, sum-across-adapters. No per-adapter configuration, no strategy registration, no merge hints. The rule is structural — part of the data type, not a runtime decision.

@@ -95,7 +95,7 @@ Cancellation is checked between `emit()` calls, not during. Each emission is ato
 
 Edge weights weaken through normalization as the graph grows, not through clock-based half-lives. A quiet graph stays stable — silence is not evidence against previous observations.
 
-Raw reinforcement weights are stored. Normalized weights are computed at query time via a pluggable `NormalizationStrategy`. Different consumers can interpret the same graph differently.
+Per-adapter contributions are stored on each edge. Raw weight is computed from contributions via scale normalization (see ADR-003). Normalized weights are computed at query time via a pluggable `NormalizationStrategy`. Different consumers can interpret the same graph differently.
 
 Default strategy: per-node outgoing divisive normalization.
 
