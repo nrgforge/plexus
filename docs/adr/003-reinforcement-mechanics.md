@@ -1,6 +1,6 @@
 # ADR-003: Reinforcement Mechanics — Per-Adapter Contributions with Scale Normalization
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-02-05
 
