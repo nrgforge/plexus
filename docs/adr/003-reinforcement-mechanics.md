@@ -8,6 +8,8 @@
 
 **Research:** [SPIKE-REINFORCEMENT.md](../research/semantic/SPIKE-REINFORCEMENT.md), [Essay 06](../research/semantic/essays/06-reinforcement-mechanics.md)
 
+**Scenarios:** [003-reinforcement-mechanics.md](../scenarios/003-reinforcement-mechanics.md)
+
 ---
 
 ## Context
