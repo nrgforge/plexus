@@ -2,7 +2,7 @@
 
 Ubiquitous language for the adapter subsystem. All ADRs, behavior scenarios, and code must use these terms consistently. If this glossary says "emission," the code says `emission`, not "output batch" or "result set."
 
-Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPER.md, SPIKE-OUTCOME.md.
+Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPER.md, SPIKE-OUTCOME.md, Essay 07 (first adapter pair).
 
 ---
 
@@ -20,9 +20,9 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **Edge** | A directed connection between two nodes. Carries per-adapter contributions, a computed raw weight, and a relationship type. | link, connection, arc |
 | **Contribution** | A single adapter's latest assessment of an edge's strength. Stored per-adapter on each edge as `HashMap<AdapterId, f32>`. Each adapter's slot stores the value from its most recent emission. The adapter owns the semantics of what this value means in its domain. See ADR-003. | weight (ambiguous), score |
 | **Raw weight** | The combined strength of an edge across all adapter contributions. Computed by the engine: scale-normalize each adapter's contributions to comparable range, then sum. Ground truth for query-time normalization — but itself computed from stored contributions, not stored directly. Never decays on a clock. See ADR-003. | weight (ambiguous without qualifier), strength |
-| **Scale normalization** | Engine-side operation that brings each adapter's contributions to a comparable range before summing into raw weight. Prevents high-magnitude adapters from dominating low-magnitude ones. Distinct from query-time normalization. See ADR-003. | — |
+| **Scale normalization** | Engine-side operation that brings each adapter's contributions to a comparable range before summing into raw weight. Uses divide-by-range with dynamic epsilon: `(value - min + ε) / (max - min + ε)` where `ε = α × range`. Prevents high-magnitude adapters from dominating low-magnitude ones, and prevents the weakest real evidence from mapping to zero. Degenerate case (range = 0) normalizes to 1.0. Distinct from query-time normalization. See ADR-003, Essay 07. | — |
 | **Normalized weight** | Relative importance of an edge, computed at query time via a NormalizationStrategy from raw weight. Not stored. Different consumers can apply different strategies to the same raw weights. | — |
-| **Annotation** | Adapter-provided metadata about a single extraction: confidence, method, source location, detail. Lives on an AnnotatedNode or AnnotatedEdge. Describes *how* the adapter came to know something. | metadata (too generic), tag |
+| **Annotation** | Adapter-provided metadata about a single extraction: confidence, method, source location, detail. Lives on an AnnotatedNode or AnnotatedEdge. Describes *how* the adapter came to know something. Distinct from **tag** — see disambiguation §7. | metadata (too generic) |
 | **Annotation confidence** | A single adapter's certainty about a single extraction. Range 0.0–1.0. Lives in the annotation, not on the edge. Distinct from raw weight and normalized weight. | score, certainty |
 | **Provenance entry** | The full record of how a piece of knowledge entered the graph. Constructed by the engine (not by adapters) by combining the adapter's annotation with framework context: adapter ID, timestamp, input summary, context ID. | — |
 | **Dimension** | A facet of the knowledge graph. Adapters declare which dimensions they populate. Known dimensions: structure, semantic, relational, temporal, provenance. | layer, category |
@@ -36,10 +36,20 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **Context ID** | Identifies the processing context (e.g., a Manza editing session, a Trellis accumulation window, an EDDI performance). Groups related provenance entries. | session ID (close but not identical) |
 | **Cancellation token** | A cooperative signal that an adapter's in-flight work has been superseded. Checked between emissions, not during. Already-committed emissions remain valid. | — |
 | **Graph event** | A low-level notification fired per mutation type when an emission is committed. Five kinds: NodesAdded, EdgesAdded, NodesRemoved, EdgesRemoved, WeightsChanged. Higher-level events are modeled as nodes/edges from reflexive adapters, not as additional event types. | — |
-| **Input kind** | A string declared by each adapter identifying what type of input it consumes. The router uses this for matching. Examples: `file_content`, `text_fragment`, `gesture_encoding`, `graph_state`. | — |
+| **Input kind** | A string declared by each adapter identifying what type of input it consumes. The router uses this for matching. Examples: `fragment` (tagged writing), `graph_state` (reflexive adapter snapshot), `file_content`, `gesture_encoding`. | — |
 | **Adapter snapshot** | Optional incremental state from a previous run, passed back to the adapter on re-processing. Contents are adapter-specific (e.g., chunk hashes for documents, cluster centroids for movement). Design deferred. | checkpoint, state |
 | **Input router** | Framework component that directs incoming input to all adapters whose `input_kind()` matches. Fan-out: when multiple adapters match, all receive the input. | dispatcher |
 | **Schedule monitor** | Framework component that evaluates schedule conditions against graph state and fires reflexive adapters when conditions are met. Observes graph events (for MutationThreshold) or queries graph state directly (for Condition). | scheduler, cron |
+| **Fragment** | A piece of writing — a journal entry, SMS message, email, note — carrying text and tags. The input type for Trellis's FragmentAdapter. A fragment becomes a fragment node in the graph; its tags become concept nodes. | entry, note, snippet (as domain terms — these are all fragments) |
+| **Tag** | A label applied to a fragment, either manually by a human or by an LLM. Each tag produces a concept node in the semantic dimension. Distinct from **annotation** — a tag is input-side vocabulary (what the fragment is about); an annotation is extraction-side vocabulary (how the adapter came to know something). | label (acceptable informally), keyword |
+| **`tagged_with`** | The edge relationship type from a fragment node to a concept node. Represents "this fragment was labeled with this concept." Contribution value is 1.0 (binary: the tag was applied). | — |
+| **Deterministic concept ID** | The scheme by which concept nodes receive stable, convergent IDs derived from their label: `concept:{lowercase_tag}`. Ensures that two fragments tagged "travel" produce the same concept node, triggering upsert rather than creating duplicates. | — |
+| **Co-occurrence** | The pattern where two concepts appear together across multiple fragments — both tagged on the same fragment. The signal the CoOccurrenceAdapter detects. Measured by counting shared fragments between a concept pair. | correlation (too statistical), co-location |
+| **Co-occurrence score** | The normalized count of shared fragments between a concept pair, used as the contribution value for a `may_be_related` proposal. Normalized relative to the maximum co-occurrence count in the current graph: `count / max_count`. | — |
+| **Graph state snapshot** | A cloned Context passed as the opaque payload in AdapterInput for reflexive adapters. Provides a consistent, immutable view of the graph at trigger time. The framework (or test harness) creates the snapshot; the adapter downcasts and reads it. | — |
+| **Symmetric edge pair** | Two directed edges (A→B and B→A) with identical contributions, representing a semantically symmetric relationship in the directed graph model. Used for `may_be_related` proposals so that query-time normalization (outgoing divisive) sees the relationship from both endpoints. | bidirectional edge, undirected edge |
+| **Normalization floor** | The minimum scale-normalized value for any real contribution. Prevents the weakest evidence from mapping to exactly 0.0. Implemented via dynamic epsilon: `ε = α × (max - min)` where α is the floor coefficient (default 0.01). The floor is proportionally equal for all adapters regardless of their contribution range. | epsilon (acceptable in implementation comments) |
+| **Floor coefficient (α)** | The constant that determines the proportional normalization floor. With α = 0.01, the weakest contribution from any adapter maps to ~1% of that adapter's strongest contribution after scale normalization. | — |
 
 ## Actions
 
@@ -58,6 +68,9 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **cancel** | Framework | Adapter (via token) | Signal that in-flight work has been superseded. Adapter checks cooperatively between emissions. |
 | **annotate** | Adapter | Node or Edge | Attach extraction metadata (confidence, method, source location) to a node or edge in the emission. |
 | **construct provenance** | Engine | Provenance entry | Combine the adapter's annotation with framework context (adapter ID, timestamp, context ID, input summary) to create a full provenance record. |
+| **tag** | Human or LLM | Fragment | Apply a label to a fragment, upstream of the adapter. The adapter receives already-tagged input. Tagging is not an adapter action — it happens before the framework sees the fragment. |
+| **detect co-occurrence** | CoOccurrenceAdapter | Graph state snapshot | Scan concept nodes for pairs that share fragments (via `tagged_with` edges), count shared fragments, and compute co-occurrence scores. The adapter's core computation. |
+| **snapshot** | Framework (or test harness) | Context | Clone the Context to create an immutable graph state snapshot for a reflexive adapter's input payload. Ensures the adapter sees a consistent view unaffected by concurrent mutations. |
 
 ## Relationships
 
@@ -86,6 +99,15 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 - Independent adapters producing the same **concept** label creates cross-modal agreement
 - **Reflexive adapters** bridge vocabulary gaps via `may_be_related` proposals
 - **Evidence diversity** is derived at query time from **provenance entries** — no component computes or stores it proactively
+
+### Fragment adapter pair
+- **Fragment** carries text and **tags**; each tag produces a **concept** node
+- **Fragment node** lives in the **structure** dimension; **concept nodes** live in the **semantic** dimension
+- **`tagged_with`** edges connect **fragment nodes** to **concept nodes** (one per tag)
+- Multiple **fragments** sharing a **tag** converge on the same **concept** node via **deterministic concept ID** and **upsert**
+- **CoOccurrenceAdapter** reads a **graph state snapshot**, detects **co-occurrence**, and **proposes** `may_be_related` **symmetric edge pairs** between co-occurring **concepts**
+- **Co-occurrence score** is the **contribution** value on proposed `may_be_related` edges
+- One **FragmentAdapter** type, instantiated with different **adapter IDs** per evidence source (manual, LLM, OCR) — same `process()` logic, distinct **contributions** and **provenance**
 
 ## Invariants
 
@@ -123,6 +145,12 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 20. Input routing is fan-out: all adapters matching the input kind receive the input.
 21. Each matched adapter is spawned independently with its own sink and cancellation token.
 
+### Fragment adapter rules
+22. Concept IDs are deterministic: `concept:{lowercase_tag}`. Same tag always produces the same node ID, ensuring convergence via upsert.
+23. Tags produce binary contributions (1.0) on `tagged_with` edges. The contribution means "this tag was applied," not a graduated strength.
+24. Symmetric relationships (`may_be_related`) are emitted as two directed edges (A→B and B→A) with identical contributions, so query-time normalization sees the relationship from both endpoints.
+25. The normalization floor ensures the weakest real contribution from any adapter maps to ~α (default 0.01), not 0.0. Formula: `(value - min + α·range) / ((1 + α)·range)`. Degenerate case (range = 0) returns 1.0.
+
 ---
 
 ## Resolved Disambiguations
@@ -149,6 +177,9 @@ The research paper's three-system pipeline (llm-orc → clawmarks → Plexus) ma
 
 ### 6. Emission validation is per-item, not all-or-nothing
 The ADR's per-item behavior table (upsert, no-op, reject) applies to each item independently. An edge with a missing endpoint is rejected, but valid nodes and valid edges in the same emission still commit. `emit()` returns a result describing what was rejected. This matches the ADR's resilience-first philosophy ("the framework logs the error and continues") and the practical need for progressive emission — an adapter shouldn't lose 50 valid nodes because one edge has a bad endpoint.
+
+### 7. "Tag" ≠ "Annotation"
+Both words appear in the domain, with distinct meanings. A **tag** is an input-side label applied to a fragment (by a human or LLM) describing what the fragment is about — "travel", "avignon". An **annotation** is extraction-side metadata attached to a node or edge in the emission describing how the adapter came to know something — confidence, method, source location. Tags produce concept nodes. Annotations produce provenance entries. Never use "tag" to mean annotation or vice versa.
 
 ---
 
