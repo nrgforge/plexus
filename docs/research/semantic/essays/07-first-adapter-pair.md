@@ -83,7 +83,7 @@ The domain model identifies four open questions. This adapter pair exercises non
 
 **Routing fan-out semantics** matter when two adapters share an input kind. This pair uses different kinds.
 
-All four open questions resolve inside the engine, the sink, the router, or the monitor — never inside the adapter. The adapter interface acts as the isolation boundary. Code written now won't need rework when these questions are resolved later.
+All four open questions resolve inside the engine, the sink, the router, or the monitor — never inside the adapter. The adapter interface acts as the isolation boundary. Code written now is unlikely to need rework — the adapter interface isolates adapter code from engine-internal resolution of these questions.
 
 ## What needs building
 
