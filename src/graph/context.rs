@@ -259,12 +259,17 @@ impl Context {
         self.edges.len()
     }
 
-    /// Recompute raw_weight on all edges using scale normalization (ADR-003).
+    /// Floor coefficient for dynamic epsilon in scale normalization (ADR-005).
+    /// The weakest real contribution maps to α/(1+α) ≈ 0.0099, not 0.0.
+    const FLOOR_ALPHA: f32 = 0.01;
+
+    /// Recompute raw_weight on all edges using scale normalization (ADR-003, ADR-005).
     ///
     /// For each adapter, computes min and max contribution values across all edges.
-    /// Each contribution is scale-normalized via divide-by-range:
-    ///   `(value - min) / (max - min)`
-    /// mapping to [0, 1]. Degenerate case (min == max) normalizes to 1.0.
+    /// Each contribution is scale-normalized with dynamic epsilon (ADR-005):
+    ///   `(value - min + α·range) / ((1 + α)·range)`
+    /// where α = 0.01 (floor coefficient). This maps minimum to ~0.0099, not 0.0.
+    /// Degenerate case (min == max) normalizes to 1.0.
     /// raw_weight = sum of scale-normalized contributions across all adapters.
     pub fn recompute_raw_weights(&mut self) {
         use std::collections::HashMap;
@@ -287,6 +292,8 @@ impl Context {
             }
         }
 
+        let alpha = Self::FLOOR_ALPHA;
+
         // Recompute raw_weight for each edge
         for edge in &mut self.edges {
             if edge.contributions.is_empty() {
@@ -300,7 +307,8 @@ impl Context {
                     let normalized = if range == 0.0 {
                         1.0 // Degenerate case: single value → 1.0
                     } else {
-                        (value - min) / range
+                        // ADR-005: dynamic epsilon proportional to range
+                        (value - min + alpha * range) / ((1.0 + alpha) * range)
                     };
                     sum += normalized;
                 }

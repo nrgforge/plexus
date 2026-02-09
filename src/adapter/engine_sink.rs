@@ -1073,16 +1073,19 @@ mod tests {
         sink.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        // code-coverage min=2, max=18, range=16
-        // A→B: (2-2)/16 = 0.0
-        // A→C: (10-2)/16 = 0.5
-        // A→D: (18-2)/16 = 1.0
+        // code-coverage min=2, max=18, range=16, α=0.01
+        // ADR-005: (value - min + α·range) / ((1+α)·range)
+        // A→B: (0 + 0.16) / 16.16 ≈ 0.00990 (floor, not 0.0)
+        // A→C: (8 + 0.16) / 16.16 ≈ 0.50495
+        // A→D: (16 + 0.16) / 16.16 = 1.0
         let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
         let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
         let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
 
-        assert!((ab.raw_weight - 0.0).abs() < 1e-6, "A→B should be 0.0, got {}", ab.raw_weight);
-        assert!((ac.raw_weight - 0.5).abs() < 1e-6, "A→C should be 0.5, got {}", ac.raw_weight);
+        let floor = 0.01 / 1.01; // α/(1+α) ≈ 0.00990
+        assert!((ab.raw_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.raw_weight);
+        assert!(ab.raw_weight > 0.0, "A→B should be non-zero (ADR-005 normalization floor)");
+        assert!((ac.raw_weight - 0.505).abs() < 1e-2, "A→C should be ~0.505, got {}", ac.raw_weight);
         assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
     }
 
@@ -1136,17 +1139,19 @@ mod tests {
         let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
         let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
 
-        // code-coverage (min=2, max=18, range=16): B=0.0, C=1.0, D=0.75
-        // movement (min=100, max=400, range=300): B=1.0, C=0.0, D=0.833
-        // raw_weight A→D = 0.75 + 0.833 = 1.583 (highest)
-        // raw_weight A→B = 0.0 + 1.0 = 1.0
-        // raw_weight A→C = 1.0 + 0.0 = 1.0
+        // ADR-005: with α=0.01 floor, minimums are non-zero
+        // code-coverage (min=2, max=18, range=16): B≈0.0099, C=1.0, D≈0.7525
+        // movement (min=100, max=400, range=300): B=1.0, C≈0.0099, D≈0.835
+        // A→D still highest (both adapters contribute strongly)
         assert!(ad.raw_weight > ab.raw_weight,
             "A→D ({}) should rank higher than A→B ({})", ad.raw_weight, ab.raw_weight);
         assert!(ad.raw_weight > ac.raw_weight,
             "A→D ({}) should rank higher than A→C ({})", ad.raw_weight, ac.raw_weight);
 
-        let expected_ad = 0.75 + (250.0 / 300.0); // 0.75 + 0.8333
+        // A→D: cc=(12+0.16)/16.16 + mv=(250+3)/303
+        let expected_cc = (14.0 - 2.0 + 0.01 * 16.0) / (1.01 * 16.0);
+        let expected_mv = (350.0 - 100.0 + 0.01 * 300.0) / (1.01 * 300.0);
+        let expected_ad = expected_cc + expected_mv;
         assert!((ad.raw_weight - expected_ad).abs() < 1e-3,
             "A→D should be ~{:.3}, got {}", expected_ad, ad.raw_weight);
     }
@@ -1173,16 +1178,19 @@ mod tests {
         sink.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        // sentiment min=-0.8, max=1.0, range=1.8
-        // A→B: (-0.8 - (-0.8)) / 1.8 = 0.0
-        // A→C: (0.5 - (-0.8)) / 1.8 = 1.3/1.8 ≈ 0.722
-        // A→D: (1.0 - (-0.8)) / 1.8 = 1.8/1.8 = 1.0
+        // sentiment min=-0.8, max=1.0, range=1.8, α=0.01
+        // ADR-005: (value - min + α·range) / ((1+α)·range)
+        // A→B: (0 + 0.018) / 1.818 ≈ 0.00990 (floor)
+        // A→C: (1.3 + 0.018) / 1.818 ≈ 0.72497
+        // A→D: (1.8 + 0.018) / 1.818 = 1.0
         let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
         let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
         let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
 
-        assert!((ab.raw_weight - 0.0).abs() < 1e-6, "A→B should be 0.0, got {}", ab.raw_weight);
-        assert!((ac.raw_weight - 0.722).abs() < 1e-3, "A→C should be ~0.722, got {}", ac.raw_weight);
+        let floor = 0.01 / 1.01;
+        assert!((ab.raw_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.raw_weight);
+        assert!(ab.raw_weight > 0.0, "A→B should be non-zero (ADR-005)");
+        assert!((ac.raw_weight - 0.725).abs() < 1e-2, "A→C should be ~0.725, got {}", ac.raw_weight);
         assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
     }
 
@@ -1218,16 +1226,175 @@ mod tests {
         sink.emit(Emission::new().with_edge(e3)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        // code-coverage min=5, max=25, range=20
-        // A→B: (5-5)/20 = 0.0
-        // A→C: (15-5)/20 = 0.5 (was 1.0 — shifted)
-        // A→D: (25-5)/20 = 1.0
+        // code-coverage min=5, max=25, range=20, α=0.01
+        // ADR-005: (value - min + α·range) / ((1+α)·range)
+        // A→B: (0 + 0.2) / 20.2 ≈ 0.00990 (floor)
+        // A→C: (10 + 0.2) / 20.2 ≈ 0.50495 (was 1.0 — shifted, with floor)
+        // A→D: (20 + 0.2) / 20.2 = 1.0
         let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
         let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
         let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
 
-        assert!((ab.raw_weight - 0.0).abs() < 1e-6, "A→B should be 0.0, got {}", ab.raw_weight);
-        assert!((ac.raw_weight - 0.5).abs() < 1e-6, "A→C should be 0.5 (shifted), got {}", ac.raw_weight);
+        let floor = 0.01 / 1.01;
+        assert!((ab.raw_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.raw_weight);
+        assert!(ab.raw_weight > 0.0, "A→B should be non-zero (ADR-005)");
+        assert!((ac.raw_weight - 0.505).abs() < 1e-2, "A→C should be ~0.505 (shifted, with floor), got {}", ac.raw_weight);
         assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
+    }
+
+    // ================================================================
+    // Normalization Floor (ADR-005) — Scenario Group 4
+    // ================================================================
+
+    // === Scenario: Minimum contribution maps to floor, not zero ===
+    #[tokio::test]
+    async fn norm_floor_min_maps_to_floor() {
+        let (sink, ctx) = make_sink_with_adapter("co-occurrence");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+            ctx.add_node(node("C"));
+        }
+
+        // co-occurrence contributions: A→B = 0.5, A→C = 1.0
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 0.5;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 1.0;
+        sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // min=0.5, max=1.0, range=0.5, α=0.01
+        // ε = 0.01 × 0.5 = 0.005
+        // A→B: (0.5 - 0.5 + 0.005) / (0.5 + 0.005) = 0.005 / 0.505 ≈ 0.00990
+        // A→C: (1.0 - 0.5 + 0.005) / 0.505 = 0.505 / 0.505 = 1.0
+        let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
+        let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
+
+        let expected_floor = 0.01 / 1.01;
+        assert!((ab.raw_weight - expected_floor).abs() < 1e-4,
+            "A→B should be ~{:.4}, got {}", expected_floor, ab.raw_weight);
+        assert!(ab.raw_weight > 0.0, "A→B raw weight must be non-zero (ADR-005)");
+        assert!((ac.raw_weight - 1.0).abs() < 1e-6, "A→C should be 1.0, got {}", ac.raw_weight);
+    }
+
+    // === Scenario: Floor is proportionally equal across adapters with different ranges ===
+    #[tokio::test]
+    async fn norm_floor_proportionally_equal() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+
+        {
+            let mut c = ctx.lock().unwrap();
+            c.add_node(node("A"));
+            c.add_node(node("B"));
+            c.add_node(node("C"));
+            c.add_node(node("D"));
+        }
+
+        // co-occurrence: range 0.5 (min=0.5, max=1.0)
+        let fw_co = FrameworkContext {
+            adapter_id: "co-occurrence".to_string(),
+            context_id: "test".to_string(),
+            input_summary: None,
+        };
+        let sink_co = EngineSink::new(ctx.clone()).with_framework_context(fw_co);
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 0.5; // min
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 1.0; // max
+        sink_co.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
+
+        // code-coverage: range 99 (min=1, max=100)
+        let fw_cc = FrameworkContext {
+            adapter_id: "code-coverage".to_string(),
+            context_id: "test".to_string(),
+            input_summary: None,
+        };
+        let sink_cc = EngineSink::new(ctx.clone()).with_framework_context(fw_cc);
+        let mut e3 = edge("A", "C");
+        e3.raw_weight = 1.0; // min for code-coverage
+        let mut e4 = edge("A", "D");
+        e4.raw_weight = 100.0; // max for code-coverage
+        sink_cc.emit(Emission::new().with_edge(e3).with_edge(e4)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // A→B has co-occurrence min (0.5): floor = α/(1+α) ≈ 0.00990
+        let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
+        let co_floor = ab.raw_weight; // Only co-occurrence contributes to A→B
+
+        // A→D has code-coverage min (contribution is max=100, but A→C has code-coverage min=1)
+        // Actually we need a separate edge at code-coverage min
+        // A→C has: co-occurrence max (1.0) + code-coverage min (1.0)
+        // The code-coverage contribution on A→C is at code-coverage min
+        let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
+        // ac has two contributions: co-occurrence=1.0 (maps to 1.0) and code-coverage=1.0 (maps to floor)
+        let cc_floor = ac.raw_weight - 1.0; // subtract co-occurrence's normalized contribution (1.0)
+
+        // Both floors should be approximately equal: α/(1+α) ≈ 0.00990
+        let expected_floor = 0.01 / 1.01;
+        assert!((co_floor - expected_floor).abs() < 1e-4,
+            "co-occurrence floor should be ~{:.4}, got {}", expected_floor, co_floor);
+        assert!((cc_floor - expected_floor).abs() < 1e-4,
+            "code-coverage floor should be ~{:.4}, got {}", expected_floor, cc_floor);
+    }
+
+    // === Scenario: Degenerate case unchanged — single value normalizes to 1.0 ===
+    // (This is already covered by scale_norm_degenerate_case, but we verify
+    //  that ADR-005 doesn't change the behavior when range = 0)
+    #[tokio::test]
+    async fn norm_floor_degenerate_unchanged() {
+        let (sink, ctx) = make_sink_with_adapter("co-occurrence");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+        }
+
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 0.7;
+        sink.emit(Emission::new().with_edge(e1)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // Single value: min=0.7, max=0.7, range=0.0 → degenerate → 1.0
+        let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
+        assert!((ab.raw_weight - 1.0).abs() < 1e-6, "degenerate case should be 1.0, got {}", ab.raw_weight);
+    }
+
+    // === Scenario: Normalization floor preserves relative ordering ===
+    #[tokio::test]
+    async fn norm_floor_preserves_ordering() {
+        let (sink, ctx) = make_sink_with_adapter("co-occurrence");
+
+        {
+            let mut ctx = ctx.lock().unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+            ctx.add_node(node("C"));
+            ctx.add_node(node("D"));
+        }
+
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 1.0;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 3.0;
+        let mut e3 = edge("A", "D");
+        e3.raw_weight = 5.0;
+        sink.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
+        let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
+        let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
+
+        // Ordering preserved: A→B < A→C < A→D
+        assert!(ab.raw_weight < ac.raw_weight, "A→B ({}) < A→C ({})", ab.raw_weight, ac.raw_weight);
+        assert!(ac.raw_weight < ad.raw_weight, "A→C ({}) < A→D ({})", ac.raw_weight, ad.raw_weight);
+        // Maximum = 1.0
+        assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
+        // Minimum > 0.0
+        assert!(ab.raw_weight > 0.0, "A→B should be > 0.0 (ADR-005), got {}", ab.raw_weight);
     }
 }
