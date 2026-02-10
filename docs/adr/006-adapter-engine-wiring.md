@@ -39,7 +39,7 @@ The existing `Arc<Mutex<Context>>` constructor stays for tests. The `AdapterSink
 engine.with_context_mut(&ctx_id, |ctx| { /* mutate */ })?
 ```
 
-This keeps DashMap internals private and handles persistence automatically after the closure completes. EngineSink calls this instead of accessing the DashMap directly.
+This keeps DashMap internals private and handles persistence automatically after the closure completes. The closure takes `FnOnce(&mut Context) -> Result<R>`, compatible with EngineSink's synchronous mutation pattern. EngineSink calls this instead of accessing the DashMap directly.
 
 **Alternatives considered:**
 

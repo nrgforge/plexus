@@ -60,7 +60,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **Cross-dimensional edge** | An edge connecting nodes in different dimensions within the same context. The mechanism by which provenance (marks) connects to semantics (concepts). Created by `Edge::new_cross_dimensional()`. | bridge edge (acceptable informally) |
 | **`references`** | The edge relationship type from a mark to a concept node, created automatically by tag-to-concept bridging. A cross-dimensional edge (provenance → semantic). | — |
 | **Tag-to-concept bridging** | Automatic creation of `references` edges from a mark to concept nodes when the mark's tags match concept node IDs in the same context. Happens inline at mark creation time. The connection between what a user annotates and what the adapter layer discovered. | auto-bridging |
-| **Tag format normalization** | The convention that converts mark tags to concept node IDs: strip `#` prefix, prepend `concept:`. Tag `#travel` matches node `concept:travel`. Must be consistent across all mark creation and concept node creation paths. | — |
+| **Tag format normalization** | The convention that converts mark tags to concept node IDs: strip `#` prefix if present, lowercase, then prepend `concept:`. Tag `#Travel` and tag `travel` both match node `concept:travel`. Must be consistent across all mark creation and concept node creation paths. | — |
 | **Persist-per-emission** | The persistence strategy: one `save_context()` call at the end of each `emit()` invocation. Atomic per-emission. Batch optimization deferred. | — |
 
 ## Actions
@@ -183,7 +183,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 ### Runtime architecture rules
 26. Marks always live in a project context, in the provenance dimension. There is no global `__provenance__` context.
 27. `add_mark` requires a context parameter. No default, no fallback.
-28. Tag format normalization is an invariant: strip `#` prefix, prepend `concept:` to match concept node IDs. `#travel` → `concept:travel`.
+28. Tag format normalization is an invariant: strip `#` prefix if present, lowercase, then prepend `concept:` to match concept node IDs. `#Travel` → `concept:travel`, `travel` → `concept:travel`.
 29. Tag-to-concept bridging is automatic at mark creation time. If a mark has tags and matching concept nodes exist in the same context, `references` edges are created. Bridging is creation-time only — marks created before matching concepts exist remain unbridged. A future reflexive adapter can close this gap.
 30. `list_tags()` queries across all contexts, not a single context.
 31. Tags are the shared vocabulary between provenance and semantics. A tag string on a mark and the ID of a concept node must use the same normalized form.

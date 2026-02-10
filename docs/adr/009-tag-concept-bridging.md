@@ -37,7 +37,7 @@ This happens inline in `ProvenanceApi.add_mark()` — no separate pass, no defer
 
 ### 2. Tag format normalization: `#travel` → `concept:travel`
 
-The convention: strip the `#` prefix from mark tags, prepend `concept:` to construct the candidate concept node ID. This matches the deterministic concept ID scheme from ADR-004 (`concept:{lowercase_tag}`).
+The convention: strip the `#` prefix if present, lowercase, then prepend `concept:` to construct the candidate concept node ID. This matches the deterministic concept ID scheme from ADR-004 (`concept:{lowercase_tag}`).
 
 The normalization also lowercases the tag to match ADR-004's convention: `#Travel` → `concept:travel`.
 
@@ -76,4 +76,4 @@ Cross-dimensional edges from marks to concepts use the relationship type `refere
 **Neutral:**
 
 - The `references` edges are regular cross-dimensional edges. They participate in query-time normalization like any other edge. Their raw weight is 1.0 (binary: the tag was applied to the mark), matching `tagged_with` contribution semantics.
-- Bridging is inline in ProvenanceApi, not through the adapter pipeline. Bridge edges are created directly via `Context.add_edge()`, so they may not fire graph events or track contributions. If this becomes important (e.g., for provenance of the bridge itself), the reflexive adapter approach would be the right migration path.
+- `references` edges are created via `Context.add_edge()`, bypassing the adapter emission pipeline. They have raw_weight 1.0 set directly (not from contributions), and they do not fire graph events. This is acceptable because bridge edges are structural connections, not evidence-bearing edges — their existence is binary (the tag matched a concept), not graduated. If this needs to change (e.g., for provenance of the bridge itself), the reflexive adapter approach would be the right migration path.
