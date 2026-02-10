@@ -9,7 +9,7 @@ mod tests {
     use crate::adapter::fragment::{FragmentAdapter, FragmentInput};
     use crate::adapter::proposal_sink::ProposalSink;
     use crate::adapter::provenance::FrameworkContext;
-    use crate::adapter::sink::AdapterSink;
+    use crate::adapter::sink::{AdapterError, AdapterSink};
     use crate::adapter::traits::{Adapter, AdapterInput};
     use crate::adapter::types::Emission;
     use crate::graph::{ContentType, Context, ContextId, Edge, Node, NodeId, PlexusEngine};
@@ -455,5 +455,73 @@ mod tests {
             Some(&0.75),
             "contribution should survive persistence round-trip"
         );
+    }
+
+    // === Scenario: Emission to a non-existent context returns an error ===
+    #[tokio::test]
+    async fn emission_to_nonexistent_context_returns_error() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        // No context "does-not-exist" created
+        let sink = EngineSink::for_engine(engine.clone(), ContextId::from("does-not-exist"));
+
+        let result = sink.emit(Emission::new().with_node(node("concept:travel"))).await;
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), AdapterError::ContextNotFound(_)),
+            "should be ContextNotFound error"
+        );
+
+        // No data persisted
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        assert_eq!(engine2.context_count(), 0);
+    }
+
+    // === Scenario: Persist-per-emission writes once per emit call ===
+    #[tokio::test]
+    async fn persist_per_emission_multi_item() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("provence-research");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
+
+        let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone());
+
+        // Emit 3 nodes and 2 edges in one emission
+        let emission = Emission::new()
+            .with_node(node("A"))
+            .with_node(node("B"))
+            .with_node(node("C"))
+            .with_edge(edge("A", "B"))
+            .with_edge(edge("B", "C"));
+
+        let result = sink.emit(emission).await.unwrap();
+        assert_eq!(result.nodes_committed, 3);
+        assert_eq!(result.edges_committed, 2);
+
+        // All survive a restart (single persist, not per-item)
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+        assert_eq!(ctx2.node_count(), 3);
+        assert_eq!(ctx2.edge_count(), 2);
+    }
+
+    // === Scenario: Existing Mutex-based sink still works for tests ===
+    #[tokio::test]
+    async fn existing_mutex_sink_still_works() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = EngineSink::new(ctx.clone());
+
+        let result = sink.emit(Emission::new().with_node(node("A"))).await.unwrap();
+        assert_eq!(result.nodes_committed, 1);
+
+        let ctx = ctx.lock().unwrap();
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
+        // No persistence (no GraphStore involved) — this is tested implicitly
+        // by the fact that no store setup is needed
     }
 }
