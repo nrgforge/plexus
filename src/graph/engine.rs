@@ -158,6 +158,29 @@ impl PlexusEngine {
         self.store.is_some()
     }
 
+    /// Execute a closure with mutable access to a context (ADR-006).
+    ///
+    /// Keeps DashMap internals private. After the closure completes,
+    /// the context is automatically persisted to storage (if configured).
+    /// This is the integration point for EngineSink's emission protocol.
+    pub fn with_context_mut<R>(
+        &self,
+        id: &ContextId,
+        f: impl FnOnce(&mut Context) -> R,
+    ) -> PlexusResult<R> {
+        let mut context = self.contexts.get_mut(id)
+            .ok_or_else(|| PlexusError::ContextNotFound(id.clone()))?;
+
+        let result = f(&mut context);
+
+        // Persist-per-emission: save after mutation completes
+        if let Some(ref store) = self.store {
+            store.save_context(&context)?;
+        }
+
+        Ok(result)
+    }
+
     /// Persist a specific context to storage
     ///
     /// Useful when modifying a context's contents (nodes/edges)

@@ -12,7 +12,8 @@ mod tests {
     use crate::adapter::sink::AdapterSink;
     use crate::adapter::traits::{Adapter, AdapterInput};
     use crate::adapter::types::Emission;
-    use crate::graph::{ContentType, Context, Edge, Node, NodeId};
+    use crate::graph::{ContentType, Context, ContextId, Edge, Node, NodeId, PlexusEngine};
+    use crate::storage::{OpenStore, SqliteStore};
     use std::sync::{Arc, Mutex};
 
     fn node(id: &str) -> Node {
@@ -372,5 +373,36 @@ mod tests {
             assert!((first.2 - second.2).abs() < 1e-6,
                 "contribution should be unchanged: {} vs {}", first.2, second.2);
         }
+    }
+
+    // ================================================================
+    // ADR-006: Adapter-to-Engine Wiring Scenarios
+    // ================================================================
+
+    // === Scenario: Emission through engine-backed sink reaches storage ===
+    #[tokio::test]
+    async fn emission_through_engine_backed_sink_reaches_storage() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("provence-research");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
+
+        // Create engine-backed sink
+        let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone());
+
+        // Emit a single node
+        let result = sink.emit(Emission::new().with_node(node("concept:travel"))).await.unwrap();
+        assert_eq!(result.nodes_committed, 1);
+
+        // Node exists in engine's in-memory context
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+
+        // After restarting (new engine from same store, hydrate from storage)
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+        assert!(ctx2.get_node(&NodeId::from_string("concept:travel")).is_some());
     }
 }

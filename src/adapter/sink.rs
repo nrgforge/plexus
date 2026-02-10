@@ -106,6 +106,8 @@ pub enum AdapterError {
     InvalidInput,
     #[error("adapter cancelled")]
     Cancelled,
+    #[error("context not found: {0}")]
+    ContextNotFound(String),
     #[error("adapter error: {0}")]
     Internal(String),
 }

@@ -10,10 +10,21 @@ use super::events::GraphEvent;
 use super::provenance::{FrameworkContext, ProvenanceEntry};
 use super::sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 use super::types::Emission;
-use crate::graph::{Context, EdgeId, NodeId};
+use crate::graph::{Context, ContextId, EdgeId, NodeId, PlexusEngine};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::{Arc, Mutex};
+
+/// The backend that provides mutable context access.
+enum SinkBackend {
+    /// Test path: direct mutex around a context (no persistence)
+    Mutex(Arc<Mutex<Context>>),
+    /// Engine path: routes through PlexusEngine with persist-per-emission (ADR-006)
+    Engine {
+        engine: Arc<PlexusEngine>,
+        context_id: ContextId,
+    },
+}
 
 /// An AdapterSink backed by a mutable Context.
 ///
@@ -26,14 +37,30 @@ use std::sync::{Arc, Mutex};
 ///
 /// When a FrameworkContext is provided, constructs ProvenanceEntry records
 /// for each committed node by combining adapter annotations with framework context.
+///
+/// Two construction paths (ADR-006):
+/// - `new()`: test path using `Arc<Mutex<Context>>`, no persistence
+/// - `for_engine()`: engine path using PlexusEngine with persist-per-emission
 pub struct EngineSink {
-    context: Arc<Mutex<Context>>,
+    backend: SinkBackend,
     framework: Option<FrameworkContext>,
 }
 
 impl EngineSink {
+    /// Create a sink backed by a bare Mutex (test path, no persistence).
     pub fn new(context: Arc<Mutex<Context>>) -> Self {
-        Self { context, framework: None }
+        Self { backend: SinkBackend::Mutex(context), framework: None }
+    }
+
+    /// Create a sink backed by PlexusEngine (ADR-006).
+    ///
+    /// Emissions route through `engine.with_context_mut()`, which persists
+    /// the context to storage after each emission completes.
+    pub fn for_engine(engine: Arc<PlexusEngine>, context_id: ContextId) -> Self {
+        Self {
+            backend: SinkBackend::Engine { engine, context_id },
+            framework: None,
+        }
     }
 
     pub fn with_framework_context(mut self, framework: FrameworkContext) -> Self {
@@ -209,11 +236,26 @@ impl EngineSink {
 #[async_trait]
 impl AdapterSink for EngineSink {
     async fn emit(&self, emission: Emission) -> Result<EmitResult, AdapterError> {
-        let mut ctx = self.context.lock().map_err(|e| {
-            AdapterError::Internal(format!("lock poisoned: {}", e))
-        })?;
-
-        Self::emit_inner(&mut ctx, emission, &self.framework)
+        match &self.backend {
+            SinkBackend::Mutex(context) => {
+                let mut ctx = context.lock().map_err(|e| {
+                    AdapterError::Internal(format!("lock poisoned: {}", e))
+                })?;
+                Self::emit_inner(&mut ctx, emission, &self.framework)
+            }
+            SinkBackend::Engine { engine, context_id } => {
+                let framework = self.framework.clone();
+                engine.with_context_mut(context_id, |ctx| {
+                    Self::emit_inner(ctx, emission, &framework)
+                }).map_err(|e| {
+                    match e {
+                        crate::graph::PlexusError::ContextNotFound(id) =>
+                            AdapterError::ContextNotFound(id.to_string()),
+                        other => AdapterError::Internal(other.to_string()),
+                    }
+                })?
+            }
+        }
     }
 }
 
