@@ -26,6 +26,10 @@ Deferred. Needs research spike to evaluate:
 3. XDG Base Directory conventions (`~/.local/share/` vs `~/.config/` vs project-local)
 4. Whether the answer differs for the MCP server (tooling) vs the Plexus engine (library)
 
+## Update (2026-02-10)
+
+ADR-006 through ADR-009 resolve the multi-context question from the context section above: a single PlexusEngine holds multiple contexts (e.g., `trellis`, `desk`, `carrel-research`) in one DashMap, backed by one GraphStore/database. Multiple tools share one DB. The storage location spike should account for this model and for the richer data now being persisted (adapter-produced knowledge graphs with per-adapter contributions, not just provenance marks).
+
 ## Consequences
 
 Until resolved, `.plexus.db` lives in the project directory and is globally gitignored.

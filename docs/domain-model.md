@@ -184,7 +184,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 26. Marks always live in a project context, in the provenance dimension. There is no global `__provenance__` context.
 27. `add_mark` requires a context parameter. No default, no fallback.
 28. Tag format normalization is an invariant: strip `#` prefix, prepend `concept:` to match concept node IDs. `#travel` → `concept:travel`.
-29. Tag-to-concept bridging is automatic at mark creation time. If a mark has tags and matching concept nodes exist in the same context, `references` edges are created.
+29. Tag-to-concept bridging is automatic at mark creation time. If a mark has tags and matching concept nodes exist in the same context, `references` edges are created. Bridging is creation-time only — marks created before matching concepts exist remain unbridged. A future reflexive adapter can close this gap.
 30. `list_tags()` queries across all contexts, not a single context.
 31. Tags are the shared vocabulary between provenance and semantics. A tag string on a mark and the ID of a concept node must use the same normalized form.
 32. Persist-per-emission: each `emit()` call results in exactly one `save_context()` call. Emissions are the persistence boundary.
