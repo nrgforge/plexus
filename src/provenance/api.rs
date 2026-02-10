@@ -391,6 +391,28 @@ impl<'a> ProvenanceApi<'a> {
     }
 }
 
+/// List all unique tags across all contexts in the engine.
+///
+/// This aggregates provenance mark tags from every context,
+/// returning a sorted, deduplicated list.
+pub fn list_tags_all(engine: &PlexusEngine) -> PlexusResult<Vec<String>> {
+    let mut all_tags = HashSet::new();
+    for ctx_id in engine.list_contexts() {
+        if let Some(context) = engine.get_context(&ctx_id) {
+            for node in context.nodes() {
+                if node.node_type == "mark" && node.dimension == dimension::PROVENANCE {
+                    for tag in prop_tags(&node.properties) {
+                        all_tags.insert(tag);
+                    }
+                }
+            }
+        }
+    }
+    let mut tags: Vec<String> = all_tags.into_iter().collect();
+    tags.sort();
+    Ok(tags)
+}
+
 // === Free helper functions ===
 
 fn prop_str<'a>(props: &'a std::collections::HashMap<String, PropertyValue>, key: &str) -> Option<&'a str> {
@@ -451,5 +473,125 @@ fn node_to_mark_view(n: &Node, context: &Context) -> MarkView {
         tags: prop_tags(&n.properties),
         links,
         created_at: n.metadata.created_at.unwrap_or_else(Utc::now),
+    }
+}
+
+// ================================================================
+// ADR-008: Project-Scoped Provenance Tests
+// ================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_engine_with_context(name: &str) -> (PlexusEngine, ContextId) {
+        let engine = PlexusEngine::new();
+        let ctx_id = ContextId::from(name);
+        engine.upsert_context(Context::with_id(ctx_id.clone(), name)).unwrap();
+        (engine, ctx_id)
+    }
+
+    // === Scenario: Mark is created in a project context ===
+    #[test]
+    fn mark_created_in_project_context() {
+        let (engine, ctx_id) = setup_engine_with_context("provence-research");
+        let api = ProvenanceApi::new(&engine, ctx_id.clone());
+
+        let chain_id = api.create_chain("reading-notes", None).unwrap();
+        let mark_id = api.add_mark(
+            &chain_id, "notes.md", 42, "walking through Avignon",
+            None, None, None,
+        ).unwrap();
+
+        // Mark node exists in context with provenance dimension
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let mark_node = ctx.get_node(&NodeId::from(mark_id.as_str())).unwrap();
+        assert_eq!(mark_node.dimension, dimension::PROVENANCE);
+        assert_eq!(mark_node.node_type, "mark");
+
+        // "contains" edge from chain to mark
+        let contains = ctx.edges().find(|e| {
+            e.source == NodeId::from(chain_id.as_str())
+                && e.target == NodeId::from(mark_id.as_str())
+                && e.relationship == "contains"
+        });
+        assert!(contains.is_some(), "chain should have 'contains' edge to mark");
+    }
+
+    // === Scenario: Mark creation without a context fails ===
+    #[test]
+    fn mark_creation_without_context_fails() {
+        let engine = PlexusEngine::new();
+        // No contexts created — use a non-existent context
+        let api = ProvenanceApi::new(&engine, ContextId::from("nonexistent"));
+
+        let result = api.create_chain("reading-notes", None);
+        assert!(result.is_err(), "creating chain in non-existent context should fail");
+    }
+
+    // === Scenario: No __provenance__ context is auto-created ===
+    #[test]
+    fn no_provenance_context_auto_created() {
+        let engine = PlexusEngine::new();
+        assert_eq!(engine.context_count(), 0);
+
+        // list_contexts returns nothing — no __provenance__ auto-created
+        let contexts = engine.list_contexts();
+        assert!(contexts.is_empty());
+        assert!(!contexts.iter().any(|c| c.as_str() == "__provenance__"));
+    }
+
+    // === Scenario: list_tags returns tags from all contexts ===
+    #[test]
+    fn list_tags_returns_tags_from_all_contexts() {
+        let engine = PlexusEngine::new();
+        let ctx1 = ContextId::from("provence-research");
+        let ctx2 = ContextId::from("desk");
+        engine.upsert_context(Context::with_id(ctx1.clone(), "provence-research")).unwrap();
+        engine.upsert_context(Context::with_id(ctx2.clone(), "desk")).unwrap();
+
+        let api1 = ProvenanceApi::new(&engine, ctx1.clone());
+        let api2 = ProvenanceApi::new(&engine, ctx2.clone());
+
+        let chain1 = api1.create_chain("reading-notes", None).unwrap();
+        api1.add_mark(&chain1, "notes.md", 1, "travel note", None, None,
+            Some(vec!["#travel".into(), "#avignon".into()])).unwrap();
+
+        let chain2 = api2.create_chain("desk-notes", None).unwrap();
+        api2.add_mark(&chain2, "desk.md", 1, "desk note", None, None,
+            Some(vec!["#travel".into(), "#writing".into()])).unwrap();
+
+        // Cross-context list_tags should return deduplicated tags from all contexts
+        let all_tags = list_tags_all(&engine).unwrap();
+        assert!(all_tags.contains(&"#travel".to_string()));
+        assert!(all_tags.contains(&"#avignon".to_string()));
+        assert!(all_tags.contains(&"#writing".to_string()));
+        assert_eq!(all_tags.len(), 3);
+    }
+
+    // === Scenario: Chains are scoped to their context ===
+    #[test]
+    fn chains_scoped_to_context() {
+        let engine = PlexusEngine::new();
+        let ctx1 = ContextId::from("provence-research");
+        let ctx2 = ContextId::from("desk");
+        engine.upsert_context(Context::with_id(ctx1.clone(), "provence-research")).unwrap();
+        engine.upsert_context(Context::with_id(ctx2.clone(), "desk")).unwrap();
+
+        let api1 = ProvenanceApi::new(&engine, ctx1.clone());
+        let api2 = ProvenanceApi::new(&engine, ctx2.clone());
+
+        api1.create_chain("reading-notes", None).unwrap();
+        api2.create_chain("desk-notes", None).unwrap();
+
+        // Listing chains in provence-research returns only reading-notes
+        let chains1 = api1.list_chains(None).unwrap();
+        assert_eq!(chains1.len(), 1);
+        assert_eq!(chains1[0].name, "reading-notes");
+
+        // Listing chains in desk returns only desk-notes
+        let chains2 = api2.list_chains(None).unwrap();
+        assert_eq!(chains2.len(), 1);
+        assert_eq!(chains2[0].name, "desk-notes");
     }
 }
