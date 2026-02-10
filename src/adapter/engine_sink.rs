@@ -40,15 +40,16 @@ impl EngineSink {
         self.framework = Some(framework);
         self
     }
-}
 
-#[async_trait]
-impl AdapterSink for EngineSink {
-    async fn emit(&self, emission: Emission) -> Result<EmitResult, AdapterError> {
-        let mut ctx = self.context.lock().map_err(|e| {
-            AdapterError::Internal(format!("lock poisoned: {}", e))
-        })?;
-
+    /// Core emission logic operating on a mutable Context reference.
+    ///
+    /// Extracted so both the Mutex path and future engine path share
+    /// identical validation, contribution tracking, and event logic.
+    fn emit_inner(
+        ctx: &mut Context,
+        emission: Emission,
+        framework: &Option<FrameworkContext>,
+    ) -> Result<EmitResult, AdapterError> {
         if emission.is_empty() {
             return Ok(EmitResult::empty());
         }
@@ -56,9 +57,9 @@ impl AdapterSink for EngineSink {
         let mut result = EmitResult::empty();
         let timestamp = Utc::now();
 
-        let adapter_id = self.framework.as_ref().map(|fw| fw.adapter_id.clone())
+        let adapter_id = framework.as_ref().map(|fw| fw.adapter_id.clone())
             .unwrap_or_default();
-        let context_id = self.framework.as_ref().map(|fw| fw.context_id.clone())
+        let context_id = framework.as_ref().map(|fw| fw.context_id.clone())
             .unwrap_or_default();
 
         // Phase 1: Commit nodes (upsert semantics)
@@ -71,7 +72,7 @@ impl AdapterSink for EngineSink {
             result.nodes_committed += 1;
             committed_node_ids.push(node_id.clone());
 
-            if let Some(ref fw) = self.framework {
+            if let Some(ref fw) = framework {
                 let entry = ProvenanceEntry::from_context(fw, timestamp, annotation);
                 result.provenance.push((node_id, entry));
             }
@@ -202,6 +203,17 @@ impl AdapterSink for EngineSink {
         }
 
         Ok(result)
+    }
+}
+
+#[async_trait]
+impl AdapterSink for EngineSink {
+    async fn emit(&self, emission: Emission) -> Result<EmitResult, AdapterError> {
+        let mut ctx = self.context.lock().map_err(|e| {
+            AdapterError::Internal(format!("lock poisoned: {}", e))
+        })?;
+
+        Self::emit_inner(&mut ctx, emission, &self.framework)
     }
 }
 
