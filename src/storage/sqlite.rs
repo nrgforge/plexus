@@ -1185,4 +1185,78 @@ mod tests {
         assert_eq!(subgraph.nodes.len(), 3); // A, B, C
         assert_eq!(subgraph.edges.len(), 2); // A->B, B->C
     }
+
+    // ========================================================================
+    // ADR-007: Contribution Persistence Tests
+    // ========================================================================
+
+    #[test]
+    fn test_edge_contributions_persist() {
+        let store = create_test_store();
+        let ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+        store.save_context(&ctx).unwrap();
+
+        let node_a = create_test_node("node:a", "concept");
+        let node_b = create_test_node("node:b", "concept");
+        store.save_node(&ctx_id, &node_a).unwrap();
+        store.save_node(&ctx_id, &node_b).unwrap();
+
+        let mut edge = Edge::new(node_a.id.clone(), node_b.id.clone(), "tagged_with");
+        edge.contributions.insert("fragment-manual".to_string(), 1.0);
+        edge.contributions.insert("co-occurrence".to_string(), 0.75);
+        store.save_edge(&ctx_id, &edge).unwrap();
+
+        // Load and verify contributions round-trip
+        let edges = store.get_edges_from(&ctx_id, &node_a.id).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].contributions.get("fragment-manual"), Some(&1.0));
+        assert_eq!(edges[0].contributions.get("co-occurrence"), Some(&0.75));
+    }
+
+    #[test]
+    fn test_edges_without_contributions_load_empty_map() {
+        let store = create_test_store();
+        let ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+        store.save_context(&ctx).unwrap();
+
+        let node_a = create_test_node("node:a", "concept");
+        let node_b = create_test_node("node:b", "concept");
+        store.save_node(&ctx_id, &node_a).unwrap();
+        store.save_node(&ctx_id, &node_b).unwrap();
+
+        // Edge with no contributions set
+        let edge = Edge::new(node_a.id.clone(), node_b.id.clone(), "calls");
+        store.save_edge(&ctx_id, &edge).unwrap();
+
+        let edges = store.get_edges_from(&ctx_id, &node_a.id).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert!(edges[0].contributions.is_empty(), "edge without contributions should load with empty map");
+    }
+
+    #[test]
+    fn test_contributions_survive_context_save_load() {
+        let store = create_test_store();
+        let mut ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+
+        let node_a = create_test_node("node:a", "concept");
+        let node_b = create_test_node("node:b", "concept");
+        ctx.add_node(node_a.clone());
+        ctx.add_node(node_b.clone());
+
+        let mut edge = Edge::new(node_a.id.clone(), node_b.id.clone(), "tagged_with");
+        edge.contributions.insert("fragment-manual".to_string(), 1.0);
+        edge.contributions.insert("co-occurrence".to_string(), 0.75);
+        ctx.add_edge(edge);
+
+        store.save_context(&ctx).unwrap();
+
+        // Load back and verify
+        let loaded = store.load_context(&ctx_id).unwrap().unwrap();
+        assert_eq!(loaded.edges.len(), 1);
+        assert_eq!(loaded.edges[0].contributions.get("fragment-manual"), Some(&1.0));
+        assert_eq!(loaded.edges[0].contributions.get("co-occurrence"), Some(&0.75));
+    }
 }

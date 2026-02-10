@@ -510,6 +510,54 @@ mod tests {
         assert_eq!(ctx2.edge_count(), 2);
     }
 
+    // === Scenario: Scale normalization works after reload (ADR-007) ===
+    #[tokio::test]
+    async fn scale_normalization_works_after_reload() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("provence-research");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
+
+        // Pre-populate nodes
+        {
+            let mut ctx = engine.get_context(&ctx_id).unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+            ctx.add_node(node("C"));
+            engine.upsert_context(ctx).unwrap();
+        }
+
+        // Emit two edges from adapter-1 with different contributions
+        let sink = make_engine_sink(&engine, &ctx_id, "adapter-1");
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 5.0;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 10.0;
+        sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
+
+        // Capture in-memory raw weights
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let ab_weight = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap().raw_weight;
+        let ac_weight = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap().raw_weight;
+
+        // Load from storage (simulating restart)
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let mut ctx2 = engine2.get_context(&ctx_id).unwrap();
+
+        // Recompute raw weights from persisted contributions
+        ctx2.recompute_raw_weights();
+
+        let ab_reloaded = ctx2.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap().raw_weight;
+        let ac_reloaded = ctx2.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap().raw_weight;
+
+        assert!((ab_weight - ab_reloaded).abs() < 1e-6,
+            "A→B raw weight should match after reload: {} vs {}", ab_weight, ab_reloaded);
+        assert!((ac_weight - ac_reloaded).abs() < 1e-6,
+            "A→C raw weight should match after reload: {} vs {}", ac_weight, ac_reloaded);
+    }
+
     // === Scenario: Existing Mutex-based sink still works for tests ===
     #[tokio::test]
     async fn existing_mutex_sink_still_works() {
