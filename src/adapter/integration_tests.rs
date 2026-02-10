@@ -558,6 +558,103 @@ mod tests {
             "A→C raw weight should match after reload: {} vs {}", ac_weight, ac_reloaded);
     }
 
+    // ================================================================
+    // End-to-End: Provence Travel Research
+    // ================================================================
+
+    // === Scenario: Full workflow from ingestion through marking to query ===
+    #[tokio::test]
+    async fn end_to_end_provence_travel_research() {
+        use crate::provenance::api::ProvenanceApi;
+        use crate::graph::dimension;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("provence-research");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
+
+        // Step 1: FragmentAdapter processes a fragment
+        let adapter = FragmentAdapter::new("manual-fragment");
+        let sink = make_engine_sink(&engine, &ctx_id, "manual-fragment");
+
+        let input = AdapterInput::new(
+            "fragment",
+            FragmentInput::new(
+                "Morning walk in Avignon",
+                vec!["travel".to_string(), "avignon".to_string()],
+            ),
+            "provence-research",
+        );
+        adapter.process(&input, &sink).await.unwrap();
+
+        // Verify: fragment node + concept nodes + tagged_with edges
+        {
+            let ctx = engine.get_context(&ctx_id).unwrap();
+            let fragments: Vec<_> = ctx.nodes().filter(|n| n.dimension == dimension::STRUCTURE).collect();
+            assert_eq!(fragments.len(), 1, "should have 1 fragment node");
+
+            assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+            assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some());
+
+            let tagged_with: Vec<_> = ctx.edges().filter(|e| e.relationship == "tagged_with").collect();
+            assert_eq!(tagged_with.len(), 2, "should have 2 tagged_with edges");
+        }
+
+        // Step 2: Create provenance chain and add mark with tags
+        let api = ProvenanceApi::new(&engine, ctx_id.clone());
+        let chain_id = api.create_chain("reading-notes", None).unwrap();
+        let mark_id = api.add_mark(
+            &chain_id, "notes.md", 10, "walking through Avignon",
+            None, None, Some(vec!["#travel".into(), "#avignon".into()]),
+        ).unwrap();
+
+        // Verify: references edges from mark to concepts
+        {
+            let ctx = engine.get_context(&ctx_id).unwrap();
+            let mark_node_id = NodeId::from(mark_id.as_str());
+            let refs: Vec<_> = ctx.edges().filter(|e| {
+                e.source == mark_node_id && e.relationship == "references"
+            }).collect();
+            assert_eq!(refs.len(), 2, "mark should have 2 references edges");
+
+            let targets: std::collections::HashSet<String> = refs.iter()
+                .map(|e| e.target.to_string()).collect();
+            assert!(targets.contains("concept:travel"));
+            assert!(targets.contains("concept:avignon"));
+
+            // Traverse from concept:avignon via incoming references to reach the mark
+            let avignon_id = NodeId::from_string("concept:avignon");
+            let incoming_refs: Vec<_> = ctx.edges().filter(|e| {
+                e.target == avignon_id && e.relationship == "references"
+            }).collect();
+            assert_eq!(incoming_refs.len(), 1);
+            assert_eq!(incoming_refs[0].source, mark_node_id);
+        }
+
+        // Step 3: Verify persistence after restart
+        drop(engine);
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+
+        // All nodes survive
+        assert!(ctx2.get_node(&NodeId::from_string("concept:travel")).is_some());
+        assert!(ctx2.get_node(&NodeId::from_string("concept:avignon")).is_some());
+        assert!(ctx2.get_node(&NodeId::from(mark_id.as_str())).is_some());
+
+        // All edges survive
+        let tagged_with: Vec<_> = ctx2.edges().filter(|e| e.relationship == "tagged_with").collect();
+        assert_eq!(tagged_with.len(), 2);
+        let references: Vec<_> = ctx2.edges().filter(|e| e.relationship == "references").collect();
+        assert_eq!(references.len(), 2);
+
+        // Contributions survive
+        for edge in &tagged_with {
+            assert_eq!(edge.contributions.get("manual-fragment"), Some(&1.0));
+        }
+    }
+
     // === Scenario: Existing Mutex-based sink still works for tests ===
     #[tokio::test]
     async fn existing_mutex_sink_still_works() {
