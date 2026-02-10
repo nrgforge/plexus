@@ -161,3 +161,91 @@ Total estimated changes:
 - `PlexusEngine`: `with_context_mut()` accessor (~15 lines)
 - `SqliteStore`: contributions migration + serialize/deserialize (~40 lines)
 - New integration tests for persistence round-trip (~50 lines)
+
+## Question 3: Should marks and adapter-produced concept nodes be connected, and how?
+
+**Method:** Code trace (ProvenanceApi, dimension system, Context isolation) + design analysis with Carrel scenario.
+
+**Findings:**
+
+### Current isolation
+
+Marks (provenance dimension) live in the `__provenance__` context — a global singleton auto-created by the MCP server. Adapter-produced nodes (fragment, concept — semantic/default dimensions) would live in user-created project contexts. These are separate Context objects in PlexusEngine's DashMap. No cross-context edge, query, or reference mechanism exists.
+
+The `Source::ContextRef` enum variant (context.rs:67) hints that cross-context awareness was anticipated, but it's never used — it's metadata-only, like the other Source variants.
+
+### The dimension system already solves this — within a context
+
+The dimension model (node.rs:13-31) defines six dimensions: structure, semantic, relational, temporal, provenance, default. Cross-dimensional edges exist — `Edge::new_cross_dimensional()` connects nodes in different dimensions within the same context. The whole architecture was designed for multiple layers of meaning to coexist in one graph.
+
+A mark (provenance dimension) connecting to a concept node (semantic dimension) via a cross-dimensional edge is exactly what the dimension system was built for. But it only works if both nodes are in the same context.
+
+### The `__provenance__` context is a historical artifact
+
+The `__provenance__` context exists because clawmarks was a separate system bolted onto Plexus. ProvenanceApi (provenance/api.rs) is hardcoded to a single context ID — every MCP mark/chain/link operation goes through `prov_api()` which calls `provenance_context(&self.engine)` to find or create the `__provenance__` context.
+
+This made sense when marks were a standalone provenance tool. It doesn't make sense when marks should connect to project-specific knowledge graphs.
+
+### Carrel's design confirms: tags are the shared vocabulary
+
+From Carrel's domain model and research log:
+- Tags on marks (`#travel`, `#distributed-ai`) are the same semantic vocabulary as concept nodes (`concept:travel`, `concept:distributed-ai`)
+- Carrel's research agent calls `list_tags()` to discover themes, then queries Semantic Scholar with them
+- Links between marks encode specific cross-references ("this paper is relevant to this passage")
+- Tags form the bridge between writing and research — "a tag string on a draft passage and a tag string on a discovered paper are what makes cross-pollination work"
+
+A mark tagged `#travel` and a concept node `concept:travel` produced by FragmentAdapter express the same semantic idea. Currently nothing connects them.
+
+### Concrete scenario: Provence travel research
+
+1. User creates context "provence-research" via MCP
+2. User ingests fragments about travel reading → FragmentAdapter creates fragment nodes, concept nodes (`concept:travel`, `concept:avignon`, `concept:walking`), tagged_with edges
+3. CoOccurrenceAdapter discovers travel↔avignon co-occurrence → may_be_related edges
+4. User reads a book passage, marks it: "Author's description of walking through Avignon", tags: `#travel`, `#avignon`
+5. **Current behavior:** Mark goes into `__provenance__` context. concept:travel and concept:avignon are in provence-research context. No connection. Query "what evidence supports concept:avignon?" can't reach the mark.
+6. **Desired behavior:** Mark connects to concept:avignon and concept:travel via cross-dimensional edges. Query traverses from concept to mark. The knowledge graph and its provenance are one graph.
+
+### Design: marks should be project-scoped
+
+**Decision:** Marks belong in the same context as the graph they annotate, using the provenance dimension. The `__provenance__` context is eliminated entirely — marks always require a project context.
+
+The system is new enough that backward compatibility is not a constraint. We should build the system we want, not compromise for historical artifacts.
+
+This means:
+- `add_mark` requires a context parameter (no default, no fallback)
+- Marks go into the specified project context in the provenance dimension
+- Cross-dimensional edges (provenance → semantic) connect marks to concept nodes
+- `list_tags()` queries across all contexts
+- The `__provenance__` context, `provenance_context()` helper, and auto-create logic are removed
+
+### Design: automatic tag-to-concept bridging
+
+When `add_mark` is called with tags in a project context, the system checks for concept nodes with matching IDs (e.g., tag `#travel` → look for node `concept:travel`). If found, create a cross-dimensional `references` edge from mark to concept. This is the bridge the original clawmarks vision aspired to — automated, not manual.
+
+This could be:
+1. **Inline in ProvenanceApi** — simplest, happens at mark creation time
+2. **Reflexive adapter** — more principled, but requires schedule monitor infrastructure that doesn't exist
+3. **Explicit user action** — least useful, most manual
+
+Option 1 is the pragmatic choice. The reflexive adapter path remains available later.
+
+### What changes
+
+- **ProvenanceApi**: accept optional context_id parameter, default to `__provenance__`. On `add_mark`, look for matching concept nodes and create cross-dimensional edges.
+- **MCP tools**: `add_mark` gains optional `context` parameter. `list_tags()` queries all contexts.
+- **`context_list`**: stop hiding `__provenance__` (or make it opt-in to show), since marks now span contexts.
+
+### What doesn't change
+
+- **Chain/mark/link model** — unchanged. Marks are still nodes, chains group marks, links connect marks.
+- **Dimension system** — unchanged. Cross-dimensional edges already work.
+- **Adapter layer** — unchanged. FragmentAdapter and CoOccurrenceAdapter don't know about marks.
+- **Storage** — unchanged. Same SQLite schema handles marks in any context.
+
+### Open question: tag format normalization
+
+Mark tags use string format (`#travel` or `travel`). Concept node IDs use `concept:travel`. The bridging logic needs a normalization rule: strip `#` prefix, prepend `concept:` to match node IDs. This is a convention, not infrastructure — but it needs to be documented as an invariant.
+
+**Implications:**
+
+The core value proposition of Plexus — connecting knowledge to its provenance — requires marks and concept nodes to share a context. The dimension system was designed for exactly this; the `__provenance__` context was a historical artifact that prevented it. The fix is scoping marks to project contexts (with `__provenance__` as fallback) and adding automatic tag-to-concept bridging at mark creation time. No new infrastructure needed — just wiring ProvenanceApi to be context-aware.
