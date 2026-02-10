@@ -379,6 +379,19 @@ mod tests {
     // ADR-006: Adapter-to-Engine Wiring Scenarios
     // ================================================================
 
+    fn make_engine_sink(
+        engine: &Arc<PlexusEngine>,
+        ctx_id: &ContextId,
+        adapter_id: &str,
+    ) -> EngineSink {
+        EngineSink::for_engine(engine.clone(), ctx_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: adapter_id.to_string(),
+                context_id: ctx_id.as_str().to_string(),
+                input_summary: None,
+            })
+    }
+
     // === Scenario: Emission through engine-backed sink reaches storage ===
     #[tokio::test]
     async fn emission_through_engine_backed_sink_reaches_storage() {
@@ -404,5 +417,43 @@ mod tests {
         engine2.load_all().unwrap();
         let ctx2 = engine2.get_context(&ctx_id).unwrap();
         assert!(ctx2.get_node(&NodeId::from_string("concept:travel")).is_some());
+    }
+
+    // === Scenario: Emission through engine-backed sink persists edges with contributions ===
+    #[tokio::test]
+    async fn emission_persists_edges_with_contributions() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("provence-research");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
+
+        // Pre-populate two nodes
+        {
+            let mut ctx = engine.get_context(&ctx_id).unwrap();
+            ctx.add_node(node("concept:travel"));
+            ctx.add_node(node("concept:avignon"));
+            engine.upsert_context(ctx).unwrap();
+        }
+
+        // Create engine-backed sink with adapter identity
+        let sink = make_engine_sink(&engine, &ctx_id, "fragment-manual");
+
+        // Emit an edge with contribution value 0.75
+        let mut e = edge("concept:travel", "concept:avignon");
+        e.raw_weight = 0.75;
+        let result = sink.emit(Emission::new().with_edge(e)).await.unwrap();
+        assert_eq!(result.edges_committed, 1);
+
+        // After restarting, edge exists with correct contribution
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+        assert_eq!(ctx2.edges.len(), 1);
+        assert_eq!(
+            ctx2.edges[0].contributions.get("fragment-manual"),
+            Some(&0.75),
+            "contribution should survive persistence round-trip"
+        );
     }
 }

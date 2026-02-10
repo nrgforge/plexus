@@ -81,8 +81,9 @@ impl SqliteStore {
             "#,
         )?;
 
-        // Phase 2: Run migrations to add dimension columns (Phase 5.0)
+        // Phase 2: Run migrations
         Self::migrate_add_dimensions(conn)?;
+        Self::migrate_add_contributions(conn)?;
 
         // Phase 3: Create dimension indexes (now that columns exist)
         Self::create_dimension_indexes(conn)?;
@@ -161,6 +162,29 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Migration: Add contributions_json column to edges table (ADR-007)
+    ///
+    /// Stores per-adapter contribution values as JSON. Existing edges get
+    /// an empty contributions map '{}', preserving their raw_weight unchanged.
+    fn migrate_add_contributions(conn: &Connection) -> StorageResult<()> {
+        let has_contributions: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('edges') WHERE name = 'contributions_json'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_contributions {
+            conn.execute(
+                "ALTER TABLE edges ADD COLUMN contributions_json TEXT NOT NULL DEFAULT '{}'",
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Serialize a node to database columns (includes dimension field)
     fn node_to_row(node: &Node) -> StorageResult<(String, String, String, String, String, String)> {
         Ok((
@@ -192,7 +216,7 @@ impl SqliteStore {
         })
     }
 
-    /// Serialize an edge to database columns (includes dimension fields)
+    /// Serialize an edge to database columns (includes dimension and contribution fields)
     #[allow(clippy::type_complexity)]
     fn edge_to_row(
         edge: &Edge,
@@ -206,6 +230,7 @@ impl SqliteStore {
         f32,
         String,
         String,
+        String,
     )> {
         Ok((
             edge.id.as_str().to_string(),
@@ -217,10 +242,11 @@ impl SqliteStore {
             edge.raw_weight,
             edge.created_at.to_rfc3339(),
             serde_json::to_string(&edge.properties)?,
+            serde_json::to_string(&edge.contributions)?,
         ))
     }
 
-    /// Deserialize an edge from database columns (includes dimension fields)
+    /// Deserialize an edge from database columns (includes dimension and contribution fields)
     #[allow(clippy::too_many_arguments)]
     fn row_to_edge(
         id: String,
@@ -232,6 +258,7 @@ impl SqliteStore {
         raw_weight: f64,
         created_at: String,
         properties_json: String,
+        contributions_json: String,
     ) -> StorageResult<Edge> {
         use chrono::DateTime;
         use crate::graph::EdgeId;
@@ -243,7 +270,7 @@ impl SqliteStore {
             source_dimension,
             target_dimension,
             relationship,
-            contributions: std::collections::HashMap::new(),
+            contributions: serde_json::from_str(&contributions_json)?,
             raw_weight: raw_weight as f32,
             created_at: DateTime::parse_from_rfc3339(&created_at)
                 .map_err(|e| StorageError::DateParse(e.to_string()))?
@@ -343,14 +370,14 @@ impl GraphStore for SqliteStore {
 
         // Save all edges
         for edge in &context.edges {
-            let (id, source, target, source_dim, target_dim, rel, raw_weight, created, props) =
+            let (id, source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions) =
                 Self::edge_to_row(edge)?;
 
             conn.execute(
                 r#"
                 INSERT INTO edges (id, context_id, source_id, target_id, source_dimension, target_dimension,
-                                   relationship, raw_weight, created_at, properties_json)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                                   relationship, raw_weight, created_at, properties_json, contributions_json)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 ON CONFLICT(context_id, id) DO UPDATE SET
                     source_id = excluded.source_id,
                     target_id = excluded.target_id,
@@ -358,9 +385,10 @@ impl GraphStore for SqliteStore {
                     target_dimension = excluded.target_dimension,
                     relationship = excluded.relationship,
                     raw_weight = excluded.raw_weight,
-                    properties_json = excluded.properties_json
+                    properties_json = excluded.properties_json,
+                    contributions_json = excluded.contributions_json
                 "#,
-                params![id, context.id.as_str(), source, target, source_dim, target_dim, rel, raw_weight, created, props],
+                params![id, context.id.as_str(), source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions],
             )?;
         }
 
@@ -409,7 +437,7 @@ impl GraphStore for SqliteStore {
         // Load edges
         let mut stmt = conn.prepare(
             "SELECT id, source_id, target_id, source_dimension, target_dimension, relationship,
-                    raw_weight, created_at, properties_json
+                    raw_weight, created_at, properties_json, contributions_json
              FROM edges WHERE context_id = ?1",
         )?;
         let edges_iter = stmt.query_map(params![id.as_str()], |row| {
@@ -423,13 +451,14 @@ impl GraphStore for SqliteStore {
                 row.get::<_, f64>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
             ))
         })?;
 
         let mut edges = Vec::new();
         for row in edges_iter {
-            let (id, source, target, source_dim, target_dim, rel, rw, created, props) = row?;
-            let edge = Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props)?;
+            let (id, source, target, source_dim, target_dim, rel, rw, created, props, contributions) = row?;
+            let edge = Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props, contributions)?;
             edges.push(edge);
         }
 
@@ -584,14 +613,14 @@ impl GraphStore for SqliteStore {
 
     fn save_edge(&self, context_id: &ContextId, edge: &Edge) -> StorageResult<()> {
         let conn = self.conn.lock().unwrap();
-        let (id, source, target, source_dim, target_dim, rel, raw_weight, created, props) =
+        let (id, source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions) =
             Self::edge_to_row(edge)?;
 
         conn.execute(
             r#"
             INSERT INTO edges (id, context_id, source_id, target_id, source_dimension, target_dimension,
-                               relationship, raw_weight, created_at, properties_json)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                               relationship, raw_weight, created_at, properties_json, contributions_json)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             ON CONFLICT(context_id, id) DO UPDATE SET
                 source_id = excluded.source_id,
                 target_id = excluded.target_id,
@@ -599,9 +628,10 @@ impl GraphStore for SqliteStore {
                 target_dimension = excluded.target_dimension,
                 relationship = excluded.relationship,
                 raw_weight = excluded.raw_weight,
-                properties_json = excluded.properties_json
+                properties_json = excluded.properties_json,
+                contributions_json = excluded.contributions_json
             "#,
-            params![id, context_id.as_str(), source, target, source_dim, target_dim, rel, raw_weight, created, props],
+            params![id, context_id.as_str(), source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions],
         )?;
 
         Ok(())
@@ -612,7 +642,7 @@ impl GraphStore for SqliteStore {
 
         let mut stmt = conn.prepare(
             "SELECT id, source_id, target_id, source_dimension, target_dimension, relationship,
-                    raw_weight, created_at, properties_json
+                    raw_weight, created_at, properties_json, contributions_json
              FROM edges WHERE context_id = ?1 AND source_id = ?2",
         )?;
 
@@ -627,13 +657,14 @@ impl GraphStore for SqliteStore {
                 row.get::<_, f64>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
             ))
         })?;
 
         let mut edges = Vec::new();
         for row in edges_iter {
-            let (id, source, target, source_dim, target_dim, rel, rw, created, props) = row?;
-            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props)?);
+            let (id, source, target, source_dim, target_dim, rel, rw, created, props, contributions) = row?;
+            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props, contributions)?);
         }
 
         Ok(edges)
@@ -644,7 +675,7 @@ impl GraphStore for SqliteStore {
 
         let mut stmt = conn.prepare(
             "SELECT id, source_id, target_id, source_dimension, target_dimension, relationship,
-                    raw_weight, created_at, properties_json
+                    raw_weight, created_at, properties_json, contributions_json
              FROM edges WHERE context_id = ?1 AND target_id = ?2",
         )?;
 
@@ -659,13 +690,14 @@ impl GraphStore for SqliteStore {
                 row.get::<_, f64>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
             ))
         })?;
 
         let mut edges = Vec::new();
         for row in edges_iter {
-            let (id, source, target, source_dim, target_dim, rel, rw, created, props) = row?;
-            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props)?);
+            let (id, source, target, source_dim, target_dim, rel, rw, created, props, contributions) = row?;
+            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props, contributions)?);
         }
 
         Ok(edges)
@@ -781,7 +813,7 @@ impl GraphStore for SqliteStore {
 
         let sql = format!(
             "SELECT id, source_id, target_id, source_dimension, target_dimension, relationship,
-                    raw_weight, created_at, properties_json
+                    raw_weight, created_at, properties_json, contributions_json
              FROM edges
              WHERE context_id = ?1
                AND source_id IN ({})
@@ -810,13 +842,14 @@ impl GraphStore for SqliteStore {
                 row.get::<_, f64>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
             ))
         })?;
 
         let mut edges = Vec::new();
         for row in edges_iter {
-            let (id, source, target, source_dim, target_dim, rel, rw, created, props) = row?;
-            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props)?);
+            let (id, source, target, source_dim, target_dim, rel, rw, created, props, contributions) = row?;
+            edges.push(Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props, contributions)?);
         }
 
         Ok(Subgraph { nodes, edges })
