@@ -231,9 +231,9 @@ Option 1 is the pragmatic choice. The reflexive adapter path remains available l
 
 ### What changes
 
-- **ProvenanceApi**: accept optional context_id parameter, default to `__provenance__`. On `add_mark`, look for matching concept nodes and create cross-dimensional edges.
-- **MCP tools**: `add_mark` gains optional `context` parameter. `list_tags()` queries all contexts.
-- **`context_list`**: stop hiding `__provenance__` (or make it opt-in to show), since marks now span contexts.
+- **ProvenanceApi**: require context_id parameter, no default. `__provenance__` context eliminated entirely. On `add_mark`, look for matching concept nodes and create cross-dimensional `references` edges.
+- **MCP tools**: `add_mark` requires a `context` parameter. `list_tags()` queries all contexts.
+- **`context_list`**: remove `__provenance__` filtering, since marks now live in project contexts.
 
 ### What doesn't change
 
@@ -248,4 +248,4 @@ Mark tags use string format (`#travel` or `travel`). Concept node IDs use `conce
 
 **Implications:**
 
-The core value proposition of Plexus — connecting knowledge to its provenance — requires marks and concept nodes to share a context. The dimension system was designed for exactly this; the `__provenance__` context was a historical artifact that prevented it. The fix is scoping marks to project contexts (with `__provenance__` as fallback) and adding automatic tag-to-concept bridging at mark creation time. No new infrastructure needed — just wiring ProvenanceApi to be context-aware.
+The core value proposition of Plexus — connecting knowledge to its provenance — requires marks and concept nodes to share a context. The dimension system was designed for exactly this; the `__provenance__` context was a historical artifact that prevented it. The fix is scoping marks to project contexts (no fallback — `__provenance__` eliminated entirely) and adding automatic tag-to-concept bridging at mark creation time. No new infrastructure needed — just wiring ProvenanceApi to be context-aware.

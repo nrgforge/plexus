@@ -37,6 +37,7 @@ The integration path:
 - `EngineSink` gains a constructor taking `Arc<PlexusEngine>` and a `ContextId`. The existing `Arc<Mutex<Context>>` constructor stays for tests.
 - `PlexusEngine` exposes a `with_context_mut()` closure-based accessor that keeps `DashMap` internals private and handles persistence automatically.
 - After each emission, the engine persists the context to storage. One persist per emission — atomic, simple, optimizable later if batch ingestion demands it.
+- The DashMap path introduces a new error case: the context may not exist (deleted or never created). The existing Mutex path cannot fail to find its context. `EngineSink` needs an error variant for "context not found" — a small addition to the adapter error model.
 
 Nothing changes for adapters. The `AdapterSink` trait is unchanged. `FragmentAdapter`, `CoOccurrenceAdapter`, and `ProposalSink` don't know or care about persistence. The abstraction boundary was well-designed.
 
@@ -56,6 +57,8 @@ Plexus already has the mechanism for this connection. The dimension system defin
 
 The obstacle is that marks currently live in a separate context. The `__provenance__` context is a global singleton auto-created by the MCP server, isolated from project contexts where adapter-produced nodes live. Cross-context edges don't exist. Cross-context queries don't exist. The dimension bridge only works within a single context.
 
+One alternative would be to build cross-context edges — keep marks in `__provenance__` and connect them to concept nodes in project contexts. But this would require cross-context edge storage, cross-context query infrastructure, and cross-context consistency guarantees — none of which exist. Moving marks into project contexts solves the same problem by working with the existing within-context dimension system rather than building new infrastructure.
+
 ### Eliminating the `__provenance__` Context
 
 The `__provenance__` context is a historical artifact from when clawmarks was a separate system. It served as a container for marks that had no project affiliation. In a system where marks should connect to project-specific knowledge, it prevents the connection.
@@ -72,7 +75,9 @@ The connection between marks and concepts should be automatic, not manual. When 
 
 Tag format normalization is an invariant: strip the `#` prefix from mark tags, prepend `concept:` to match concept node IDs. `#travel` matches `concept:travel`. This convention must be consistent across all mark creation and concept node creation paths.
 
-The bridging happens inline in `ProvenanceApi.add_mark()` at mark creation time. A reflexive adapter could do this more elegantly (scan for tag-concept matches, propose edges through the adapter pipeline), but that requires a schedule monitor that doesn't exist yet. The inline approach is pragmatic and can be replaced by an adapter later without changing the external behavior.
+The bridging happens inline in `ProvenanceApi.add_mark()` at mark creation time. This means bridging is one-directional: if a mark tagged `#avignon` is created before any fragment containing "avignon" has been ingested, no `references` edge is created. The mark exists, unbridged, until a future mechanism (a reflexive adapter scanning for unbridged marks, or a hook on concept node creation) closes the gap. The initial implementation is creation-time only — a known limitation, not a defect.
+
+A reflexive adapter could handle both directions more elegantly (scan for tag-concept matches, propose edges through the adapter pipeline), but that requires a schedule monitor that doesn't exist yet. The inline approach is pragmatic and can be replaced by an adapter later without changing the external behavior.
 
 ## What This Enables
 
