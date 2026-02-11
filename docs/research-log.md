@@ -263,5 +263,49 @@ The consumer sees "concepts were detected" and "bridges were created" — not "N
 
 **Implications:**
 
-The enrichment loop is the mechanism for making the graph reactive — mutations in one dimension automatically trigger effects in other dimensions. The adapter as bidirectional contract means consumers never touch graph internals in either direction. Enrichments are composable — register new ones without modifying existing adapters or the engine. The open questions are: (1) where does enrichment registration live (DI at engine construction? Per-context configuration? Global registry?), (2) how does the outbound transform compose with multiple adapters (does each adapter see all events or only events from its own inbound processing?), and (3) should the enrichment trait be unified with the existing `Adapter` trait or kept separate?
+The enrichment loop is the mechanism for making the graph reactive — mutations in one dimension automatically trigger effects in other dimensions. The adapter as bidirectional contract means consumers never touch graph internals in either direction. Enrichments are composable — register new ones without modifying existing adapters or the engine.
+
+## Question 4: Enrichment registration, outbound event routing, and trait design
+
+**Method:** Design reasoning from spike findings and existing codebase patterns.
+
+**Findings:**
+
+### Enrichment registration: global, self-selecting
+
+Enrichments are registered at the engine level — `PlexusEngine` holds a `Vec<Box<dyn Enrichment>>`. When any adapter emits, the engine runs the enrichment loop with all registered enrichments. Each enrichment self-selects based on the events and context it receives — the `enrich()` method already receives the context, so a code-specific enrichment can inspect context metadata and no-op on non-code contexts.
+
+Global registration avoids per-context configuration complexity for a problem that doesn't exist yet. If selective activation becomes necessary later, enrichments can opt out by inspecting context metadata. Start global, specialize later if needed.
+
+### Outbound event routing: adapter filters, framework passes everything
+
+All events (primary + all enrichment rounds) are passed to the adapter's outbound transform. The adapter filters and transforms based on what its consumer cares about. The framework doesn't guess — the adapter knows its consumer's domain.
+
+This also enables cross-pollination visibility: if Manza creates a concept that bridges to a Trellis mark, Trellis's outbound can surface that event. The filtering logic lives where the domain knowledge lives — in the adapter, not the infrastructure.
+
+### Trait design: adapter is one bidirectional thing, enrichment is separate
+
+The adapter is the complete integration contract — one trait with two sides:
+
+- **Inbound:** `process(input, sink)` — domain data → graph mutations (existing method)
+- **Outbound:** `transform_events(events, context)` → domain events for consumer (new method, default returns empty)
+
+This keeps the consumer's mental model simple: one adapter, data in, events out. Adapters that don't need outbound (pure write adapters) use the default empty implementation. Adapters serving interactive consumers (Trellis, EDDI) implement the outbound to surface what their consumer cares about.
+
+Enrichments stay as a separate `Enrichment` trait — they are not adapters. They have no `input_kind`, accept no domain data, and don't serve consumers. They react to graph events and mutate the graph. The separation is conceptual: adapters bridge between a consumer's domain and the graph; enrichments bridge between dimensions within the graph.
+
+Registration bundles the pieces naturally:
+
+```
+register_integration("trellis",
+    adapter: FragmentAdapter,         // inbound + outbound
+    enrichments: [TagConceptBridger], // reactive graph enrichment
+)
+```
+
+Enrichments shared across integrations (like `TagConceptBridger`) are deduplicated by `id()` — registering the same enrichment twice is a no-op.
+
+**Implications:**
+
+The public surface architecture is now clear. Three flat registries in the engine (adapters, enrichments, outbound is part of adapter). One pipeline on ingest: route → adapter.process() → enrichment loop → adapter.transform_events(). The consumer sends domain data in via the adapter and receives domain events back through the same adapter. The graph's internal reactive behavior (enrichments, cross-dimensional bridging) is invisible to the consumer.
 
