@@ -132,3 +132,29 @@ Two of the original five gaps are deferred:
 - **Context sources triggering adapters** (gap 5): Making `context_add_sources()` trigger file scanning and adapter processing requires a source-watching mechanism. Valuable, but not blocking for the core wiring.
 
 Both are downstream of the work described here and can be addressed once the runtime architecture is solid.
+
+## Build Results
+
+The build phase produced 12 commits implementing all 20 behavior scenarios across ADRs 006–009, growing the test suite from 197 to 218 tests with zero failures.
+
+### What was built
+
+**ADR-006: Adapter-to-engine wiring.** `EngineSink` gained a `SinkBackend` enum — `Mutex` for tests, `Engine` for production — and a `for_engine(Arc<PlexusEngine>, ContextId)` constructor. All emission logic was extracted into `emit_inner(&mut Context, Emission, &Option<FrameworkContext>)`, a static method shared by both paths. `PlexusEngine` gained `with_context_mut()`, a closure-based accessor that acquires the DashMap shard lock, runs the closure, and auto-persists. The existing `Arc<Mutex<Context>>` path is untouched — all 197 prior tests continue using it.
+
+**ADR-007: Contribution persistence.** SQLite gained a `contributions_json TEXT NOT NULL DEFAULT '{}'` column via backward-compatible migration. `edge_to_row` serializes contributions as JSON; `row_to_edge` deserializes them. All edge read paths (load_context, get_edges_from, get_edges_to, save_edge, load_subgraph) were updated. Contributions survive save/load cycles and scale normalization works correctly after restart.
+
+**ADR-008: Project-scoped provenance.** `ProvenanceApi` already accepted a context_id — the API layer was correctly scoped. The build confirmed that marks live in project contexts, no `__provenance__` auto-creation occurs, chains are context-scoped, and a new `list_tags_all(engine)` function aggregates tags across all contexts.
+
+**ADR-009: Tag-to-concept bridging.** `add_mark` now normalizes each tag (strip `#`, lowercase), looks up `concept:<normalized>` nodes in the same context's semantic dimension, and creates cross-dimensional `references` edges (provenance → semantic) for each match. Marks created before concepts exist are not retroactively bridged — this is a documented known limitation, not a bug.
+
+**End-to-end.** A single acceptance test exercises the full pipeline: FragmentAdapter ingestion through EngineSink, provenance chain/mark creation with tag-to-concept bridging, and persistence verification after engine restart. Fragment nodes, concept nodes, tagged_with edges, marks, contains edges, references edges, and contribution values all survive the round trip.
+
+### What was validated
+
+The internal architecture is sound. Adapters, the engine, storage, and provenance share one data model and one persistence path. Cross-dimensional edges work. Contribution tracking works. The adapter layer's `AdapterSink` abstraction proved well-designed — swapping its backing from `Arc<Mutex<Context>>` to `PlexusEngine` was a local change to `EngineSink`.
+
+### What remains
+
+The engine's capabilities exceed its public surface. The MCP layer still routes all provenance operations through a hardcoded `__provenance__` context, contradicting ADR-008. No MCP tool exposes fragment ingestion, graph queries, or contribution visibility. The adapter layer — newly wired and tested — is invisible to external consumers. Trellis and Carrel cannot use what was built until the MCP contract is updated.
+
+This is the next research question: what should the public surface look like?
