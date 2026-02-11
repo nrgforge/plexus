@@ -8,3 +8,182 @@ See `docs/research/semantic/essays/08-runtime-architecture.md` for the previous 
 
 ---
 
+## Question 1: What are the core concepts that any Plexus consumer needs — sending data in, receiving events back, knowing which adapters are relevant?
+
+**Method:** Code trace through Trellis paper (fragment model), EDDI/Manza/Carrel essays (consumer diversity), Plexus event system and adapter traits (existing infrastructure), and MCP protocol capabilities.
+
+**Findings:**
+
+### The universal consumer pattern
+
+Four consumers were analyzed: Trellis (creative writing), EDDI (interactive performance), Manza (code analysis), Carrel (research coordination). Despite radically different domains, all follow the same architecture:
+
+```
+Domain-specific data → Adapter → Graph mutations → Events → Consumer rendering
+```
+
+The graph is domain-agnostic. Interpretation happens at the consumer layer. A `WeightsChanged` event means "show a coaching prompt" to Trellis, "adjust lighting intensity" to EDDI, "update visual opacity" to Manza, and "re-rank evidence relevance" to Carrel. The engine doesn't know or care.
+
+### What every consumer needs (six contracts)
+
+1. **Ingestion contract** — Push domain data in. Adapter transforms it to nodes/edges. Consumer doesn't touch graph primitives directly.
+2. **Processing contract** — Per-adapter contribution tracking, scale normalization, reinforcement. Consumer gets fair weight computation automatically.
+3. **Storage contract** — State survives restarts. Contributions persist. ACID semantics.
+4. **Query contract** — Retrieve nodes by type/dimension/properties. Traverse edges. Trace provenance back to sources.
+5. **Event contract** — Typed mutation events emitted when graph changes. Consumer renders domain-specifically.
+6. **Validation signal contract** — Domain-specific evidence (test results, user marks, gesture repetitions) reinforces edges through the same contribution mechanism.
+
+### The fragment as universal input
+
+The Trellis paper's "fragment" concept generalizes: an atomic unit of evidence with content, source attribution, tags, and timestamp. Whether it's a writing fragment, a code function, a gesture sequence, or a research passage, the structural pattern is the same — content plus metadata, transformed by an adapter into typed nodes and edges.
+
+### Three gaps in the current public surface
+
+**Gap A: No ingestion surface.** The adapter layer works internally but has no MCP tool to accept data. A consumer cannot push fragments, code, or any domain data into Plexus via the MCP contract. The `AdapterSink.emit()` API exists but isn't exposed.
+
+**Gap B: Events are produced but never delivered.** `GraphEvent` variants (NodesAdded, EdgesAdded, WeightsChanged, etc.) fire during emission and are collected in `EmitResult.events` — then discarded. No listener, no queue, no subscription, no notification mechanism exists. The engine produces events that nobody receives.
+
+**Gap C: No adapter discovery or declaration.** Adapters are instantiated in code. The router matches by `input_kind` string but requires pre-registration. A consumer cannot declare "I produce fragment data; which adapters should process it?" No registry, no configuration, no declarative wiring.
+
+### The adapter-consumer relationship question
+
+The user asked: "Is it a declarative sort of relationship?" Currently no — it's entirely code-level. But the design points toward declarative: adapters already declare `input_kind()` and `id()`. A consumer could declare "I produce data of kind `fragment`" and the system could match adapters automatically. The question is where this declaration lives — in the MCP tool call? In a context configuration? In a separate registration step?
+
+### How events could flow back
+
+Three options within MCP protocol constraints:
+
+1. **Polling** — `get_events(context_id, since_sequence)` tool. Simple, no protocol extensions. Consumer polls periodically. Requires event persistence and sequence numbering.
+2. **MCP notifications** — rmcp supports server-initiated notifications. Events could push to connected clients. Requires enabling notification capability and event dispatch infrastructure.
+3. **MCP resources** — Events as a subscribable resource (`plexus://context/{id}/events`). Consumer watches for changes. Requires resource infrastructure.
+
+Polling is simplest and works today. Notifications are more useful but require infrastructure. Resources are most MCP-idiomatic but most work.
+
+**Implications:**
+
+The public surface needs three things: an ingestion tool (push data in via adapters), an event mechanism (get mutation events back), and some form of adapter discovery (know which adapters process your data). The ingestion tool is straightforward — the adapter infrastructure exists. The event mechanism requires a design decision about delivery model. Adapter discovery is the most open question — the current system has all the pieces (input_kind matching, router, contribution tracking) but no way to declare or discover the wiring from outside.
+
+## Question 2: Is MCP the right protocol, and where should the integration boundary sit?
+
+**Method:** Protocol audit of MCP specification (2025-11-25), landscape research on knowledge graph API patterns (Neo4j, Qdrant, Weaviate, TinkerPop, Dgraph), and production patterns for Rust-core polyglot integration (Temporal, Qdrant).
+
+**Findings:**
+
+### MCP is designed for LLM-mediated interaction, not app-to-app integration
+
+The MCP spec explicitly models a three-tier architecture: Host (LLM application) → Client (connector) → Server (tool provider). The protocol presupposes an LLM host on the client side — sampling requests, elicitation, model preferences, and human-in-the-loop controls all require LLM infrastructure. A pure Python web service (Trellis) acting as an MCP client would be fighting the protocol.
+
+MCP is the right surface for Claude Code using Plexus interactively — creating marks, querying the graph, orchestrating adapters. It is not the right surface for Trellis pushing 50 fragments per day or EDDI streaming pose data at 30fps.
+
+The protocol does support more than tools: resources (addressable data with URI subscriptions), notifications (server→client push), and async tasks (experimental in 2025-11-25). These could serve event delivery within an MCP session. But the session model is heavyweight (capability negotiation, stateful connection) and MCP's multi-client support requires Streamable HTTP transport (not the stdio transport Plexus currently uses).
+
+### The landscape points to gRPC for app-to-app integration
+
+Production knowledge graph systems with polyglot consumers converge on the same pattern:
+
+- **Qdrant** (Rust core): gRPC as canonical API, REST generated via gateway, typed SDKs per language
+- **Weaviate** (Go core): REST + GraphQL + gRPC, clients auto-detect fastest available
+- **Neo4j**: Custom binary protocol (Bolt) + official drivers per language
+- **Temporal** (Rust core, closest analogue): FFI via PyO3/Neon for tight coupling, but exploring WASM
+
+The practical recommendation from the landscape: define the API in protobuf, serve via tonic (Rust gRPC), generate clients for Python/JS/Go. Add REST via gRPC-Gateway for debugging and ad hoc use.
+
+### Domain operations, not raw graph access
+
+All successful multi-writer graph systems expose domain operations as the primary API — not raw node/edge creation. When Trellis, EDDI, Manza, and Carrel all write to the same graph, raw access creates semantic conflicts and bypasses contribution tracking, scale normalization, and provenance.
+
+The adapter layer is the natural domain boundary. Consumers say "here is a fragment" not "create node X with edge Y." The adapter transforms domain intent into graph mutations with all the machinery (contributions, normalization, events) applied automatically.
+
+Query operations can be more permissive — reading the graph doesn't need the same guardrails as writing. A read-side API can expose graph structure directly.
+
+### Change feed: pull-based cursors are the standard
+
+Neo4j CDC and Dgraph CDC both use the same pattern: maintain an ordered log of mutations, consumers poll with a cursor ("give me changes since sequence N"). This is simple, reliable, and the consumer controls backpressure. Push delivery (Kafka, webhooks) is layered on top of the pull-based log, not instead of it.
+
+Plexus already produces `GraphEvent` variants during emission. The missing piece is persistence and sequence numbering — store events with monotonic IDs, expose a `get_events(context_id, since)` query.
+
+### Two surfaces, not one
+
+The evidence suggests Plexus needs two complementary surfaces:
+
+1. **MCP** — for LLM-mediated, interactive use. Marks, chains, queries, orchestration. Claude Code and similar AI hosts are the clients. This is what Plexus already has (with updates needed for ADR-008).
+
+2. **Wire protocol (gRPC or similar)** — for app-to-app integration. Fragment ingestion, event subscriptions, adapter invocation. Trellis, EDDI, and other applications are the clients. This doesn't exist yet.
+
+The alternative — trying to make MCP serve both purposes — would mean either (a) every consumer needs an LLM host to mediate, or (b) consumers implement a fake MCP client that ignores sampling/elicitation, which is fragile and fights the protocol.
+
+### But the deeper question: what IS the integration boundary?
+
+The adapter trait is already a clean integration contract. An adapter declares its `input_kind`, receives domain data, and emits graph mutations. The question is whether adapters live:
+
+- **Inside Plexus** (baked-in): Plexus ships with FragmentAdapter, MovementAdapter, CodeAdapter, etc. Consumers call a generic `ingest(kind, data)` endpoint. Simple for consumers, but Plexus becomes a monolith.
+- **Inside the consumer** (library): Consumers import Plexus as a Rust crate and implement the Adapter trait. Maximum flexibility, but requires Rust or FFI.
+- **As separate services** (protocol): Adapters run as gRPC services. Plexus routes data to adapter services by input_kind. Consumers deploy adapters alongside Plexus. Most flexible, most infrastructure.
+- **As WASM modules** (portable): Adapters compiled to WASM, loaded dynamically by Plexus. Language-agnostic (any language compiling to WASM), sandboxed, portable. But WASM ecosystem maturity varies.
+
+The cross-pollination value — a mark tagged `#travel` connecting to a concept `concept:travel` from a different app — happens at the graph level regardless of where adapters live. The integration model determines developer ergonomics, not capability.
+
+**Implications:**
+
+MCP is right for its intended use (AI tool integration) but wrong as the universal integration protocol. Plexus likely needs a second surface — probably gRPC — for app-to-app data flow. The adapter trait is the natural API boundary: consumers describe domain data, adapters transform it, the engine handles the graph. The open question is adapter deployment model (baked-in vs. plugin vs. service), which trades off simplicity against extensibility. The cross-pollination value proposition doesn't depend on the integration model — it depends on shared contexts and the graph engine's dimension/contribution system, which already works.
+
+## Spike: Can provenance operations go through the adapter pipeline?
+
+**Question:** Can a single `ingest(context, kind, data)` endpoint replace the current 19-tool MCP surface, with provenance operations modeled as adapter input?
+
+**Method:** Built a `ProvenanceAdapter` implementing the `Adapter` trait, handling `CreateChain`, `AddMark`, `LinkMarks`, `DeleteMark`, and `DeleteChain` as `ProvenanceInput` variants. Ran through `EngineSink` with `FrameworkContext` for contribution tracking. Also sketched a minimal protobuf schema for a unified ingest service.
+
+**Findings:**
+
+### What works: 5 of 9 provenance write operations
+
+All five spike tests pass:
+
+1. **create_chain** — Deterministic ID (`chain:reading-notes`) enables upsert semantics. Chain node created in provenance dimension with proper properties.
+
+2. **add_mark** — Mark node + "contains" edge emitted in single emission. Contribution tracking automatic — the adapter ID ("provenance-claude") appears on the edge's contribution map.
+
+3. **link_marks** — "links_to" edge emitted. Edge merge semantics handle idempotency (re-linking is a no-op, not a duplicate).
+
+4. **delete_mark** — Node removal via emission. Cascade automatically removes connected edges (contains, links_to). Chain survives.
+
+5. **update via upsert** — Re-emitting a node with the same deterministic ID replaces it. `Context.add_node()` uses `HashMap::insert`, which overwrites. This means `update_mark` and `archive_chain` work by re-emitting the node with updated properties — no new Emission variant needed.
+
+### What doesn't work: 2 operations
+
+6. **unlink_marks** — Emission supports node removal (with edge cascade) but not explicit edge removal. Removing a single "links_to" edge without removing either mark requires either a new `Emission` variant or a separate operation outside the adapter pipeline.
+
+7. **delete_chain with marks** — Removing a chain node cascades its edges, but marks become orphaned (they still exist, just disconnected from the chain). Deleting the chain AND its marks requires reading the context to discover which marks belong to the chain, then emitting removals for each. The adapter doesn't have context read access during `process()`.
+
+### Key discovery: tag-to-concept bridging needs context access
+
+The current `add_mark` in `ProvenanceApi` reads the context to look up matching concept nodes for tag-to-concept bridging. The adapter can't do this — `Adapter.process()` receives only the input data and a sink, not the context.
+
+Three options:
+- **a) Context snapshot in input** — pass a cloned context as part of `AdapterInput`, like `CoOccurrenceAdapter` already does. Works but expensive for large contexts.
+- **b) Post-commit hook in the engine** — bridging happens after the emission commits, as an engine concern. Cleaner separation but requires new infrastructure.
+- **c) Bridging stays in the engine/sink layer** — `EngineSink.emit_inner()` checks for matching concepts after committing mark nodes. This keeps the adapter simple and the bridging automatic.
+
+Option (c) is the most natural: the adapter emits what it knows (mark + tags), the engine does what it knows (look up concepts, create references edges). This is consistent with how contribution tracking already works — the adapter doesn't know about it, the engine handles it transparently.
+
+### The protobuf schema is clean
+
+The sketched schema has one write RPC (`Ingest`) and six read RPCs. `IngestRequest` carries `context_id`, `input_kind`, `adapter_id`, and opaque `data` bytes. The response includes commit counts, rejections, and events. This is the entire write surface — every consumer calls the same endpoint.
+
+Read operations (list_chains, get_chain, list_marks, list_tags, traverse, get_events) remain separate RPCs because they're queries, not adapter-mediated writes.
+
+### What this means for MCP
+
+If all writes go through `Ingest`, MCP's role simplifies to:
+- A transport for `Ingest` calls (Claude Code sends provenance fragments via MCP tool)
+- A transport for queries (Claude Code reads graph state via MCP tools)
+- MCP is just one of potentially several transports, not a special API layer
+
+The 19 current MCP tools would collapse to approximately:
+- 1 write tool: `ingest(context_id, input_kind, data)`
+- 5-6 read tools: `list_chains`, `list_marks`, `list_tags`, `get_chain`, `traverse`, `get_events`
+
+**Implications:**
+
+The adapter pipeline can handle provenance writes. The model works: provenance operations are just another kind of domain input. The two operations that don't fit (unlink_marks, cascade chain deletion) are edge cases that could be solved by adding edge removal to `Emission` or handling them as engine-level commands. The bigger insight is that tag-to-concept bridging is an engine concern, not an adapter concern — the adapter declares what it knows (mark + tags), the engine does the wiring. This suggests a clean separation: adapters handle domain-to-graph transformation, the engine handles cross-dimensional bridging and graph-level invariants.
+
