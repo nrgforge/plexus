@@ -187,3 +187,81 @@ The 19 current MCP tools would collapse to approximately:
 
 The adapter pipeline can handle provenance writes. The model works: provenance operations are just another kind of domain input. The two operations that don't fit (unlink_marks, cascade chain deletion) are edge cases that could be solved by adding edge removal to `Emission` or handling them as engine-level commands. The bigger insight is that tag-to-concept bridging is an engine concern, not an adapter concern — the adapter declares what it knows (mark + tags), the engine does the wiring. This suggests a clean separation: adapters handle domain-to-graph transformation, the engine handles cross-dimensional bridging and graph-level invariants.
 
+## Question 3: Where should graph-level enrichment live, and can the adapter be a bidirectional contract?
+
+**Method:** Code audit of EngineSink, CoOccurrenceAdapter, ProvenanceApi, and PlexusEngine enrichment patterns. Spike implementing an enrichment loop with a TagConceptBridger and outbound event transformation.
+
+**Findings:**
+
+### Current enrichment is scattered across three patterns
+
+The codebase handles graph-level enrichment in three inconsistent ways:
+
+1. **Contribution tracking** — transparent, inside `EngineSink.emit_inner()`. Adapter doesn't know.
+2. **Tag-to-concept bridging** — inline in `ProvenanceApi::add_mark()`. Reads context directly, adds edges.
+3. **Co-occurrence detection** — reflexive adapter (`CoOccurrenceAdapter`). Gets a context snapshot as input.
+
+Three patterns for the same kind of problem: mutations in one dimension triggering effects in another.
+
+### Four options evaluated, two ruled out
+
+**Option A (fat adapters — context snapshot in input):** Adapter handles its own enrichment. Rejected — scatters bridging logic across every adapter, doesn't compose.
+
+**Option B (engine post-commit hooks):** Engine checks enrichment rules after mutations. Rejected — makes the domain-agnostic engine domain-aware, fundamental architectural shift.
+
+**Option C (enrichment as reflexive adapter chain):** Bridging becomes its own adapter. Pros: composable, testable, named. Cons: requires orchestration beyond current router's input_kind dispatch.
+
+**Option D (sink middleware):** Enrichment wraps the sink. Transparent but hidden — harder to discover and debug.
+
+### The enrichment loop works
+
+Five spike tests pass. The loop:
+
+1. Primary emission commits and produces `GraphEvent` variants
+2. Each registered `Enrichment` receives events + context snapshot
+3. If enrichment returns an `Emission`, it's committed, producing new events
+4. Loop repeats until all enrichments return `None` (quiescence)
+5. Max rounds as safety limit
+
+**Termination:** The enrichment itself checks context state before emitting. A `TagConceptBridger` looks up whether the cross-dimensional edge already exists — if so, returns `None`. The framework can't guarantee termination (events don't distinguish new from re-emitted); the enrichment author implements the idempotency check. This is the right place for the responsibility — the enrichment knows its own semantics.
+
+### Critical event system observation
+
+`EngineSink` fires `EdgesAdded` for *every* committed edge, including re-emissions of existing edges (upsert). `NodesAdded` fires for every node, including upserts. The events don't distinguish "genuinely new" from "updated." This means enrichments must check context state rather than relying on events alone for idempotency. The enrichment trait signature is:
+
+```rust
+trait Enrichment: Send + Sync {
+    fn id(&self) -> &str;
+    fn enrich(&self, events: &[GraphEvent], context: &Context) -> Option<Emission>;
+}
+```
+
+### The adapter as bidirectional contract
+
+The user's key insight: consumers only need to send data to Plexus and receive events back. The adapter defines both sides:
+
+- **Inbound:** `process(input, sink)` — domain data → graph mutations (existing)
+- **Outbound:** `transform_events(events, context)` → domain events for consumer
+
+After the enrichment loop completes, raw `GraphEvent` variants are transformed through the adapter's outbound side. The consumer receives domain-meaningful events — never raw graph events.
+
+Spike output for a Trellis-like scenario:
+```
+concepts_detected: travel, provence
+bridges_created: 2 cross-dimensional links
+```
+
+The consumer sees "concepts were detected" and "bridges were created" — not "NodesAdded with node_ids [concept:travel, concept:provence]." The adapter is the lens through which both data enters and events exit. This makes the adapter the complete integration contract: when you build a Trellis adapter, you define what data Trellis sends AND what Trellis hears back.
+
+### The concrete scenario that validated this
+
+1. Context has a mark `mark:travel-notes` with tags "travel, provence"
+2. FragmentAdapter ingests a Provence essay → creates `concept:travel`, `concept:provence`, fragment node, `tagged_with` edges
+3. Enrichment round 1: `TagConceptBridger` sees `NodesAdded` with concept nodes, finds marks with matching tags, creates cross-dimensional `references` edges from provenance → semantic
+4. Enrichment round 2: `TagConceptBridger` runs again — edges already exist in context → returns `None` → quiescence
+5. All events transformed through `FragmentAdapterOutbound` → consumer receives `concepts_detected` and `bridges_created`
+
+**Implications:**
+
+The enrichment loop is the mechanism for making the graph reactive — mutations in one dimension automatically trigger effects in other dimensions. The adapter as bidirectional contract means consumers never touch graph internals in either direction. Enrichments are composable — register new ones without modifying existing adapters or the engine. The open questions are: (1) where does enrichment registration live (DI at engine construction? Per-context configuration? Global registry?), (2) how does the outbound transform compose with multiple adapters (does each adapter see all events or only events from its own inbound processing?), and (3) should the enrichment trait be unified with the existing `Adapter` trait or kept separate?
+
