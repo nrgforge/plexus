@@ -115,7 +115,7 @@ The system has three registries and one pipeline.
 
 - **Adapters** — registered by `input_kind`. Route domain data inbound, transform events outbound. Each adapter is a bidirectional integration contract.
 - **Enrichments** — registered globally on the engine. React to graph events, produce additional graph mutations. Self-select based on events and context. Terminate via idempotency.
-- **Transports** — MCP for LLM-mediated use, gRPC (or similar) for app-to-app. Both call the same `ingest()` and query endpoints. Neither is special.
+- **Transports** — any protocol that can ferry an ingest request in and domain events out. Neither is special; all call the same `ingest()` and query endpoints.
 
 **Pipeline on ingest:**
 
@@ -139,6 +139,27 @@ register_integration("trellis",
 ```
 
 Enrichments shared across integrations are deduplicated by `id()`. The consumer interacts with a high-level API that hides the internal decomposition.
+
+## Three Independent Extension Points
+
+The architecture has a symmetry worth making explicit. There are three dimensions of extensibility, and none are coupled to each other:
+
+**Adapters** extend the domain side. A new consumer with a new data type (gesture sequences, code ASTs, research passages) means a new adapter. The adapter defines how that data becomes graph mutations and how graph events become domain-meaningful feedback. No existing adapter, enrichment, or transport changes.
+
+**Enrichments** extend the graph intelligence side. A new cross-dimensional relationship (code functions referencing design pattern concepts, gesture sequences bridging to musical concepts) means a new enrichment. It registers globally, self-selects based on events and context, and composes with every existing adapter and transport without modification.
+
+**Transports** extend the protocol side. The transport's job is thin — accept an ingest request (context_id, input_kind, data), forward it to the router, return domain events to the consumer. Any protocol that can do request/response works:
+
+- **gRPC** — typed, streaming, generated clients. App-to-app integration.
+- **REST** — POST /ingest, GET /events. Debugging, curl, ad hoc use.
+- **MCP** — tool calls within an LLM host session. Claude Code.
+- **WebSockets** — persistent connection, server-push events. Real-time UIs.
+- **WebRTC** — peer-to-peer, low latency. EDDI streaming pose data at 30fps.
+- **FFI** (PyO3/Neon) — in-process, zero serialization. Tight coupling.
+
+Adding a new transport means implementing the shell for that protocol. It doesn't touch adapters, enrichments, or the engine — it calls the same `ingest()` and `query()` functions that every other transport calls.
+
+This means the system grows in three orthogonal directions. A new consumer brings an adapter. A new kind of graph intelligence brings an enrichment. A new deployment context brings a transport. Each is independently testable, independently deployable, and invisible to the others.
 
 ## What This Means
 
