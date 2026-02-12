@@ -5,6 +5,7 @@
 //! Pipeline steps:
 //! 1. Route to matching adapter(s) by input_kind
 //! 2. Each adapter processes via sink → primary events
+//! 2.5. Auto-provenance: create ingest_record nodes with produced_by edges
 //! 3. Enrichment loop runs once (globally) until quiescence
 //! 4. Each adapter transforms all accumulated events → outbound events
 //! 5. Return merged outbound events
@@ -13,9 +14,10 @@ use super::engine_sink::EngineSink;
 use super::enrichment::{Enrichment, EnrichmentRegistry};
 use super::events::GraphEvent;
 use super::provenance::FrameworkContext;
-use super::sink::AdapterError;
+use super::sink::{AdapterError, AdapterSink};
 use super::traits::{Adapter, AdapterInput};
-use super::types::OutboundEvent;
+use super::types::{Emission, OutboundEvent};
+use crate::graph::{dimension, ContentType, Edge, Node, NodeId, PropertyValue};
 use crate::graph::{ContextId, PlexusEngine};
 use std::sync::Arc;
 
@@ -113,6 +115,91 @@ impl IngestPipeline {
 
             adapter.process(&input, &sink).await?;
             all_events.extend(sink.take_accumulated_events());
+        }
+
+        // Step 2.5: Auto-provenance — create ingest_record nodes for each adapter's emission
+        //
+        // For every adapter that committed nodes, create a provenance-dimension
+        // "ingest_record" node and cross-dimensional produced_by edges from each
+        // committed node to the record. This makes the origin of all graph knowledge
+        // traversable through the graph itself.
+        {
+            let snapshot = self.engine.get_context(&ctx_id)
+                .ok_or_else(|| AdapterError::ContextNotFound(context_id.to_string()))?;
+            let timestamp = chrono::Utc::now();
+
+            for adapter in &matching {
+                let adapter_id = adapter.id().to_string();
+
+                // Collect node IDs committed by this adapter
+                let committed_node_ids: Vec<NodeId> = all_events.iter()
+                    .filter_map(|e| match e {
+                        GraphEvent::NodesAdded { node_ids, adapter_id: aid, .. }
+                            if *aid == adapter_id => Some(node_ids.clone()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+
+                if committed_node_ids.is_empty() {
+                    continue;
+                }
+
+                // Create the ingest record node
+                let record_id = NodeId::from_string(
+                    format!("ingest:{}:{}", adapter_id, uuid::Uuid::new_v4())
+                );
+                let mut record_node = Node::new_in_dimension(
+                    "ingest_record",
+                    ContentType::Provenance,
+                    dimension::PROVENANCE,
+                );
+                record_node.id = record_id.clone();
+                record_node.properties.insert(
+                    "adapter_id".to_string(),
+                    PropertyValue::String(adapter_id.clone()),
+                );
+                record_node.properties.insert(
+                    "timestamp".to_string(),
+                    PropertyValue::String(timestamp.to_rfc3339()),
+                );
+                record_node.properties.insert(
+                    "context_id".to_string(),
+                    PropertyValue::String(context_id.to_string()),
+                );
+                record_node.properties.insert(
+                    "node_count".to_string(),
+                    PropertyValue::Int(committed_node_ids.len() as i64),
+                );
+
+                let mut emission = Emission::new().with_node(record_node);
+
+                // Create produced_by edges from each committed node to the record
+                for node_id in &committed_node_ids {
+                    if let Some(node) = snapshot.get_node(node_id) {
+                        let edge = Edge::new_cross_dimensional(
+                            node_id.clone(),
+                            &node.dimension,
+                            record_id.clone(),
+                            dimension::PROVENANCE,
+                            "produced_by",
+                        );
+                        emission = emission.with_edge(edge);
+                    }
+                }
+
+                // Emit through a provenance-specific sink
+                let provenance_sink = EngineSink::for_engine(
+                    self.engine.clone(),
+                    ctx_id.clone(),
+                ).with_framework_context(FrameworkContext {
+                    adapter_id: "plexus:auto-provenance".to_string(),
+                    context_id: context_id.to_string(),
+                    input_summary: Some(format!("ingest record for {}", adapter_id)),
+                });
+                provenance_sink.emit(emission).await?;
+                all_events.extend(provenance_sink.take_accumulated_events());
+            }
         }
 
         // Step 3: Enrichment loop runs once with combined events

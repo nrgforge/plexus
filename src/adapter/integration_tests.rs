@@ -2448,4 +2448,271 @@ mod tests {
             "2 links_to edges survive restart"
         );
     }
+
+    // ================================================================
+    // Spike: Auto-provenance — every adapter ingest produces
+    // traversable provenance-dimension nodes
+    // ================================================================
+
+    #[tokio::test]
+    async fn spike_auto_provenance_creates_traversable_ingest_records() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::graph::dimension;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+
+        let ctx_id = ContextId::from("test-auto-provenance");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "test-auto-provenance"))
+            .unwrap();
+
+        // Register FragmentAdapter with enrichments
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("trellis-fragment")),
+            vec![
+                Arc::new(TagConceptBridger::new()),
+                Arc::new(CoOccurrenceEnrichment::new()),
+            ],
+        );
+
+        // Ingest a single fragment with two tags
+        let input = FragmentInput::new(
+            "Walked through Avignon at sunset",
+            vec!["travel".to_string(), "avignon".to_string()],
+        );
+        pipeline
+            .ingest("test-auto-provenance", "fragment", Box::new(input))
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // ---- Verify: ingest_record node exists in provenance dimension ----
+        let ingest_records: Vec<_> = ctx
+            .nodes()
+            .filter(|n| n.node_type == "ingest_record" && n.dimension == dimension::PROVENANCE)
+            .collect();
+        assert_eq!(
+            ingest_records.len(),
+            1,
+            "should have exactly 1 ingest_record node"
+        );
+
+        let record = &ingest_records[0];
+        assert_eq!(
+            record.properties.get("adapter_id"),
+            Some(&crate::graph::PropertyValue::String(
+                "trellis-fragment".to_string()
+            )),
+        );
+        assert_eq!(
+            record.properties.get("context_id"),
+            Some(&crate::graph::PropertyValue::String(
+                "test-auto-provenance".to_string()
+            )),
+        );
+
+        // node_count: 1 fragment + 2 concepts = 3 nodes
+        assert_eq!(
+            record.properties.get("node_count"),
+            Some(&crate::graph::PropertyValue::Int(3)),
+        );
+
+        // ---- Verify: produced_by edges from committed nodes to ingest_record ----
+        let produced_by_edges: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "produced_by" && e.target == record.id)
+            .collect();
+        assert_eq!(
+            produced_by_edges.len(),
+            3,
+            "3 produced_by edges: 1 fragment + 2 concepts"
+        );
+
+        // All produced_by edges target the provenance dimension
+        for edge in &produced_by_edges {
+            assert_eq!(
+                edge.target_dimension,
+                dimension::PROVENANCE,
+                "produced_by target should be provenance dimension"
+            );
+        }
+
+        // Verify source dimensions: 1 structure (fragment) + 2 semantic (concepts)
+        let source_dims: std::collections::HashMap<String, usize> = produced_by_edges
+            .iter()
+            .fold(std::collections::HashMap::new(), |mut acc, e| {
+                *acc.entry(e.source_dimension.clone()).or_insert(0) += 1;
+                acc
+            });
+        assert_eq!(
+            source_dims.get(dimension::STRUCTURE),
+            Some(&1),
+            "1 produced_by edge from structure dimension (fragment)"
+        );
+        assert_eq!(
+            source_dims.get(dimension::SEMANTIC),
+            Some(&2),
+            "2 produced_by edges from semantic dimension (concepts)"
+        );
+
+        // ---- Verify: cross-dimensional traversal concept → provenance ----
+        // Starting from concept:travel, follow produced_by to reach ingest_record
+        let travel_id = NodeId::from_string("concept:travel");
+        let travel_produced_by: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.source == travel_id && e.relationship == "produced_by")
+            .collect();
+        assert_eq!(
+            travel_produced_by.len(),
+            1,
+            "concept:travel should have 1 produced_by edge"
+        );
+        assert_eq!(
+            travel_produced_by[0].target, record.id,
+            "concept:travel produced_by should point to the ingest_record"
+        );
+
+        // From the ingest_record, we can discover the adapter that created it
+        let record_adapter = record.properties.get("adapter_id").unwrap();
+        assert_eq!(
+            *record_adapter,
+            crate::graph::PropertyValue::String("trellis-fragment".to_string()),
+            "traversal from concept:travel reaches provenance showing trellis-fragment adapter"
+        );
+
+        // ---- Verify: reverse traversal — ingest_record → all produced nodes ----
+        let reverse_produced: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == record.id && e.relationship == "produced_by")
+            .map(|e| e.source.clone())
+            .collect();
+        assert_eq!(
+            reverse_produced.len(),
+            3,
+            "ingest_record should be reachable from 3 nodes (reverse produced_by)"
+        );
+
+        // The 3 nodes are: 1 fragment (UUID) + concept:travel + concept:avignon
+        let reverse_set: std::collections::HashSet<String> =
+            reverse_produced.iter().map(|id| id.to_string()).collect();
+        assert!(reverse_set.contains("concept:travel"));
+        assert!(reverse_set.contains("concept:avignon"));
+        // The third is the fragment node (UUID-based, can't predict the ID)
+        let fragment_ids: Vec<_> = reverse_set
+            .iter()
+            .filter(|id| !id.starts_with("concept:"))
+            .collect();
+        assert_eq!(fragment_ids.len(), 1, "1 fragment node in reverse set");
+
+        // Verify the fragment node is in structure dimension
+        let fragment_id = NodeId::from_string(fragment_ids[0].clone());
+        let fragment_node = ctx.get_node(&fragment_id).unwrap();
+        assert_eq!(fragment_node.dimension, dimension::STRUCTURE);
+
+        // ---- Verify: enrichment loop reached quiescence ----
+        // (implicit: if we got here without timeout or error, enrichment terminated)
+
+        // Verify enrichment still produced expected results
+        let tagged_with_count = ctx
+            .edges()
+            .filter(|e| e.relationship == "tagged_with")
+            .count();
+        assert_eq!(tagged_with_count, 2, "2 tagged_with edges (travel, avignon)");
+
+        // co-occurrence: travel and avignon co-occur in 1 fragment
+        let co_occurrence_count = ctx
+            .edges()
+            .filter(|e| e.relationship == "may_be_related")
+            .count();
+        assert_eq!(
+            co_occurrence_count, 2,
+            "2 may_be_related edges (symmetric pair: travel↔avignon)"
+        );
+    }
+
+    #[tokio::test]
+    async fn spike_auto_provenance_multiple_ingests_produce_separate_records() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::graph::dimension;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+
+        let ctx_id = ContextId::from("test-multi-ingest");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "test-multi-ingest"))
+            .unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("trellis-fragment")),
+            vec![
+                Arc::new(TagConceptBridger::new()),
+                Arc::new(CoOccurrenceEnrichment::new()),
+            ],
+        );
+
+        // Ingest two fragments
+        let input1 = FragmentInput::new(
+            "Walking through old streets",
+            vec!["travel".to_string(), "architecture".to_string()],
+        );
+        pipeline
+            .ingest("test-multi-ingest", "fragment", Box::new(input1))
+            .await
+            .unwrap();
+
+        let input2 = FragmentInput::new(
+            "Reading about Roman history",
+            vec!["history".to_string(), "architecture".to_string()],
+        );
+        pipeline
+            .ingest("test-multi-ingest", "fragment", Box::new(input2))
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // Two separate ingest records
+        let ingest_records: Vec<_> = ctx
+            .nodes()
+            .filter(|n| n.node_type == "ingest_record")
+            .collect();
+        assert_eq!(
+            ingest_records.len(),
+            2,
+            "should have 2 ingest_record nodes (one per ingest call)"
+        );
+
+        // concept:architecture is shared — it was produced by the first ingest,
+        // then upserted by the second. The first ingest creates concept:architecture
+        // and a produced_by edge. The second ingest's concept:architecture is an upsert
+        // (same node ID), so it also gets a produced_by edge to the second record.
+        let arch_id = NodeId::from_string("concept:architecture");
+        let arch_produced_by: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.source == arch_id && e.relationship == "produced_by")
+            .collect();
+        assert_eq!(
+            arch_produced_by.len(),
+            2,
+            "concept:architecture should have 2 produced_by edges (one per ingest)"
+        );
+
+        // The two produced_by edges point to different ingest records
+        let targets: std::collections::HashSet<String> = arch_produced_by
+            .iter()
+            .map(|e| e.target.to_string())
+            .collect();
+        assert_eq!(
+            targets.len(),
+            2,
+            "produced_by edges should point to 2 different ingest records"
+        );
+    }
 }
