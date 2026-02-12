@@ -16,6 +16,7 @@ mod proposal_sink;
 mod provenance;
 mod router;
 mod sink;
+mod tag_bridger;
 mod traits;
 mod types;
 
@@ -34,3 +35,4 @@ pub use types::{
 pub use cooccurrence::CoOccurrenceAdapter;
 pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
+pub use tag_bridger::TagConceptBridger;
