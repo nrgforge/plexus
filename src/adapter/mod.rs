@@ -28,7 +28,7 @@ pub use router::{InputRouter, RouteResult};
 pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 pub use types::{
-    Annotation, AnnotatedEdge, AnnotatedNode, Emission, Removal,
+    Annotation, AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, Removal,
 };
 pub use cooccurrence::CoOccurrenceAdapter;
 pub use fragment::{FragmentAdapter, FragmentInput};

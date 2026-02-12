@@ -1,9 +1,12 @@
-//! Adapter trait — the contract adapters implement
+//! Adapter trait — the bidirectional integration contract (ADR-011)
 //!
-//! An adapter transforms domain-specific input into graph mutations.
-//! It declares what input kind it consumes and processes input through a sink.
+//! Inbound: transforms domain-specific input into graph mutations via process().
+//! Outbound: transforms raw graph events into domain-meaningful events via transform_events().
 
+use super::events::GraphEvent;
 use super::sink::{AdapterError, AdapterSink};
+use super::types::OutboundEvent;
+use crate::graph::Context;
 use async_trait::async_trait;
 use std::any::Any;
 
@@ -33,10 +36,11 @@ impl AdapterInput {
     }
 }
 
-/// The contract adapters implement.
+/// The bidirectional integration contract (ADR-011).
 ///
-/// An adapter declares what input kind it consumes, processes input
-/// through a sink, and optionally declares a schedule for reflexive triggering.
+/// Inbound: declares what input kind it consumes, processes input through a sink.
+/// Outbound: transforms raw graph events into domain-meaningful outbound events.
+/// The single artifact that defines a consumer's relationship with Plexus.
 #[async_trait]
 pub trait Adapter: Send + Sync {
     /// Unique identifier for this adapter
@@ -45,7 +49,7 @@ pub trait Adapter: Send + Sync {
     /// What kind of input this adapter consumes (matched by router)
     fn input_kind(&self) -> &str;
 
-    /// Process input, emitting results through the sink.
+    /// Inbound: process input, emitting results through the sink.
     ///
     /// The adapter downcasts `input.data` internally. If the downcast fails,
     /// return `Err(AdapterError::InvalidInput)`.
@@ -54,4 +58,15 @@ pub trait Adapter: Send + Sync {
         input: &AdapterInput,
         sink: &dyn AdapterSink,
     ) -> Result<(), AdapterError>;
+
+    /// Outbound: translate raw graph events into domain-meaningful events (ADR-011).
+    ///
+    /// Called after the enrichment loop completes with all accumulated events
+    /// from the primary emission and all enrichment rounds, plus a context snapshot.
+    /// The adapter filters what its consumer cares about.
+    ///
+    /// Default: no outbound events (backward compatible).
+    fn transform_events(&self, _events: &[GraphEvent], _context: &Context) -> Vec<OutboundEvent> {
+        vec![]
+    }
 }

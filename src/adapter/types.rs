@@ -165,6 +165,29 @@ impl Default for Emission {
     }
 }
 
+/// A domain-meaningful event for the consumer (ADR-011).
+///
+/// Translated from raw graph events by the adapter's `transform_events()`.
+/// The consumer receives outbound events, never raw graph events.
+/// Deliberately unstructured — the consumer defines what `kind` values
+/// it cares about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundEvent {
+    /// Event type in the consumer's vocabulary (e.g., "concepts_detected")
+    pub kind: String,
+    /// Human-readable detail (e.g., "travel, provence")
+    pub detail: String,
+}
+
+impl OutboundEvent {
+    pub fn new(kind: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            detail: detail.into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

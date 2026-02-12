@@ -12,7 +12,7 @@ mod tests {
     use crate::adapter::provenance::FrameworkContext;
     use crate::adapter::sink::{AdapterError, AdapterSink};
     use crate::adapter::traits::{Adapter, AdapterInput};
-    use crate::adapter::types::Emission;
+    use crate::adapter::types::{Emission, OutboundEvent};
     use crate::graph::{ContentType, Context, ContextId, Edge, Node, NodeId, PlexusEngine};
     use crate::storage::{OpenStore, SqliteStore};
     use std::sync::{Arc, Mutex};
@@ -1197,5 +1197,118 @@ mod tests {
         // Only the first enrichment instance was called (dedup by id)
         assert_eq!(enrichment_a.call_count(), 1);
         assert_eq!(enrichment_b.call_count(), 0);
+    }
+
+    // ================================================================
+    // Bidirectional Adapter — Outbound Events (ADR-011)
+    // ================================================================
+
+    /// Minimal adapter that doesn't override transform_events.
+    struct MinimalAdapter;
+
+    #[async_trait::async_trait]
+    impl Adapter for MinimalAdapter {
+        fn id(&self) -> &str {
+            "minimal"
+        }
+        fn input_kind(&self) -> &str {
+            "test"
+        }
+        async fn process(
+            &self,
+            _input: &AdapterInput,
+            _sink: &dyn AdapterSink,
+        ) -> Result<(), AdapterError> {
+            Ok(())
+        }
+        // transform_events NOT overridden — uses default
+    }
+
+    // === Scenario: Default transform_events returns empty vec ===
+    #[test]
+    fn default_transform_events_returns_empty_vec() {
+        let adapter = MinimalAdapter;
+        let ctx = Context::new("test");
+        let events = vec![GraphEvent::NodesAdded {
+            node_ids: vec![NodeId::from_string("A")],
+            adapter_id: "test".to_string(),
+            context_id: "test".to_string(),
+        }];
+
+        let outbound = adapter.transform_events(&events, &ctx);
+        assert!(outbound.is_empty());
+    }
+
+    /// Adapter that translates NodesAdded events to "concepts_detected" outbound events.
+    struct ConceptDetectingAdapter {
+        id: String,
+    }
+
+    impl ConceptDetectingAdapter {
+        fn new(id: &str) -> Self {
+            Self {
+                id: id.to_string(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Adapter for ConceptDetectingAdapter {
+        fn id(&self) -> &str {
+            &self.id
+        }
+        fn input_kind(&self) -> &str {
+            "fragment"
+        }
+        async fn process(
+            &self,
+            _input: &AdapterInput,
+            _sink: &dyn AdapterSink,
+        ) -> Result<(), AdapterError> {
+            Ok(())
+        }
+        fn transform_events(
+            &self,
+            events: &[GraphEvent],
+            _context: &Context,
+        ) -> Vec<OutboundEvent> {
+            let mut outbound = Vec::new();
+            for event in events {
+                if let GraphEvent::NodesAdded { node_ids, .. } = event {
+                    let concepts: Vec<String> = node_ids
+                        .iter()
+                        .filter(|id| id.to_string().starts_with("concept:"))
+                        .map(|id| id.to_string().strip_prefix("concept:").unwrap().to_string())
+                        .collect();
+                    if !concepts.is_empty() {
+                        outbound.push(OutboundEvent::new(
+                            "concepts_detected",
+                            concepts.join(", "),
+                        ));
+                    }
+                }
+            }
+            outbound
+        }
+    }
+
+    // === Scenario: Adapter translates graph events to domain-meaningful outbound events ===
+    #[test]
+    fn adapter_translates_graph_events_to_outbound_events() {
+        let adapter = ConceptDetectingAdapter::new("fragment-adapter");
+        let ctx = Context::new("test");
+        let events = vec![GraphEvent::NodesAdded {
+            node_ids: vec![
+                NodeId::from_string("concept:travel"),
+                NodeId::from_string("concept:avignon"),
+            ],
+            adapter_id: "fragment-adapter".to_string(),
+            context_id: "test".to_string(),
+        }];
+
+        let outbound = adapter.transform_events(&events, &ctx);
+        assert_eq!(outbound.len(), 1);
+        assert_eq!(outbound[0].kind, "concepts_detected");
+        assert_eq!(outbound[0].detail, "travel, avignon");
     }
 }
