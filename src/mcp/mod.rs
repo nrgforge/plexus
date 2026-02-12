@@ -10,6 +10,11 @@ use crate::{
     Context, ContextId, PlexusEngine, ProvenanceApi, Source,
     OpenStore, SqliteStore,
 };
+use crate::adapter::{
+    CoOccurrenceEnrichment, IngestPipeline,
+    ProvenanceAdapter, ProvenanceInput, TagConceptBridger,
+};
+use crate::graph::NodeId;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
@@ -65,14 +70,25 @@ fn provenance_context(engine: &PlexusEngine) -> ContextId {
 #[derive(Clone)]
 pub struct PlexusMcpServer {
     engine: Arc<PlexusEngine>,
+    pipeline: Arc<IngestPipeline>,
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
 impl PlexusMcpServer {
     pub fn new(engine: Arc<PlexusEngine>) -> Self {
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![
+                Arc::new(TagConceptBridger::new()),
+                Arc::new(CoOccurrenceEnrichment::new()),
+            ],
+        );
+
         Self {
             engine,
+            pipeline: Arc::new(pipeline),
             tool_router: Self::tool_router(),
         }
     }
@@ -85,13 +101,27 @@ impl PlexusMcpServer {
     // ── Chain tools ─────────────────────────────────────────────────────
 
     #[tool(description = "Create a new provenance chain to organize related marks")]
-    fn create_chain(
+    async fn create_chain(
         &self,
         Parameters(p): Parameters<CreateChainParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.prov_api().create_chain(&p.name, p.description.as_deref()) {
-            Ok(id) => ok_text(
-                serde_json::to_string_pretty(&serde_json::json!({ "created": id })).unwrap(),
+        let ctx_id = provenance_context(&self.engine);
+        let chain_id = NodeId::new().to_string();
+
+        let input = ProvenanceInput::CreateChain {
+            chain_id: chain_id.clone(),
+            name: p.name,
+            description: p.description,
+        };
+
+        match self
+            .pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await
+        {
+            Ok(_) => ok_text(
+                serde_json::to_string_pretty(&serde_json::json!({ "created": chain_id }))
+                    .unwrap(),
             ),
             Err(e) => err_text(e.to_string()),
         }
@@ -150,21 +180,42 @@ impl PlexusMcpServer {
     // ── Mark tools ──────────────────────────────────────────────────────
 
     #[tool(description = "Add an annotated mark to a location in a file or artifact")]
-    fn add_mark(
+    async fn add_mark(
         &self,
         Parameters(p): Parameters<AddMarkParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.prov_api().add_mark(
-            &p.chain_id,
-            &p.file,
-            p.line,
-            &p.annotation,
-            p.column,
-            p.r#type.as_deref(),
-            p.tags,
-        ) {
-            Ok(id) => ok_text(
-                serde_json::to_string_pretty(&serde_json::json!({ "created": id })).unwrap(),
+        let ctx_id = provenance_context(&self.engine);
+
+        // Boundary validation: chain must exist
+        let chain_node_id = crate::graph::NodeId::from(p.chain_id.as_str());
+        if let Some(ctx) = self.engine.get_context(&ctx_id) {
+            if ctx.get_node(&chain_node_id).is_none() {
+                return err_text(format!("chain not found: {}", p.chain_id));
+            }
+        } else {
+            return err_text("provenance context not found".to_string());
+        }
+
+        let mark_id = NodeId::new().to_string();
+
+        let input = ProvenanceInput::AddMark {
+            mark_id: mark_id.clone(),
+            chain_id: p.chain_id,
+            file: p.file,
+            line: p.line,
+            annotation: p.annotation,
+            column: p.column,
+            mark_type: p.r#type,
+            tags: p.tags,
+        };
+
+        match self
+            .pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await
+        {
+            Ok(_) => ok_text(
+                serde_json::to_string_pretty(&serde_json::json!({ "created": mark_id })).unwrap(),
             ),
             Err(e) => err_text(e.to_string()),
         }
@@ -189,12 +240,22 @@ impl PlexusMcpServer {
     }
 
     #[tool(description = "Delete a mark")]
-    fn delete_mark(
+    async fn delete_mark(
         &self,
         Parameters(p): Parameters<MarkIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.prov_api().delete_mark(&p.mark_id) {
-            Ok(()) => ok_text(format!("deleted mark {}", p.mark_id)),
+        let ctx_id = provenance_context(&self.engine);
+
+        let input = ProvenanceInput::DeleteMark {
+            mark_id: p.mark_id.clone(),
+        };
+
+        match self
+            .pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await
+        {
+            Ok(_) => ok_text(format!("deleted mark {}", p.mark_id)),
             Err(e) => err_text(e.to_string()),
         }
     }
@@ -218,12 +279,37 @@ impl PlexusMcpServer {
     // ── Link tools ──────────────────────────────────────────────────────
 
     #[tool(description = "Create a link from one mark to another")]
-    fn link_marks(
+    async fn link_marks(
         &self,
         Parameters(p): Parameters<LinkMarksParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.prov_api().link_marks(&p.source_id, &p.target_id) {
-            Ok(()) => ok_text(format!("linked {} -> {}", p.source_id, p.target_id)),
+        let ctx_id = provenance_context(&self.engine);
+
+        // Boundary validation: both endpoints must exist
+        if let Some(ctx) = self.engine.get_context(&ctx_id) {
+            let source_nid = crate::graph::NodeId::from(p.source_id.as_str());
+            let target_nid = crate::graph::NodeId::from(p.target_id.as_str());
+            if ctx.get_node(&source_nid).is_none() {
+                return err_text(format!("source mark not found: {}", p.source_id));
+            }
+            if ctx.get_node(&target_nid).is_none() {
+                return err_text(format!("target mark not found: {}", p.target_id));
+            }
+        } else {
+            return err_text("provenance context not found".to_string());
+        }
+
+        let input = ProvenanceInput::LinkMarks {
+            source_id: p.source_id.clone(),
+            target_id: p.target_id.clone(),
+        };
+
+        match self
+            .pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await
+        {
+            Ok(_) => ok_text(format!("linked {} -> {}", p.source_id, p.target_id)),
             Err(e) => err_text(e.to_string()),
         }
     }
