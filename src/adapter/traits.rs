@@ -30,6 +30,15 @@ impl AdapterInput {
         }
     }
 
+    /// Create from an already-boxed data payload (avoids double-boxing).
+    pub fn from_boxed(kind: impl Into<String>, data: Box<dyn Any + Send + Sync>, context_id: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            data,
+            context_id: context_id.into(),
+        }
+    }
+
     /// Attempt to downcast the data payload to a specific type.
     pub fn downcast_data<T: 'static>(&self) -> Option<&T> {
         self.data.downcast_ref::<T>()

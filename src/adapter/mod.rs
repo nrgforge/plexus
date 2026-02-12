@@ -9,6 +9,7 @@ mod engine_sink;
 mod enrichment;
 mod events;
 pub mod fragment;
+mod ingest;
 #[cfg(test)]
 mod integration_tests;
 mod proposal_sink;
@@ -32,3 +33,4 @@ pub use types::{
 };
 pub use cooccurrence::CoOccurrenceAdapter;
 pub use fragment::{FragmentAdapter, FragmentInput};
+pub use ingest::IngestPipeline;

@@ -1311,4 +1311,265 @@ mod tests {
         assert_eq!(outbound[0].kind, "concepts_detected");
         assert_eq!(outbound[0].detail, "travel, avignon");
     }
+
+    // ================================================================
+    // Unified Ingest Pipeline (ADR-012)
+    // ================================================================
+
+    use crate::adapter::ingest::IngestPipeline;
+
+    /// Test adapter that emits concept nodes from input strings.
+    /// Also implements transform_events to detect concept nodes.
+    struct EmittingAdapter {
+        id: String,
+        input_kind: String,
+    }
+
+    impl EmittingAdapter {
+        fn new(id: &str, input_kind: &str) -> Self {
+            Self {
+                id: id.to_string(),
+                input_kind: input_kind.to_string(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Adapter for EmittingAdapter {
+        fn id(&self) -> &str {
+            &self.id
+        }
+        fn input_kind(&self) -> &str {
+            &self.input_kind
+        }
+        async fn process(
+            &self,
+            input: &AdapterInput,
+            sink: &dyn AdapterSink,
+        ) -> Result<(), AdapterError> {
+            let concepts = input
+                .downcast_data::<Vec<String>>()
+                .ok_or(AdapterError::InvalidInput)?;
+            for concept in concepts {
+                sink.emit(
+                    Emission::new().with_node(node(&format!("concept:{}", concept))),
+                )
+                .await?;
+            }
+            Ok(())
+        }
+        fn transform_events(
+            &self,
+            events: &[GraphEvent],
+            _context: &Context,
+        ) -> Vec<OutboundEvent> {
+            let mut outbound = Vec::new();
+            for event in events {
+                if let GraphEvent::NodesAdded { node_ids, .. } = event {
+                    let concepts: Vec<String> = node_ids
+                        .iter()
+                        .filter(|id| id.to_string().starts_with("concept:"))
+                        .map(|id| {
+                            id.to_string()
+                                .strip_prefix("concept:")
+                                .unwrap()
+                                .to_string()
+                        })
+                        .collect();
+                    if !concepts.is_empty() {
+                        outbound.push(OutboundEvent::new(
+                            "concepts_detected",
+                            concepts.join(", "),
+                        ));
+                    }
+                }
+            }
+            outbound
+        }
+    }
+
+    // === Scenario: ingest routes to adapter by input_kind ===
+    #[tokio::test]
+    async fn ingest_routes_to_adapter_by_input_kind() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(adapter);
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["travel".to_string(), "avignon".to_string()]);
+
+        let outbound = pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // Adapter processed — concept nodes exist
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some());
+
+        // Outbound events from transform_events
+        assert!(!outbound.is_empty());
+        assert!(outbound.iter().any(|e| e.kind == "concepts_detected"));
+    }
+
+    // === Scenario: ingest with unknown input_kind returns error ===
+    #[tokio::test]
+    async fn ingest_unknown_input_kind_returns_error() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        let pipeline = IngestPipeline::new(engine.clone());
+
+        let data: Box<dyn std::any::Any + Send + Sync> = Box::new("anything".to_string());
+        let result = pipeline
+            .ingest("provence-research", "unknown", data)
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("no adapter"),
+            "error should mention no adapter: {}",
+            err
+        );
+    }
+
+    // === Scenario: Full ingest pipeline end-to-end ===
+    #[tokio::test]
+    async fn full_ingest_pipeline_end_to_end() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        // Enrichment that creates may_be_related edges between concept nodes
+        let enrichment = Arc::new(OneShotEdgeEnrichment::new(
+            "co-occurrence",
+            "concept:travel",
+            "concept:avignon",
+        ));
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            enrichment as Arc<dyn Enrichment>,
+        ]));
+
+        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
+        let mut pipeline = IngestPipeline::new(engine.clone())
+            .with_enrichments(registry);
+        pipeline.register_adapter(adapter);
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["travel".to_string(), "avignon".to_string()]);
+
+        let outbound = pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // Primary: concept nodes created
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some());
+
+        // Enrichment: may_be_related edge created
+        let edge = ctx
+            .edges
+            .iter()
+            .find(|e| e.relationship == "may_be_related")
+            .expect("enrichment should create may_be_related edge");
+        assert_eq!(edge.source, NodeId::from_string("concept:travel"));
+        assert_eq!(edge.target, NodeId::from_string("concept:avignon"));
+
+        // Outbound: includes events from both primary and enrichment rounds
+        assert!(!outbound.is_empty());
+
+        // Return type is Vec<OutboundEvent>, not GraphEvent — consumer contract
+        let _: Vec<OutboundEvent> = outbound;
+    }
+
+    // === Scenario: Fan-out — multiple adapters matching same input_kind ===
+    #[tokio::test]
+    async fn ingest_fan_out_multiple_adapters() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        // Two adapters for the same input_kind, each detecting different concepts
+        let adapter_a = Arc::new(EmittingAdapter::new("adapter-a", "fragment"));
+        let adapter_b = Arc::new(EmittingAdapter::new("adapter-b", "fragment"));
+
+        // An enrichment that records calls to verify it runs once, not per-adapter
+        let enrichment = Arc::new(RecordingEnrichment::new("test-enrichment"));
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            enrichment.clone() as Arc<dyn Enrichment>,
+        ]));
+
+        let mut pipeline = IngestPipeline::new(engine.clone())
+            .with_enrichments(registry);
+        pipeline.register_adapter(adapter_a);
+        pipeline.register_adapter(adapter_b);
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["travel".to_string()]);
+
+        let outbound = pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // Both adapters processed (each creates concept:travel)
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+
+        // Enrichment loop ran ONCE (not per-adapter)
+        assert_eq!(enrichment.call_count(), 1);
+
+        // Both adapters' transform_events were called — each sees the full event set.
+        // Two adapters × two NodesAdded events (one from each adapter) = 4 outbound events.
+        // The key: each adapter independently filters the same accumulated events.
+        assert!(
+            outbound.iter().filter(|e| e.kind == "concepts_detected").count() >= 2,
+            "both adapters should produce outbound events, got {}",
+            outbound.len()
+        );
+    }
+
+    // === Scenario: Consumer receives outbound events, never raw graph events ===
+    #[tokio::test]
+    async fn consumer_receives_outbound_events_not_graph_events() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(adapter);
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["travel".to_string()]);
+
+        // The return type is Vec<OutboundEvent> — this is a compile-time guarantee
+        let outbound: Vec<OutboundEvent> = pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // The consumer gets domain-meaningful events, not raw GraphEvents
+        assert!(!outbound.is_empty());
+        assert_eq!(outbound[0].kind, "concepts_detected");
+    }
 }
