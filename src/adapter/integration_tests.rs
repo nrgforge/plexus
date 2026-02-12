@@ -1900,4 +1900,552 @@ mod tests {
             );
         }
     }
+
+    // ================================================================
+    // Spike: Two-Consumer Cross-Dimensional Validation
+    // ================================================================
+    //
+    // Validates the core Plexus thesis: two independent consumers
+    // (Trellis-like fragments and Carrel-like provenance marks)
+    // contributing to the same context with shared tag vocabulary
+    // produce cross-dimensional connections that surface related
+    // content across consumer boundaries.
+    //
+    // Uses Carrel's real theme vocabulary: distributed-ai,
+    // compute-economics, policy, design-constraints,
+    // non-generative-ai, federated-learning, network-science.
+
+    #[tokio::test]
+    async fn spike_two_consumer_cross_dimensional_validation() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::graph::dimension;
+        use crate::query::{TraverseQuery, Direction};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("carrel-workspace");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "carrel-workspace"))
+            .unwrap();
+
+        // Register both integrations with shared enrichments
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("trellis-fragment")),
+            vec![
+                Arc::new(TagConceptBridger::new()),
+                Arc::new(CoOccurrenceEnrichment::new()),
+            ],
+        );
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![
+                Arc::new(TagConceptBridger::new()),
+                Arc::new(CoOccurrenceEnrichment::new()),
+            ],
+        );
+
+        // ================================================================
+        // Phase 1: Trellis ingests 6 fragments with Carrel's real themes
+        // ================================================================
+
+        let fragments = vec![
+            (
+                "Distributed compute as insurance against AI concentration risk",
+                vec!["distributed-ai", "compute-economics", "policy"],
+            ),
+            (
+                "Federated learning reduces dependence on centralized training infrastructure",
+                vec!["distributed-ai", "federated-learning", "compute-economics"],
+            ),
+            (
+                "Design constraints can be generative rather than limiting",
+                vec!["design-constraints", "non-generative-ai"],
+            ),
+            (
+                "Non-generative AI tools mirror rather than replace human creativity",
+                vec!["non-generative-ai", "design-constraints"],
+            ),
+            (
+                "Network effects in distributed AI create natural resilience",
+                vec!["distributed-ai", "network-science"],
+            ),
+            (
+                "Economic models for federated compute need policy frameworks",
+                vec!["federated-learning", "policy", "compute-economics"],
+            ),
+        ];
+
+        for (text, tags) in &fragments {
+            let input = FragmentInput::new(
+                *text,
+                tags.iter().map(|t| t.to_string()).collect(),
+            );
+            pipeline
+                .ingest(
+                    "carrel-workspace",
+                    "fragment",
+                    Box::new(input),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Verify: 7 concept nodes created
+        {
+            let ctx = engine.get_context(&ctx_id).unwrap();
+            let concepts: Vec<_> = ctx
+                .nodes()
+                .filter(|n| n.dimension == dimension::SEMANTIC)
+                .collect();
+            assert_eq!(concepts.len(), 7, "should have 7 concept nodes");
+
+            let expected_concepts = [
+                "concept:distributed-ai",
+                "concept:compute-economics",
+                "concept:policy",
+                "concept:design-constraints",
+                "concept:non-generative-ai",
+                "concept:federated-learning",
+                "concept:network-science",
+            ];
+            for concept_id in &expected_concepts {
+                assert!(
+                    ctx.get_node(&NodeId::from_string(*concept_id)).is_some(),
+                    "missing concept node: {}",
+                    concept_id
+                );
+            }
+
+            // Verify: 6 fragment nodes
+            let fragment_nodes: Vec<_> = ctx
+                .nodes()
+                .filter(|n| n.dimension == dimension::STRUCTURE)
+                .collect();
+            assert_eq!(fragment_nodes.len(), 6, "should have 6 fragment nodes");
+
+            // Verify: tagged_with edges (sum of all tag counts: 3+3+2+2+2+3 = 15)
+            let tagged_with: Vec<_> = ctx
+                .edges()
+                .filter(|e| e.relationship == "tagged_with")
+                .collect();
+            assert_eq!(tagged_with.len(), 15, "should have 15 tagged_with edges");
+
+            // Verify: may_be_related edges exist (co-occurrence detected)
+            let may_be_related: Vec<_> = ctx
+                .edges()
+                .filter(|e| e.relationship == "may_be_related")
+                .collect();
+            assert!(
+                !may_be_related.is_empty(),
+                "CoOccurrenceEnrichment should have proposed may_be_related edges"
+            );
+
+            // Specific co-occurrence: distributed-ai ↔ compute-economics
+            // (co-occur in fragments 1 and 2)
+            let dai_ce: Vec<_> = ctx
+                .edges()
+                .filter(|e| {
+                    e.relationship == "may_be_related"
+                        && ((e.source == NodeId::from_string("concept:distributed-ai")
+                            && e.target == NodeId::from_string("concept:compute-economics"))
+                            || (e.source == NodeId::from_string("concept:compute-economics")
+                                && e.target == NodeId::from_string("concept:distributed-ai")))
+                })
+                .collect();
+            assert_eq!(
+                dai_ce.len(),
+                2,
+                "distributed-ai ↔ compute-economics should have symmetric may_be_related pair"
+            );
+        }
+
+        // ================================================================
+        // Phase 2: Carrel creates chains and marks with overlapping tags
+        // ================================================================
+
+        // Create writing chain
+        pipeline
+            .ingest(
+                "carrel-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::CreateChain {
+                    chain_id: "the-distributed-bet".to_string(),
+                    name: "The Distributed Bet".to_string(),
+                    description: Some("Essay on distributed compute economics".to_string()),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Create research chain
+        pipeline
+            .ingest(
+                "carrel-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::CreateChain {
+                    chain_id: "research-2026-02".to_string(),
+                    name: "Research Scan Feb 2026".to_string(),
+                    description: None,
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Writing mark 1: core argument passage
+        pipeline
+            .ingest(
+                "carrel-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "writing-mark-1".to_string(),
+                    chain_id: "the-distributed-bet".to_string(),
+                    file: "docs/drafts/the-distributed-bet.md".to_string(),
+                    line: 42,
+                    annotation: "Core argument — distributed compute as insurance against concentration".to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec!["#distributed-ai".to_string(), "#compute-economics".to_string()]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Writing mark 2: design constraints section
+        pipeline
+            .ingest(
+                "carrel-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "writing-mark-2".to_string(),
+                    chain_id: "the-distributed-bet".to_string(),
+                    file: "docs/drafts/the-distributed-bet.md".to_string(),
+                    line: 87,
+                    annotation: "Design constraints as generative force".to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec!["#design-constraints".to_string(), "#non-generative-ai".to_string()]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Research mark 1: federated learning paper
+        pipeline
+            .ingest(
+                "carrel-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "research-mark-1".to_string(),
+                    chain_id: "research-2026-02".to_string(),
+                    file: "docs/research/2026-02-09.md".to_string(),
+                    line: 15,
+                    annotation: "Chen et al. 2025 — federated learning economics align with distributed bet thesis".to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec!["#federated-learning".to_string(), "#compute-economics".to_string()]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Research mark 2: network resilience paper
+        pipeline
+            .ingest(
+                "carrel-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "research-mark-2".to_string(),
+                    chain_id: "research-2026-02".to_string(),
+                    file: "docs/research/2026-02-09.md".to_string(),
+                    line: 42,
+                    annotation: "Park et al. 2025 — network resilience in distributed AI systems".to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec!["#distributed-ai".to_string(), "#network-science".to_string()]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // ================================================================
+        // Phase 3: Link research marks to writing marks
+        // ================================================================
+
+        // Research mark 1 → Writing mark 1 (federated learning supports distributed bet)
+        pipeline
+            .ingest(
+                "carrel-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::LinkMarks {
+                    source_id: "research-mark-1".to_string(),
+                    target_id: "writing-mark-1".to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Research mark 2 → Writing mark 1 (network resilience supports distributed bet)
+        pipeline
+            .ingest(
+                "carrel-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::LinkMarks {
+                    source_id: "research-mark-2".to_string(),
+                    target_id: "writing-mark-1".to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // ================================================================
+        // Phase 4: Validate cross-dimensional graph structure
+        // ================================================================
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // --- 4a: All marks exist in provenance dimension ---
+        let mark_ids = [
+            "writing-mark-1",
+            "writing-mark-2",
+            "research-mark-1",
+            "research-mark-2",
+        ];
+        for mark_id in &mark_ids {
+            let mark = ctx
+                .get_node(&NodeId::from_string(*mark_id))
+                .unwrap_or_else(|| panic!("mark {} should exist", mark_id));
+            assert_eq!(mark.dimension, dimension::PROVENANCE);
+        }
+
+        // --- 4b: Chains contain their marks ---
+        let contains: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "contains")
+            .collect();
+        assert_eq!(contains.len(), 4, "4 marks in 2 chains = 4 contains edges");
+
+        // --- 4c: Research-to-writing links exist ---
+        let links_to: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "links_to")
+            .collect();
+        assert_eq!(links_to.len(), 2, "2 research→writing links");
+
+        // --- 4d: TagConceptBridger created references edges ---
+        let references: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "references")
+            .collect();
+
+        // Each mark has 2 tags → 2 references edges per mark → 4 marks × 2 = 8
+        assert_eq!(
+            references.len(),
+            8,
+            "4 marks × 2 tags each = 8 references edges"
+        );
+
+        // Verify specific bridges
+        let wm1_refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("writing-mark-1")
+                    && e.relationship == "references"
+            })
+            .collect();
+        assert_eq!(wm1_refs.len(), 2);
+        let wm1_targets: std::collections::HashSet<String> =
+            wm1_refs.iter().map(|e| e.target.to_string()).collect();
+        assert!(wm1_targets.contains("concept:distributed-ai"));
+        assert!(wm1_targets.contains("concept:compute-economics"));
+
+        let rm1_refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("research-mark-1")
+                    && e.relationship == "references"
+            })
+            .collect();
+        assert_eq!(rm1_refs.len(), 2);
+        let rm1_targets: std::collections::HashSet<String> =
+            rm1_refs.iter().map(|e| e.target.to_string()).collect();
+        assert!(rm1_targets.contains("concept:federated-learning"));
+        assert!(rm1_targets.contains("concept:compute-economics"));
+
+        // Verify cross-dimensional nature of references edges
+        for ref_edge in &references {
+            assert_eq!(
+                ref_edge.source_dimension,
+                dimension::PROVENANCE,
+                "references source should be provenance"
+            );
+            assert_eq!(
+                ref_edge.target_dimension,
+                dimension::SEMANTIC,
+                "references target should be semantic"
+            );
+        }
+
+        // ================================================================
+        // Phase 5: Cross-dimensional traversal — the key validation
+        // ================================================================
+        //
+        // The core test: starting from a research mark, can we traverse
+        // through concepts to reach related writing fragments?
+        //
+        // Path: research-mark-1 → references → concept:compute-economics
+        //       → tagged_with (incoming) → fragment nodes
+        //
+        // This is the connection that neither consumer could produce alone.
+
+        // Step 1: From research-mark-1, find referenced concepts
+        let rm1_concepts: Vec<NodeId> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("research-mark-1")
+                    && e.relationship == "references"
+            })
+            .map(|e| e.target.clone())
+            .collect();
+        assert_eq!(rm1_concepts.len(), 2, "research-mark-1 references 2 concepts");
+
+        // Step 2: From concept:compute-economics, find fragments via tagged_with
+        let ce_id = NodeId::from_string("concept:compute-economics");
+        let fragments_via_ce: Vec<&Edge> = ctx
+            .edges()
+            .filter(|e| e.target == ce_id && e.relationship == "tagged_with")
+            .collect();
+
+        // Fragments 1, 2, and 6 are tagged with compute-economics
+        assert_eq!(
+            fragments_via_ce.len(),
+            3,
+            "3 fragments tagged with compute-economics"
+        );
+
+        // Step 3: From concept:federated-learning, find fragments
+        let fl_id = NodeId::from_string("concept:federated-learning");
+        let fragments_via_fl: Vec<&Edge> = ctx
+            .edges()
+            .filter(|e| e.target == fl_id && e.relationship == "tagged_with")
+            .collect();
+        assert_eq!(
+            fragments_via_fl.len(),
+            2,
+            "2 fragments tagged with federated-learning"
+        );
+
+        // Step 4: Verify the fragment nodes reached are in the structure dimension
+        for edge in &fragments_via_ce {
+            let fragment = ctx
+                .get_node(&edge.source)
+                .expect("fragment node should exist");
+            assert_eq!(fragment.dimension, dimension::STRUCTURE);
+        }
+
+        // Step 5: Verify that writing-mark-1 and research-mark-1 share concept:compute-economics
+        // This is the cross-pollination: a research annotation and a writing annotation
+        // both reference the same concept, connected through different paths
+        let wm1_concepts: std::collections::HashSet<String> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("writing-mark-1")
+                    && e.relationship == "references"
+            })
+            .map(|e| e.target.to_string())
+            .collect();
+        let rm1_concept_set: std::collections::HashSet<String> =
+            rm1_concepts.iter().map(|id| id.to_string()).collect();
+
+        let shared_concepts: Vec<_> = wm1_concepts.intersection(&rm1_concept_set).collect();
+        assert!(
+            shared_concepts.contains(&&"concept:compute-economics".to_string()),
+            "writing-mark-1 and research-mark-1 should share concept:compute-economics"
+        );
+
+        // Step 6: Use TraverseQuery to walk from research-mark-1 outward
+        // Direction::Both, depth 2, no relationship filter
+        // Should reach: concepts (depth 1) and marks/fragments (depth 2)
+        let traversal = TraverseQuery::from(NodeId::from_string("research-mark-1"))
+            .depth(2)
+            .direction(Direction::Both)
+            .execute(&ctx);
+
+        // Level 0: research-mark-1 itself
+        assert_eq!(traversal.levels[0].len(), 1);
+        assert_eq!(
+            traversal.levels[0][0].id,
+            NodeId::from_string("research-mark-1")
+        );
+
+        // Level 1: concepts (via references), chain (via contains), writing-mark-1 (via links_to)
+        assert!(
+            traversal.levels.len() >= 2,
+            "should have at least 2 levels"
+        );
+        let level1_ids: std::collections::HashSet<String> = traversal.levels[1]
+            .iter()
+            .map(|n| n.id.to_string())
+            .collect();
+        assert!(
+            level1_ids.contains("concept:federated-learning"),
+            "level 1 should contain concept:federated-learning"
+        );
+        assert!(
+            level1_ids.contains("concept:compute-economics"),
+            "level 1 should contain concept:compute-economics"
+        );
+
+        // Level 2: fragments (via tagged_with from concepts), other marks (via concepts)
+        if traversal.levels.len() >= 3 {
+            let level2_dimensions: std::collections::HashSet<String> = traversal.levels[2]
+                .iter()
+                .map(|n| n.dimension.clone())
+                .collect();
+            // Should include structure dimension (fragments reached via concepts)
+            assert!(
+                level2_dimensions.contains(dimension::STRUCTURE),
+                "depth-2 traversal from research mark should reach structure-dimension fragments"
+            );
+        }
+
+        // ================================================================
+        // Phase 6: Verify persistence survives restart
+        // ================================================================
+
+        drop(engine);
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+
+        // Core structure survives
+        assert_eq!(
+            ctx2.nodes().filter(|n| n.dimension == dimension::SEMANTIC).count(),
+            7,
+            "7 concepts survive restart"
+        );
+        assert_eq!(
+            ctx2.nodes().filter(|n| n.dimension == dimension::STRUCTURE).count(),
+            6,
+            "6 fragments survive restart"
+        );
+        assert_eq!(
+            ctx2.edges().filter(|e| e.relationship == "references").count(),
+            8,
+            "8 references edges survive restart"
+        );
+        assert_eq!(
+            ctx2.edges().filter(|e| e.relationship == "tagged_with").count(),
+            15,
+            "15 tagged_with edges survive restart"
+        );
+        assert_eq!(
+            ctx2.edges().filter(|e| e.relationship == "links_to").count(),
+            2,
+            "2 links_to edges survive restart"
+        );
+    }
 }
