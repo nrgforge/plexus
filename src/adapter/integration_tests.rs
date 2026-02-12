@@ -1701,6 +1701,123 @@ mod tests {
         );
     }
 
+    // ================================================================
+    // ProvenanceAdapter through Ingest Pipeline (ADR-012)
+    // ================================================================
+
+    use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
+
+    // === Scenario: AddMark through ingest triggers TagConceptBridger ===
+    #[tokio::test]
+    async fn provenance_add_mark_through_ingest_triggers_tag_bridger() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+
+        // Pre-populate: concept:travel exists, chain exists
+        let mut ctx = Context::with_id(ctx_id.clone(), "provence-research");
+        ctx.add_node(concept_node("travel"));
+        let mut chain = Node::new_in_dimension(
+            "chain",
+            ContentType::Provenance,
+            dimension::PROVENANCE,
+        );
+        chain.id = NodeId::from("chain-1");
+        ctx.add_node(chain);
+        engine.upsert_context(ctx).unwrap();
+
+        // Register ProvenanceAdapter + TagConceptBridger
+        let adapter = Arc::new(ProvenanceAdapter::new());
+        let bridger = Arc::new(TagConceptBridger::new());
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            bridger as Arc<dyn Enrichment>,
+        ]));
+
+        let mut pipeline = IngestPipeline::new(engine.clone())
+            .with_enrichments(registry);
+        pipeline.register_adapter(adapter);
+
+        // Ingest a mark with tag #travel
+        let data: Box<dyn std::any::Any + Send + Sync> = Box::new(ProvenanceInput::AddMark {
+            mark_id: "mark-1".to_string(),
+            chain_id: "chain-1".to_string(),
+            file: "notes.md".to_string(),
+            line: 42,
+            annotation: "walking through Avignon".to_string(),
+            column: None,
+            mark_type: None,
+            tags: Some(vec!["#travel".to_string()]),
+        });
+        pipeline
+            .ingest("provence-research", "provenance", data)
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // Mark node exists
+        assert!(ctx.get_node(&NodeId::from("mark-1")).is_some());
+
+        // Contains edge: chain → mark
+        let contains: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from("chain-1")
+                    && e.target == NodeId::from("mark-1")
+                    && e.relationship == "contains"
+            })
+            .collect();
+        assert_eq!(contains.len(), 1);
+
+        // TagConceptBridger should have created references edge: mark → concept:travel
+        let refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from("mark-1")
+                    && e.target == NodeId::from_string("concept:travel")
+                    && e.relationship == "references"
+            })
+            .collect();
+        assert_eq!(
+            refs.len(),
+            1,
+            "TagConceptBridger should bridge mark to concept:travel"
+        );
+        assert_eq!(refs[0].source_dimension, dimension::PROVENANCE);
+        assert_eq!(refs[0].target_dimension, dimension::SEMANTIC);
+    }
+
+    // === Scenario: CreateChain through ingest produces chain node ===
+    #[tokio::test]
+    async fn provenance_create_chain_through_ingest() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        let adapter = Arc::new(ProvenanceAdapter::new());
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(adapter);
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(ProvenanceInput::CreateChain {
+                chain_id: "chain-1".to_string(),
+                name: "reading-notes".to_string(),
+                description: Some("Notes from reading".to_string()),
+            });
+        pipeline
+            .ingest("provence-research", "provenance", data)
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let chain = ctx
+            .get_node(&NodeId::from("chain-1"))
+            .expect("chain node should exist");
+        assert_eq!(chain.node_type, "chain");
+        assert_eq!(chain.dimension, dimension::PROVENANCE);
+    }
+
     // === Scenario: CoOccurrenceEnrichment fires through the pipeline on new fragments ===
     #[tokio::test]
     async fn cooccurrence_enrichment_fires_in_pipeline() {

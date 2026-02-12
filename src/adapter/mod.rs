@@ -13,6 +13,7 @@ mod ingest;
 #[cfg(test)]
 mod integration_tests;
 mod provenance;
+pub mod provenance_adapter;
 mod router;
 mod sink;
 mod tag_bridger;
@@ -33,4 +34,5 @@ pub use types::{
 pub use cooccurrence::CoOccurrenceEnrichment;
 pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
+pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 pub use tag_bridger::TagConceptBridger;
