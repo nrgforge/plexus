@@ -4,6 +4,9 @@
 //! - A fragment node (Document, structure dimension)
 //! - A concept node per tag (Concept, semantic dimension)
 //! - A tagged_with edge per tag (fragment → concept, contribution 1.0)
+//! - A chain node (Provenance, provenance dimension) — per adapter+source, idempotent
+//! - A mark node (Provenance, provenance dimension) — source evidence for the fragment
+//! - A contains edge (chain → mark, within provenance)
 
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
@@ -135,6 +138,76 @@ impl Adapter for FragmentAdapter {
             emission = emission.with_node(concept_node).with_edge(edge);
         }
 
+        // Build provenance chain + mark (source evidence)
+        //
+        // The chain groups all marks from this adapter for this source.
+        // Deterministic ID ensures idempotent upsert across ingest calls.
+        // The mark records where this fragment's knowledge came from,
+        // with tags that TagConceptBridger will bridge to concept nodes.
+        let source = fragment.source.as_deref().unwrap_or("default");
+        let chain_id = NodeId::from_string(format!("chain:{}:{}", self.adapter_id, source));
+        let mut chain_node = Node::new_in_dimension(
+            "chain",
+            ContentType::Provenance,
+            dimension::PROVENANCE,
+        );
+        chain_node.id = chain_id.clone();
+        chain_node.properties.insert(
+            "name".to_string(),
+            PropertyValue::String(format!("{} — {}", self.adapter_id, source)),
+        );
+        chain_node.properties.insert(
+            "status".to_string(),
+            PropertyValue::String("active".to_string()),
+        );
+
+        let mark_id = NodeId::from_string(format!("mark:{}:{}", self.adapter_id, fragment_id));
+        let mut mark_node = Node::new_in_dimension(
+            "mark",
+            ContentType::Provenance,
+            dimension::PROVENANCE,
+        );
+        mark_node.id = mark_id.clone();
+        mark_node.properties.insert(
+            "chain_id".to_string(),
+            PropertyValue::String(chain_id.to_string()),
+        );
+        mark_node.properties.insert(
+            "annotation".to_string(),
+            PropertyValue::String(fragment.text.clone()),
+        );
+        mark_node.properties.insert(
+            "file".to_string(),
+            PropertyValue::String(source.to_string()),
+        );
+        mark_node.properties.insert(
+            "line".to_string(),
+            PropertyValue::Int(1),
+        );
+        if !fragment.tags.is_empty() {
+            let tag_vals: Vec<PropertyValue> = fragment
+                .tags
+                .iter()
+                .map(|t| PropertyValue::String(t.to_lowercase()))
+                .collect();
+            mark_node.properties.insert(
+                "tags".to_string(),
+                PropertyValue::Array(tag_vals),
+            );
+        }
+
+        let contains_edge = Edge::new_in_dimension(
+            chain_id,
+            mark_id,
+            "contains",
+            dimension::PROVENANCE,
+        );
+
+        emission = emission
+            .with_node(chain_node)
+            .with_node(mark_node)
+            .with_edge(contains_edge);
+
         sink.emit(emission).await?;
         Ok(())
     }
@@ -177,8 +250,8 @@ mod tests {
         adapter.process(&input, &sink).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        // 3 nodes: 1 fragment + 2 concepts
-        assert_eq!(ctx.node_count(), 3);
+        // 5 nodes: 1 fragment + 2 concepts + 1 chain + 1 mark
+        assert_eq!(ctx.node_count(), 5);
 
         // Fragment node
         let fragment_nodes: Vec<_> = ctx
@@ -201,7 +274,7 @@ mod tests {
         assert_eq!(avignon.content_type, ContentType::Concept);
         assert_eq!(avignon.dimension, dimension::SEMANTIC);
 
-        // 2 tagged_with edges
+        // 2 tagged_with edges + 1 contains edge = 3 total
         let tagged_with_edges: Vec<_> = ctx
             .edges
             .iter()
@@ -213,6 +286,19 @@ mod tests {
         for edge in &tagged_with_edges {
             assert_eq!(edge.contributions.get("manual-fragment"), Some(&1.0));
         }
+
+        // Provenance: chain + mark + contains edge
+        let chain = ctx.get_node(&NodeId::from_string("chain:manual-fragment:default"));
+        assert!(chain.is_some());
+        let chain = chain.unwrap();
+        assert_eq!(chain.dimension, dimension::PROVENANCE);
+
+        let contains_edges: Vec<_> = ctx
+            .edges
+            .iter()
+            .filter(|e| e.relationship == "contains")
+            .collect();
+        assert_eq!(contains_edges.len(), 1);
     }
 
     // === Scenario: Two fragments sharing a tag converge on the same concept node ===
@@ -236,8 +322,8 @@ mod tests {
         adapter.process(&input2, &sink).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        // 5 nodes: 2 fragments + 3 concepts (travel upserted, not duplicated)
-        assert_eq!(ctx.node_count(), 5);
+        // 8 nodes: 2 fragments + 3 concepts + 1 chain (shared source "default") + 2 marks
+        assert_eq!(ctx.node_count(), 8);
 
         // 3 concept nodes
         assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
@@ -299,8 +385,10 @@ mod tests {
         adapter.process(&input, &sink).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.node_count(), 1);
-        assert_eq!(ctx.edge_count(), 0);
+        // 3 nodes: 1 fragment + 1 chain + 1 mark (no concepts — no tags)
+        assert_eq!(ctx.node_count(), 3);
+        // 1 edge: contains (chain → mark), no tagged_with edges
+        assert_eq!(ctx.edge_count(), 1);
 
         let fragment_nodes: Vec<_> = ctx
             .nodes
@@ -308,6 +396,15 @@ mod tests {
             .filter(|n| n.content_type == ContentType::Document)
             .collect();
         assert_eq!(fragment_nodes.len(), 1);
+
+        // Mark exists but has no tags property
+        let marks: Vec<_> = ctx
+            .nodes
+            .values()
+            .filter(|n| n.node_type == "mark")
+            .collect();
+        assert_eq!(marks.len(), 1);
+        assert!(!marks[0].properties.contains_key("tags"));
     }
 
     // === Scenario: Fragment adapter emits all items in a single emission ===
@@ -331,8 +428,10 @@ mod tests {
 
         let ctx = ctx.lock().unwrap();
         // All committed — no rejections means single emission with nodes + edges together
-        assert_eq!(ctx.node_count(), 3);
-        assert_eq!(ctx.edge_count(), 2);
+        // 5 nodes: 1 fragment + 2 concepts + 1 chain + 1 mark
+        assert_eq!(ctx.node_count(), 5);
+        // 3 edges: 2 tagged_with + 1 contains
+        assert_eq!(ctx.edge_count(), 3);
     }
 
     // ================================================================

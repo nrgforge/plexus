@@ -2226,7 +2226,9 @@ mod tests {
             .edges()
             .filter(|e| e.relationship == "contains")
             .collect();
-        assert_eq!(contains.len(), 4, "4 marks in 2 chains = 4 contains edges");
+        // 6 from FragmentAdapter (chain:trellis-fragment:default → 6 marks)
+        // + 4 from ProvenanceAdapter (2 chains × 2 marks each)
+        assert_eq!(contains.len(), 10, "6 fragment marks + 4 provenance marks = 10 contains edges");
 
         // --- 4c: Research-to-writing links exist ---
         let links_to: Vec<_> = ctx
@@ -2241,11 +2243,13 @@ mod tests {
             .filter(|e| e.relationship == "references")
             .collect();
 
-        // Each mark has 2 tags → 2 references edges per mark → 4 marks × 2 = 8
+        // Fragment marks: 6 marks with tag counts 3+3+2+2+2+3 = 15 references
+        // Provenance marks: 4 marks × 2 tags each = 8 references
+        // Total = 23
         assert_eq!(
             references.len(),
-            8,
-            "4 marks × 2 tags each = 8 references edges"
+            23,
+            "15 fragment-mark refs + 8 provenance-mark refs = 23 references edges"
         );
 
         // Verify specific bridges
@@ -2434,8 +2438,8 @@ mod tests {
         );
         assert_eq!(
             ctx2.edges().filter(|e| e.relationship == "references").count(),
-            8,
-            "8 references edges survive restart"
+            23,
+            "23 references edges survive restart"
         );
         assert_eq!(
             ctx2.edges().filter(|e| e.relationship == "tagged_with").count(),
@@ -2446,6 +2450,290 @@ mod tests {
             ctx2.edges().filter(|e| e.relationship == "links_to").count(),
             2,
             "2 links_to edges survive restart"
+        );
+    }
+
+    // ================================================================
+    // Spike: Provenance as Epistemological Infrastructure (Essay 12)
+    // ================================================================
+    //
+    // Validates that FragmentAdapter automatically produces provenance
+    // marks alongside semantic output, and TagConceptBridger bridges
+    // those marks to concepts — making every concept's origin
+    // graph-traversable.
+
+    #[tokio::test]
+    async fn spike_fragment_adapter_produces_traversable_provenance() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::graph::dimension;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+
+        let ctx_id = ContextId::from("provenance-spike");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provenance-spike"))
+            .unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("journal")),
+            vec![
+                Arc::new(TagConceptBridger::new()),
+                Arc::new(CoOccurrenceEnrichment::new()),
+            ],
+        );
+
+        // Ingest a single fragment
+        let input = FragmentInput::new(
+            "Walked through Avignon, thinking about distributed systems",
+            vec!["travel".to_string(), "distributed-ai".to_string()],
+        )
+        .with_source("journal-2026-02");
+
+        pipeline
+            .ingest("provenance-spike", "fragment", Box::new(input))
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // --- Semantic output: fragment + concepts + tagged_with ---
+        let fragments: Vec<_> = ctx
+            .nodes()
+            .filter(|n| n.dimension == dimension::STRUCTURE && n.node_type == "fragment")
+            .collect();
+        assert_eq!(fragments.len(), 1, "1 fragment node");
+
+        let concepts: Vec<_> = ctx
+            .nodes()
+            .filter(|n| n.dimension == dimension::SEMANTIC)
+            .collect();
+        assert_eq!(concepts.len(), 2, "2 concept nodes (travel, distributed-ai)");
+
+        // --- Provenance output: chain + mark + contains ---
+        let chain = ctx.get_node(&NodeId::from_string("chain:journal:journal-2026-02"));
+        assert!(chain.is_some(), "chain node should exist");
+        let chain = chain.unwrap();
+        assert_eq!(chain.dimension, dimension::PROVENANCE);
+
+        let marks: Vec<_> = ctx
+            .nodes()
+            .filter(|n| n.dimension == dimension::PROVENANCE && n.node_type == "mark")
+            .collect();
+        assert_eq!(marks.len(), 1, "1 mark node");
+
+        // Mark carries source evidence
+        let mark = marks[0];
+        assert_eq!(
+            mark.properties.get("file"),
+            Some(&PropertyValue::String("journal-2026-02".to_string())),
+        );
+        assert_eq!(
+            mark.properties.get("annotation"),
+            Some(&PropertyValue::String(
+                "Walked through Avignon, thinking about distributed systems".to_string()
+            )),
+        );
+
+        let contains: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "contains")
+            .collect();
+        assert_eq!(contains.len(), 1, "chain → mark contains edge");
+
+        // --- Cross-dimensional bridging: TagConceptBridger auto-bridged ---
+        let references: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "references")
+            .collect();
+        assert_eq!(references.len(), 2, "mark references 2 concepts via tags");
+
+        // Each references edge is cross-dimensional: provenance → semantic
+        for ref_edge in &references {
+            assert_eq!(ref_edge.source_dimension, dimension::PROVENANCE);
+            assert_eq!(ref_edge.target_dimension, dimension::SEMANTIC);
+        }
+
+        // --- The key test: concept → provenance traversal ---
+        // From concept:travel, can we find where the knowledge came from?
+        let travel_id = NodeId::from_string("concept:travel");
+        let incoming_refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == travel_id && e.relationship == "references")
+            .collect();
+        assert_eq!(incoming_refs.len(), 1, "1 mark references concept:travel");
+
+        // The mark points back to the chain (via contains)
+        let mark_id = &incoming_refs[0].source;
+        let mark_chain: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == *mark_id && e.relationship == "contains")
+            .collect();
+        assert_eq!(mark_chain.len(), 1, "mark is contained in a chain");
+        assert_eq!(
+            mark_chain[0].source,
+            NodeId::from_string("chain:journal:journal-2026-02"),
+            "chain is the journal source"
+        );
+    }
+
+    #[tokio::test]
+    async fn spike_multi_phase_hebbian_provenance() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+
+        let ctx_id = ContextId::from("multi-phase");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "multi-phase"))
+            .unwrap();
+
+        // Two adapter instances: manual (L1) and LLM-extracted (L4)
+        // Same source, different processing phases.
+        // Separate pipelines because both share input_kind="fragment" —
+        // in production each phase would run independently.
+        let enrichments: Vec<Arc<dyn crate::adapter::enrichment::Enrichment>> = vec![
+            Arc::new(TagConceptBridger::new()),
+            Arc::new(CoOccurrenceEnrichment::new()),
+        ];
+
+        let mut manual_pipeline = IngestPipeline::new(engine.clone());
+        manual_pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("manual-journal")),
+            enrichments.clone(),
+        );
+
+        let mut llm_pipeline = IngestPipeline::new(engine.clone());
+        llm_pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("llm-extract")),
+            enrichments,
+        );
+
+        // Phase 1: Manual tagging (human applies broad tags)
+        let manual_input = FragmentInput::new(
+            "The federated approach distributes compute across nodes",
+            vec!["distributed-ai".to_string()],
+        )
+        .with_source("paper-chen-2025");
+
+        manual_pipeline
+            .ingest("multi-phase", "fragment", Box::new(manual_input))
+            .await
+            .unwrap();
+
+        // Phase 2: LLM extraction (richer tags from same source)
+        let llm_input = FragmentInput::new(
+            "The federated approach distributes compute across nodes",
+            vec![
+                "distributed-ai".to_string(),
+                "federated-learning".to_string(),
+                "compute-economics".to_string(),
+            ],
+        )
+        .with_source("paper-chen-2025");
+
+        llm_pipeline
+            .ingest("multi-phase", "fragment", Box::new(llm_input))
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // --- Hebbian accumulation: concept:distributed-ai has 2 tagged_with edges ---
+        let dai_id = NodeId::from_string("concept:distributed-ai");
+        let dai_edges: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == dai_id && e.relationship == "tagged_with")
+            .collect();
+        assert_eq!(
+            dai_edges.len(),
+            2,
+            "2 fragments both tagged with distributed-ai"
+        );
+
+        // Each edge has a different adapter's contribution
+        let adapter_ids: std::collections::HashSet<String> = dai_edges
+            .iter()
+            .flat_map(|e| e.contributions.keys().cloned())
+            .collect();
+        assert!(adapter_ids.contains("manual-journal"));
+        assert!(adapter_ids.contains("llm-extract"));
+
+        // --- Separate chains for same source but different adapters ---
+        let manual_chain = ctx.get_node(&NodeId::from_string("chain:manual-journal:paper-chen-2025"));
+        let llm_chain = ctx.get_node(&NodeId::from_string("chain:llm-extract:paper-chen-2025"));
+        assert!(manual_chain.is_some(), "manual adapter has its own chain");
+        assert!(llm_chain.is_some(), "LLM adapter has its own chain");
+
+        // --- Provenance explains each contribution ---
+        // Manual mark has 1 tag → 1 references edge
+        let manual_marks: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.relationship == "contains"
+                    && e.source == NodeId::from_string("chain:manual-journal:paper-chen-2025")
+            })
+            .collect();
+        assert_eq!(manual_marks.len(), 1, "manual chain contains 1 mark");
+
+        let manual_mark_id = &manual_marks[0].target;
+        let manual_refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.source == *manual_mark_id && e.relationship == "references")
+            .collect();
+        assert_eq!(manual_refs.len(), 1, "manual mark references 1 concept");
+
+        // LLM mark has 3 tags → 3 references edges
+        let llm_marks: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.relationship == "contains"
+                    && e.source == NodeId::from_string("chain:llm-extract:paper-chen-2025")
+            })
+            .collect();
+        assert_eq!(llm_marks.len(), 1, "LLM chain contains 1 mark");
+
+        let llm_mark_id = &llm_marks[0].target;
+        let llm_refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.source == *llm_mark_id && e.relationship == "references")
+            .collect();
+        assert_eq!(llm_refs.len(), 3, "LLM mark references 3 concepts");
+
+        // --- Progressive enrichment: LLM phase added concepts manual didn't see ---
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:federated-learning")).is_some(),
+            "federated-learning concept added by LLM phase"
+        );
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:compute-economics")).is_some(),
+            "compute-economics concept added by LLM phase"
+        );
+
+        // --- Cross-dimensional traversal: concept → mark → chain → source ---
+        // From concept:federated-learning, find where it came from
+        let fl_id = NodeId::from_string("concept:federated-learning");
+        let fl_incoming: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == fl_id && e.relationship == "references")
+            .collect();
+        assert_eq!(fl_incoming.len(), 1, "1 mark references federated-learning");
+
+        // That mark is in the LLM chain
+        let source_mark = &fl_incoming[0].source;
+        let chain_edge: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == *source_mark && e.relationship == "contains")
+            .collect();
+        assert_eq!(chain_edge.len(), 1);
+        assert_eq!(
+            chain_edge[0].source,
+            NodeId::from_string("chain:llm-extract:paper-chen-2025"),
+            "federated-learning was extracted by LLM phase from paper-chen-2025"
         );
     }
 }
