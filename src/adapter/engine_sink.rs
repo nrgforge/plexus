@@ -46,12 +46,19 @@ pub struct EngineSink {
     backend: SinkBackend,
     framework: Option<FrameworkContext>,
     enrichments: Option<Arc<EnrichmentRegistry>>,
+    /// Events accumulated across all emit() calls (for pipeline event collection).
+    accumulated_events: Mutex<Vec<GraphEvent>>,
 }
 
 impl EngineSink {
     /// Create a sink backed by a bare Mutex (test path, no persistence).
     pub fn new(context: Arc<Mutex<Context>>) -> Self {
-        Self { backend: SinkBackend::Mutex(context), framework: None, enrichments: None }
+        Self {
+            backend: SinkBackend::Mutex(context),
+            framework: None,
+            enrichments: None,
+            accumulated_events: Mutex::new(Vec::new()),
+        }
     }
 
     /// Create a sink backed by PlexusEngine (ADR-006).
@@ -63,6 +70,7 @@ impl EngineSink {
             backend: SinkBackend::Engine { engine, context_id },
             framework: None,
             enrichments: None,
+            accumulated_events: Mutex::new(Vec::new()),
         }
     }
 
@@ -81,11 +89,19 @@ impl EngineSink {
         self
     }
 
+    /// Drain and return all events accumulated across emit() calls.
+    ///
+    /// Used by the ingest pipeline to collect events from adapter processing
+    /// without going through the AdapterSink trait.
+    pub fn take_accumulated_events(&self) -> Vec<GraphEvent> {
+        std::mem::take(&mut *self.accumulated_events.lock().unwrap())
+    }
+
     /// Core emission logic operating on a mutable Context reference.
     ///
     /// Extracted so both the Mutex path and future engine path share
     /// identical validation, contribution tracking, and event logic.
-    fn emit_inner(
+    pub(crate) fn emit_inner(
         ctx: &mut Context,
         emission: Emission,
         framework: &Option<FrameworkContext>,
@@ -246,7 +262,7 @@ impl EngineSink {
     }
 
     /// Map a PlexusError to an AdapterError.
-    fn map_engine_error(e: crate::graph::PlexusError) -> AdapterError {
+    pub(crate) fn map_engine_error(e: crate::graph::PlexusError) -> AdapterError {
         match e {
             crate::graph::PlexusError::ContextNotFound(id) =>
                 AdapterError::ContextNotFound(id.to_string()),
@@ -260,14 +276,16 @@ impl EngineSink {
     /// All enrichments in a round see the same context snapshot.
     /// The loop terminates when all enrichments return None (quiescence)
     /// or the safety valve (max rounds) is reached.
-    fn run_enrichment_loop(
+    ///
+    /// Returns an EmitResult accumulating all enrichment rounds' mutations.
+    pub(crate) fn run_enrichment_loop(
         engine: &PlexusEngine,
         context_id: &ContextId,
         registry: &EnrichmentRegistry,
-        primary_events: &[GraphEvent],
-        primary_result: &mut EmitResult,
-    ) -> Result<(), AdapterError> {
-        let mut round_events: Vec<GraphEvent> = primary_events.to_vec();
+        trigger_events: &[GraphEvent],
+    ) -> Result<EmitResult, AdapterError> {
+        let mut accumulated = EmitResult::empty();
+        let mut round_events: Vec<GraphEvent> = trigger_events.to_vec();
         let mut round = 0;
 
         while round < registry.max_rounds() && !round_events.is_empty() {
@@ -303,13 +321,13 @@ impl EngineSink {
 
                 new_events.extend(enrichment_result.events.clone());
 
-                // Accumulate enrichment results into the primary result
-                primary_result.nodes_committed += enrichment_result.nodes_committed;
-                primary_result.edges_committed += enrichment_result.edges_committed;
-                primary_result.removals_committed += enrichment_result.removals_committed;
-                primary_result.rejections.extend(enrichment_result.rejections);
-                primary_result.provenance.extend(enrichment_result.provenance);
-                primary_result.events.extend(enrichment_result.events);
+                // Accumulate enrichment results
+                accumulated.nodes_committed += enrichment_result.nodes_committed;
+                accumulated.edges_committed += enrichment_result.edges_committed;
+                accumulated.removals_committed += enrichment_result.removals_committed;
+                accumulated.rejections.extend(enrichment_result.rejections);
+                accumulated.provenance.extend(enrichment_result.provenance);
+                accumulated.events.extend(enrichment_result.events);
             }
 
             round_events = new_events;
@@ -323,7 +341,7 @@ impl EngineSink {
             );
         }
 
-        Ok(())
+        Ok(accumulated)
     }
 }
 
@@ -335,7 +353,10 @@ impl AdapterSink for EngineSink {
                 let mut ctx = context.lock().map_err(|e| {
                     AdapterError::Internal(format!("lock poisoned: {}", e))
                 })?;
-                Self::emit_inner(&mut ctx, emission, &self.framework)
+                let result = Self::emit_inner(&mut ctx, emission, &self.framework)?;
+                self.accumulated_events.lock().unwrap()
+                    .extend(result.events.clone());
+                Ok(result)
             }
             SinkBackend::Engine { engine, context_id } => {
                 let framework = self.framework.clone();
@@ -347,15 +368,26 @@ impl AdapterSink for EngineSink {
                 if let Some(ref registry) = self.enrichments {
                     if !registry.enrichments().is_empty() {
                         let primary_events = result.events.clone();
-                        Self::run_enrichment_loop(
+                        let enrichment_result = Self::run_enrichment_loop(
                             engine,
                             context_id,
                             registry,
                             &primary_events,
-                            &mut result,
                         )?;
+
+                        // Merge enrichment results into primary result
+                        result.nodes_committed += enrichment_result.nodes_committed;
+                        result.edges_committed += enrichment_result.edges_committed;
+                        result.removals_committed += enrichment_result.removals_committed;
+                        result.rejections.extend(enrichment_result.rejections);
+                        result.provenance.extend(enrichment_result.provenance);
+                        result.events.extend(enrichment_result.events);
                     }
                 }
+
+                // Accumulate events for pipeline collection
+                self.accumulated_events.lock().unwrap()
+                    .extend(result.events.clone());
 
                 Ok(result)
             }
