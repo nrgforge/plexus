@@ -1317,6 +1317,7 @@ mod tests {
     // ================================================================
 
     use crate::adapter::ingest::IngestPipeline;
+    use crate::adapter::tag_bridger::TagConceptBridger;
 
     /// Test adapter that emits concept nodes from input strings.
     /// Also implements transform_events to detect concept nodes.
@@ -1351,10 +1352,9 @@ mod tests {
                 .downcast_data::<Vec<String>>()
                 .ok_or(AdapterError::InvalidInput)?;
             for concept in concepts {
-                sink.emit(
-                    Emission::new().with_node(node(&format!("concept:{}", concept))),
-                )
-                .await?;
+                let mut n = node(&format!("concept:{}", concept));
+                n.dimension = dimension::SEMANTIC.to_string();
+                sink.emit(Emission::new().with_node(n)).await?;
             }
             Ok(())
         }
@@ -1651,5 +1651,130 @@ mod tests {
         // The consumer gets domain-meaningful events, not raw GraphEvents
         assert!(!outbound.is_empty());
         assert_eq!(outbound[0].kind, "concepts_detected");
+    }
+
+    // ================================================================
+    // TagConceptBridger Integration (ADR-009 + ADR-010)
+    // ================================================================
+
+    use crate::graph::{dimension, PropertyValue};
+
+    fn mark_node(id: &str, tags: &[&str]) -> Node {
+        let mut n = Node::new("mark", ContentType::Provenance);
+        n.id = NodeId::from_string(id);
+        n.dimension = dimension::PROVENANCE.to_string();
+        let tag_vals: Vec<PropertyValue> = tags
+            .iter()
+            .map(|t| PropertyValue::String(t.to_string()))
+            .collect();
+        n.properties
+            .insert("tags".to_string(), PropertyValue::Array(tag_vals));
+        n
+    }
+
+    fn concept_node(tag: &str) -> Node {
+        let mut n = Node::new("concept", ContentType::Concept);
+        n.id = NodeId::from_string(format!("concept:{}", tag));
+        n.dimension = dimension::SEMANTIC.to_string();
+        n.properties.insert(
+            "label".to_string(),
+            PropertyValue::String(tag.to_string()),
+        );
+        n
+    }
+
+    // === Scenario: New concept retroactively bridges to existing mark via enrichment loop ===
+    #[tokio::test]
+    async fn tag_bridger_new_concept_retroactively_bridges_to_existing_mark() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+
+        // Pre-populate with a mark tagged #travel but no concept yet
+        let mut ctx = Context::with_id(ctx_id.clone(), "provence-research");
+        ctx.add_node(mark_node("mark-1", &["#travel"]));
+        engine.upsert_context(ctx).unwrap();
+
+        // Register TagConceptBridger
+        let bridger = Arc::new(TagConceptBridger::new());
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            bridger as Arc<dyn Enrichment>,
+        ]));
+
+        // Adapter creates concept:travel — triggers enrichment loop
+        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
+        let mut pipeline = IngestPipeline::new(engine.clone())
+            .with_enrichments(registry);
+        pipeline.register_adapter(adapter);
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["travel".to_string()]);
+        pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // TagConceptBridger should have created a references edge from mark to concept
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("mark-1")
+                    && e.target == NodeId::from_string("concept:travel")
+                    && e.relationship == "references"
+            })
+            .collect();
+        assert_eq!(refs.len(), 1, "should have exactly one references edge");
+        assert_eq!(refs[0].source_dimension, dimension::PROVENANCE);
+        assert_eq!(refs[0].target_dimension, dimension::SEMANTIC);
+    }
+
+    // === Scenario: TagConceptBridger is idempotent through enrichment loop ===
+    #[tokio::test]
+    async fn tag_bridger_idempotent_through_enrichment_loop() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+
+        // Pre-populate: mark, concept, and an existing references edge
+        let mut ctx = Context::with_id(ctx_id.clone(), "provence-research");
+        ctx.add_node(mark_node("mark-1", &["#travel"]));
+        ctx.add_node(concept_node("travel"));
+        ctx.add_edge(Edge::new_cross_dimensional(
+            NodeId::from_string("mark-1"),
+            dimension::PROVENANCE,
+            NodeId::from_string("concept:travel"),
+            dimension::SEMANTIC,
+            "references",
+        ));
+        engine.upsert_context(ctx).unwrap();
+
+        let bridger = Arc::new(TagConceptBridger::new());
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            bridger as Arc<dyn Enrichment>,
+        ]));
+
+        // Adapter emits an unrelated concept — triggers enrichment loop
+        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
+        let mut pipeline = IngestPipeline::new(engine.clone())
+            .with_enrichments(registry);
+        pipeline.register_adapter(adapter);
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["avignon".to_string()]);
+        pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // Should NOT have created a duplicate references edge
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("mark-1")
+                    && e.target == NodeId::from_string("concept:travel")
+                    && e.relationship == "references"
+            })
+            .collect();
+        assert_eq!(refs.len(), 1, "should still have exactly one references edge, not a duplicate");
     }
 }
