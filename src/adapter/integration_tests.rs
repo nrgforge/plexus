@@ -387,7 +387,9 @@ mod tests {
     // === Scenario: Full workflow from ingestion through marking to query ===
     #[tokio::test]
     async fn end_to_end_provence_travel_research() {
-        use crate::provenance::api::ProvenanceApi;
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
+        use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -423,13 +425,45 @@ mod tests {
             assert_eq!(tagged_with.len(), 2, "should have 2 tagged_with edges");
         }
 
-        // Step 2: Create provenance chain and add mark with tags
-        let api = ProvenanceApi::new(&engine, ctx_id.clone());
-        let chain_id = api.create_chain("reading-notes", None).unwrap();
-        let mark_id = api.add_mark(
-            &chain_id, "notes.md", 10, "walking through Avignon",
-            None, None, Some(vec!["#travel".into(), "#avignon".into()]),
-        ).unwrap();
+        // Step 2: Create provenance chain and add mark with tags through ingest pipeline
+        // (Tag bridging happens via TagConceptBridger enrichment in the pipeline)
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![
+                Arc::new(TagConceptBridger::new()),
+                Arc::new(CoOccurrenceEnrichment::new()),
+            ],
+        );
+
+        // Create chain
+        let chain_id = NodeId::new().to_string();
+        pipeline.ingest(
+            ctx_id.as_str(),
+            "provenance",
+            Box::new(ProvenanceInput::CreateChain {
+                chain_id: chain_id.clone(),
+                name: "reading-notes".to_string(),
+                description: None,
+            }),
+        ).await.unwrap();
+
+        // Add mark with tags — TagConceptBridger should create references edges
+        let mark_id = NodeId::new().to_string();
+        pipeline.ingest(
+            ctx_id.as_str(),
+            "provenance",
+            Box::new(ProvenanceInput::AddMark {
+                mark_id: mark_id.clone(),
+                chain_id: chain_id.clone(),
+                file: "notes.md".to_string(),
+                line: 10,
+                annotation: "walking through Avignon".to_string(),
+                column: None,
+                mark_type: None,
+                tags: Some(vec!["#travel".into(), "#avignon".into()]),
+            }),
+        ).await.unwrap();
 
         // Verify: references edges from mark to concepts
         {
