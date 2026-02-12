@@ -32,7 +32,7 @@ pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason
 pub use types::{
     Annotation, AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, Removal,
 };
-pub use cooccurrence::CoOccurrenceAdapter;
+pub use cooccurrence::{CoOccurrenceAdapter, CoOccurrenceEnrichment};
 pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
 pub use tag_bridger::TagConceptBridger;

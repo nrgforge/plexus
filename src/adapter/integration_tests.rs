@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use crate::adapter::cancel::CancellationToken;
-    use crate::adapter::cooccurrence::CoOccurrenceAdapter;
+    use crate::adapter::cooccurrence::{CoOccurrenceAdapter, CoOccurrenceEnrichment};
     use crate::adapter::engine_sink::EngineSink;
     use crate::adapter::enrichment::{Enrichment, EnrichmentRegistry};
     use crate::adapter::events::GraphEvent;
@@ -1776,5 +1776,156 @@ mod tests {
             })
             .collect();
         assert_eq!(refs.len(), 1, "should still have exactly one references edge, not a duplicate");
+    }
+
+    // ================================================================
+    // CoOccurrenceEnrichment through Enrichment Loop (ADR-010)
+    // ================================================================
+
+    // === Scenario: Idempotent enrichment does not loop indefinitely ===
+    #[tokio::test]
+    async fn cooccurrence_enrichment_idempotent_through_loop() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+
+        // Pre-populate: two fragments sharing concepts, with existing may_be_related edges
+        let mut ctx = Context::with_id(ctx_id.clone(), "provence-research");
+
+        // Add concept nodes
+        let mut travel = Node::new("concept", ContentType::Concept);
+        travel.id = NodeId::from_string("concept:travel");
+        travel.dimension = dimension::SEMANTIC.to_string();
+        ctx.add_node(travel);
+
+        let mut avignon = Node::new("concept", ContentType::Concept);
+        avignon.id = NodeId::from_string("concept:avignon");
+        avignon.dimension = dimension::SEMANTIC.to_string();
+        ctx.add_node(avignon);
+
+        // Add a fragment with tagged_with edges to both concepts
+        let mut frag = Node::new("fragment", ContentType::Narrative);
+        frag.id = NodeId::from_string("frag:f1");
+        frag.dimension = dimension::STRUCTURE.to_string();
+        ctx.add_node(frag);
+
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("frag:f1"),
+            NodeId::from_string("concept:travel"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("frag:f1"),
+            NodeId::from_string("concept:avignon"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+
+        // Pre-existing may_be_related edges (from a prior enrichment run)
+        let mut edge_ta = Edge::new_in_dimension(
+            NodeId::from_string("concept:travel"),
+            NodeId::from_string("concept:avignon"),
+            "may_be_related",
+            dimension::SEMANTIC,
+        );
+        edge_ta.raw_weight = 1.0;
+        ctx.add_edge(edge_ta);
+
+        let mut edge_at = Edge::new_in_dimension(
+            NodeId::from_string("concept:avignon"),
+            NodeId::from_string("concept:travel"),
+            "may_be_related",
+            dimension::SEMANTIC,
+        );
+        edge_at.raw_weight = 1.0;
+        ctx.add_edge(edge_at);
+
+        engine.upsert_context(ctx).unwrap();
+
+        // Register CoOccurrenceEnrichment and trigger via unrelated adapter emission
+        let enrichment = Arc::new(CoOccurrenceEnrichment::new());
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            enrichment as Arc<dyn Enrichment>,
+        ]));
+
+        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
+        let mut pipeline = IngestPipeline::new(engine.clone())
+            .with_enrichments(registry);
+        pipeline.register_adapter(adapter);
+
+        // Ingest a new concept — triggers enrichment loop
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["paris".to_string()]);
+        pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // Verify: the enrichment should have detected the new concept and added
+        // may_be_related edges for paris (which shares no fragments yet), but
+        // should NOT have duplicated the existing travel↔avignon edges.
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let travel_avignon: Vec<_> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("concept:travel")
+                    && e.target == NodeId::from_string("concept:avignon")
+                    && e.relationship == "may_be_related"
+            })
+            .collect();
+        assert_eq!(
+            travel_avignon.len(),
+            1,
+            "should still have exactly one may_be_related edge (travel→avignon), not a duplicate"
+        );
+    }
+
+    // === Scenario: CoOccurrenceEnrichment fires through the pipeline on new fragments ===
+    #[tokio::test]
+    async fn cooccurrence_enrichment_fires_in_pipeline() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        // Use the real FragmentAdapter to create structure + semantic nodes
+        let fragment_adapter = Arc::new(FragmentAdapter::new("trellis-fragment"));
+        let enrichment = Arc::new(CoOccurrenceEnrichment::new());
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            enrichment as Arc<dyn Enrichment>,
+        ]));
+
+        let mut pipeline = IngestPipeline::new(engine.clone())
+            .with_enrichments(registry);
+        pipeline.register_adapter(fragment_adapter);
+
+        // Ingest a fragment with two tags → two concepts → one co-occurrence pair
+        let data: Box<dyn std::any::Any + Send + Sync> = Box::new(FragmentInput::new(
+            "Walk in Avignon",
+            vec!["travel".to_string(), "avignon".to_string()],
+        ));
+        pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // The enrichment loop should have produced may_be_related edges
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let may_be_related: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "may_be_related")
+            .collect();
+
+        // Symmetric pair: travel↔avignon
+        assert_eq!(may_be_related.len(), 2);
+
+        // Verify contribution tracking
+        for edge in &may_be_related {
+            assert!(
+                edge.contributions.contains_key("co-occurrence"),
+                "edge should have co-occurrence contribution"
+            );
+        }
     }
 }
