@@ -1146,11 +1146,9 @@ mod tests {
         assert!(!weights_changed, "idempotent re-processing should not fire WeightsChanged");
     }
 
-    // === Scenario: Reflexive proposal then external confirmation ===
+    // === Scenario: Two adapters contribute independently to the same edge ===
     #[tokio::test]
-    async fn reflexive_proposal_then_external_confirmation() {
-        use crate::adapter::ProposalSink;
-
+    async fn two_adapters_contribute_to_same_edge() {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
 
         {
@@ -1159,36 +1157,34 @@ mod tests {
             c.add_node(node("abrupt"));
         }
 
-        // Reflexive adapter proposes via ProposalSink
-        let fw_reflexive = FrameworkContext {
-            adapter_id: "normalization-adapter".to_string(),
+        // First adapter contributes
+        let fw_first = FrameworkContext {
+            adapter_id: "enrichment-adapter".to_string(),
             context_id: "test-context".to_string(),
             input_summary: None,
         };
-        let engine_sink = EngineSink::new(ctx.clone()).with_framework_context(fw_reflexive);
-        let proposal_sink = ProposalSink::new(engine_sink, 0.5);
+        let first_sink = EngineSink::new(ctx.clone()).with_framework_context(fw_first);
 
-        let proposal_edge = Edge::new(
+        let mut first_edge = Edge::new(
             NodeId::from_string("sudden"),
             NodeId::from_string("abrupt"),
             "may_be_related",
         );
-        let mut proposal = proposal_edge;
-        proposal.raw_weight = 0.2;
-        proposal_sink.emit(Emission::new().with_edge(proposal)).await.unwrap();
+        first_edge.raw_weight = 0.2;
+        first_sink.emit(Emission::new().with_edge(first_edge)).await.unwrap();
 
         {
             let c = ctx.lock().unwrap();
-            assert_eq!(c.edges[0].contributions.get("normalization-adapter"), Some(&0.2));
+            assert_eq!(c.edges[0].contributions.get("enrichment-adapter"), Some(&0.2));
         }
 
-        // External adapter confirms independently
-        let fw_external = FrameworkContext {
+        // Second adapter confirms independently
+        let fw_second = FrameworkContext {
             adapter_id: "document-adapter".to_string(),
             context_id: "test-context".to_string(),
             input_summary: None,
         };
-        let external_sink = EngineSink::new(ctx.clone()).with_framework_context(fw_external);
+        let second_sink = EngineSink::new(ctx.clone()).with_framework_context(fw_second);
 
         let mut confirm_edge = Edge::new(
             NodeId::from_string("sudden"),
@@ -1196,11 +1192,11 @@ mod tests {
             "may_be_related",
         );
         confirm_edge.raw_weight = 0.85;
-        let result = external_sink.emit(Emission::new().with_edge(confirm_edge)).await.unwrap();
+        let result = second_sink.emit(Emission::new().with_edge(confirm_edge)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
         let edge = &ctx.edges[0];
-        assert_eq!(edge.contributions.get("normalization-adapter"), Some(&0.2));
+        assert_eq!(edge.contributions.get("enrichment-adapter"), Some(&0.2));
         assert_eq!(edge.contributions.get("document-adapter"), Some(&0.85));
         assert_eq!(edge.contributions.len(), 2);
 

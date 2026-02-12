@@ -12,7 +12,6 @@ pub mod fragment;
 mod ingest;
 #[cfg(test)]
 mod integration_tests;
-mod proposal_sink;
 mod provenance;
 mod router;
 mod sink;
@@ -24,7 +23,6 @@ pub use cancel::CancellationToken;
 pub use engine_sink::EngineSink;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use events::GraphEvent;
-pub use proposal_sink::ProposalSink;
 pub use provenance::{FrameworkContext, ProvenanceEntry};
 pub use router::{InputRouter, RouteResult};
 pub use traits::{Adapter, AdapterInput};
@@ -32,7 +30,7 @@ pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason
 pub use types::{
     Annotation, AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, Removal,
 };
-pub use cooccurrence::{CoOccurrenceAdapter, CoOccurrenceEnrichment};
+pub use cooccurrence::CoOccurrenceEnrichment;
 pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
 pub use tag_bridger::TagConceptBridger;

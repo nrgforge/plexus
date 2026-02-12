@@ -15,10 +15,6 @@ use thiserror::Error;
 pub enum RejectionReason {
     /// Edge references a node that doesn't exist in the graph or emission
     MissingEndpoint(NodeId),
-    /// ProposalSink rejected: relationship type not allowed
-    InvalidRelationshipType(String),
-    /// ProposalSink rejected: node removal not allowed
-    RemovalNotAllowed,
     /// Adapter-side error (e.g., downcast failure)
     Other(String),
 }
@@ -27,8 +23,6 @@ impl std::fmt::Display for RejectionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MissingEndpoint(id) => write!(f, "missing endpoint {}", id),
-            Self::InvalidRelationshipType(rel) => write!(f, "invalid relationship type: {}", rel),
-            Self::RemovalNotAllowed => write!(f, "removal not allowed"),
             Self::Other(msg) => write!(f, "{}", msg),
         }
     }
