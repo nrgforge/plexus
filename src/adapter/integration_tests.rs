@@ -2736,4 +2736,1554 @@ mod tests {
             "federated-learning was extracted by LLM phase from paper-chen-2025"
         );
     }
+
+    // ================================================================
+    // Spike: Two-Consumer Validation Revisited (Essay 13)
+    // ================================================================
+    //
+    // Heterogeneous multi-consumer scenario with real public data.
+    // Three consumers feed the same context:
+    //
+    // 1. Trellis — writer's personal fragments (intuitive tags)
+    // 2. Carrel LLM — extracted concepts from real arXiv papers (formal tags)
+    // 3. Carrel provenance — human annotations linking research to writing
+    //
+    // Source material: real arXiv abstracts (2024-2025) on distributed AI,
+    // federated learning, AI governance, and human-AI creativity.
+
+    #[tokio::test]
+    async fn spike_heterogeneous_multi_consumer_real_data() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::graph::dimension;
+        use crate::query::{Direction, TraverseQuery};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("research-workspace");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "research-workspace"))
+            .unwrap();
+
+        let enrichments: Vec<Arc<dyn crate::adapter::enrichment::Enrichment>> = vec![
+            Arc::new(TagConceptBridger::new()),
+            Arc::new(CoOccurrenceEnrichment::new()),
+        ];
+
+        // Three separate pipelines (one per consumer) sharing the same engine
+        let mut trellis_pipeline = IngestPipeline::new(engine.clone());
+        trellis_pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("trellis-fragment")),
+            enrichments.clone(),
+        );
+
+        let mut carrel_llm_pipeline = IngestPipeline::new(engine.clone());
+        carrel_llm_pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("carrel-llm")),
+            enrichments.clone(),
+        );
+
+        let mut carrel_prov_pipeline = IngestPipeline::new(engine.clone());
+        carrel_prov_pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            enrichments,
+        );
+
+        // ================================================================
+        // Consumer 1: Trellis — writer's personal fragments
+        // ================================================================
+        // A writer exploring themes of distributed AI, creativity, and
+        // governance through informal notes and observations.
+
+        let trellis_fragments = vec![
+            (
+                "Distributed compute as insurance against concentration risk — \
+                 the bet is that decentralization creates resilience",
+                vec!["distributed-computing", "ai-safety", "economic-disruption"],
+                "journal",
+            ),
+            (
+                "Federated learning isn't just technical — it's an economic argument \
+                 about who controls the training pipeline",
+                vec!["federated-learning", "compute-economics", "policy"],
+                "journal",
+            ),
+            (
+                "Design constraints don't limit creativity, they channel it — \
+                 the architecture of limitation as generative force",
+                vec!["creativity", "design-constraints"],
+                "journal",
+            ),
+            (
+                "Non-generative AI: tools that mirror and scaffold rather than \
+                 replace — the creative amplifier thesis",
+                vec!["creativity", "human-ai-collaboration", "non-generative-ai"],
+                "journal",
+            ),
+            (
+                "Network effects in decentralized systems create natural resilience \
+                 against single points of failure",
+                vec!["network-effects", "distributed-computing", "decentralized-governance"],
+                "journal",
+            ),
+            (
+                "The governance question: who watches the autonomous agents?",
+                vec!["autonomous-agents", "governance", "ai-safety"],
+                "journal",
+            ),
+            (
+                "Creative tools should make you think differently, not think less",
+                vec!["creativity", "design-constraints", "human-ai-collaboration"],
+                "journal",
+            ),
+            (
+                "Economic models need to account for the externalities of AI \
+                 concentration — who bears the cost when one company controls inference?",
+                vec!["compute-economics", "economic-disruption", "policy"],
+                "journal",
+            ),
+        ];
+
+        for (text, tags, source) in &trellis_fragments {
+            let input = FragmentInput::new(
+                *text,
+                tags.iter().map(|t| t.to_string()).collect(),
+            )
+            .with_source(*source);
+            trellis_pipeline
+                .ingest("research-workspace", "fragment", Box::new(input))
+                .await
+                .unwrap();
+        }
+
+        // ================================================================
+        // Consumer 2: Carrel LLM — concept extraction from real arXiv papers
+        // ================================================================
+        // Real abstracts from public arXiv papers (2024-2025), with tags
+        // representing what an LLM extractor would identify as key concepts.
+
+        let carrel_papers = vec![
+            (
+                "Federated learning enables collaborative model training while \
+                 preserving data privacy, yet faces practical challenges like the \
+                 participation dilemma where entities may refuse to contribute or \
+                 free-ride on others' efforts. This work examines incentive mechanisms \
+                 in federated systems, applying concepts from economics and game theory.",
+                vec!["federated-learning", "incentive-mechanisms", "game-theory", "distributed-computing"],
+                "arxiv-2510.14208",  // Incentive-Based Federated Learning
+            ),
+            (
+                "Autonomous AI agents offer significant potential while creating \
+                 governance challenges. ETHOS proposes a decentralized governance model \
+                 utilizing blockchain, smart contracts, and DAOs, establishing a global \
+                 registry for AI agents with dynamic risk classification and automated \
+                 compliance monitoring.",
+                vec!["decentralized-governance", "ai-safety", "blockchain", "autonomous-agents"],
+                "arxiv-2412.17114",  // Decentralized Governance of Autonomous AI Agents
+            ),
+            (
+                "Human-AI co-creativity represents a transformative shift in how humans \
+                 and generative AI tools collaborate in creative processes. Unlike earlier \
+                 digital tools that mainly supported creative work, generative AI systems \
+                 now actively participate, demonstrating autonomous creativity.",
+                vec!["human-ai-collaboration", "creativity", "generative-ai"],
+                "arxiv-2411.12527",  // Human-AI Co-Creativity
+            ),
+            (
+                "The deployment of multiple advanced AI agents creates unprecedented \
+                 multi-agent systems with novel risks. Three primary failure modes: \
+                 miscoordination, conflict, and collusion — grounded in agent incentives. \
+                 Seven risk factors including information asymmetries and network effects.",
+                vec!["multi-agent-systems", "ai-safety", "network-effects", "governance"],
+                "arxiv-2502.14143",  // Multi-Agent Risks from Advanced AI
+            ),
+            (
+                "AI technologies are enabling hybrid relational spaces where humans and \
+                 machines engage in joint creative activity — Extended Creativity systems \
+                 comprising interdependent technologies, human agents, and organizational \
+                 contexts. Three modes: Support, Synergy, and Symbiosis.",
+                vec!["creativity", "human-ai-collaboration", "distributed-cognition"],
+                "arxiv-2506.10249",  // Extended Creativity
+            ),
+            (
+                "Federated Learning has expanded to millions of devices across various \
+                 domains while providing differential privacy guarantees. Significant \
+                 obstacles persist including managing training across diverse device \
+                 ecosystems. Emerging challenges involve large multimodal models.",
+                vec!["federated-learning", "privacy", "distributed-computing"],
+                "arxiv-2410.08892",  // Federated Learning in Practice
+            ),
+            (
+                "Embodied AI systems can exist in, learn from, reason about, and act \
+                 in the physical world. They pose significant risks including physical \
+                 harm, mass surveillance, and economic disruption. The importance of \
+                 embodied AI will likely exacerbate concentration risks.",
+                vec!["embodied-ai", "ai-safety", "economic-disruption", "policy"],
+                "arxiv-2509.00117",  // Embodied AI: Risks and Policy
+            ),
+            (
+                "This review examines AI technologies across content creation, analysis, \
+                 and post-production. Transformers, LLMs, and diffusion models have \
+                 established new capabilities, shifting AI from support tool to core \
+                 creative technology. Human oversight remains essential for creative \
+                 direction and mitigating AI hallucinations.",
+                vec!["creative-industries", "generative-ai", "human-ai-collaboration"],
+                "arxiv-2501.02725",  // Advances in AI for Creative Industries
+            ),
+        ];
+
+        for (text, tags, source) in &carrel_papers {
+            let input = FragmentInput::new(
+                *text,
+                tags.iter().map(|t| t.to_string()).collect(),
+            )
+            .with_source(*source);
+            carrel_llm_pipeline
+                .ingest("research-workspace", "fragment", Box::new(input))
+                .await
+                .unwrap();
+        }
+
+        // ================================================================
+        // Consumer 3: Carrel provenance — human research annotations
+        // ================================================================
+
+        // Writing chain: "The Distributed Bet" essay draft
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::CreateChain {
+                    chain_id: "the-distributed-bet".to_string(),
+                    name: "The Distributed Bet".to_string(),
+                    description: Some(
+                        "Essay arguing distributed compute is insurance against AI concentration"
+                            .to_string(),
+                    ),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Research chain: February 2026 literature scan
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::CreateChain {
+                    chain_id: "lit-scan-2026-02".to_string(),
+                    name: "Literature Scan Feb 2026".to_string(),
+                    description: None,
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Writing mark 1: core argument about federated economics
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "draft-fed-econ".to_string(),
+                    chain_id: "the-distributed-bet".to_string(),
+                    file: "drafts/the-distributed-bet.md".to_string(),
+                    line: 34,
+                    annotation: "Core argument: federated learning as economic redistribution \
+                                 of training compute"
+                        .to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec![
+                        "#federated-learning".to_string(),
+                        "#compute-economics".to_string(),
+                    ]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Writing mark 2: section on governance
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "draft-governance".to_string(),
+                    chain_id: "the-distributed-bet".to_string(),
+                    file: "drafts/the-distributed-bet.md".to_string(),
+                    line: 87,
+                    annotation: "Governance gap: decentralized systems need decentralized oversight"
+                        .to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec![
+                        "#decentralized-governance".to_string(),
+                        "#ai-safety".to_string(),
+                        "#autonomous-agents".to_string(),
+                    ]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Writing mark 3: section on creativity
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "draft-creativity".to_string(),
+                    chain_id: "the-distributed-bet".to_string(),
+                    file: "drafts/the-distributed-bet.md".to_string(),
+                    line: 142,
+                    annotation: "Counterpoint: non-generative tools preserve human agency in \
+                                 ways generative AI cannot"
+                        .to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec![
+                        "#creativity".to_string(),
+                        "#human-ai-collaboration".to_string(),
+                        "#non-generative-ai".to_string(),
+                    ]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Research mark 1: federated learning incentives paper
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "lit-fed-incentives".to_string(),
+                    chain_id: "lit-scan-2026-02".to_string(),
+                    file: "papers/2510.14208.pdf".to_string(),
+                    line: 1,
+                    annotation: "Key finding: incentive mechanisms are essential, not optional, \
+                                 for federated learning — supports economic argument"
+                        .to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec![
+                        "#federated-learning".to_string(),
+                        "#incentive-mechanisms".to_string(),
+                        "#compute-economics".to_string(),
+                    ]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Research mark 2: ETHOS governance paper
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "lit-ethos".to_string(),
+                    chain_id: "lit-scan-2026-02".to_string(),
+                    file: "papers/2412.17114.pdf".to_string(),
+                    line: 1,
+                    annotation: "ETHOS framework: decentralized governance via blockchain + DAOs \
+                                 — addresses the 'who watches' question"
+                        .to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec![
+                        "#decentralized-governance".to_string(),
+                        "#ai-safety".to_string(),
+                        "#blockchain".to_string(),
+                    ]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Research mark 3: Extended Creativity paper
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::AddMark {
+                    mark_id: "lit-extended-creativity".to_string(),
+                    chain_id: "lit-scan-2026-02".to_string(),
+                    file: "papers/2506.10249.pdf".to_string(),
+                    line: 1,
+                    annotation: "Extended Creativity: Support → Synergy → Symbiosis progression \
+                                 maps to non-generative thesis"
+                        .to_string(),
+                    column: None,
+                    mark_type: Some("reference".to_string()),
+                    tags: Some(vec![
+                        "#creativity".to_string(),
+                        "#human-ai-collaboration".to_string(),
+                        "#distributed-cognition".to_string(),
+                    ]),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Link research marks to writing marks
+        // Federated incentives paper supports federated economics argument
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::LinkMarks {
+                    source_id: "lit-fed-incentives".to_string(),
+                    target_id: "draft-fed-econ".to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // ETHOS paper supports governance section
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::LinkMarks {
+                    source_id: "lit-ethos".to_string(),
+                    target_id: "draft-governance".to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Extended Creativity paper supports creativity counterpoint
+        carrel_prov_pipeline
+            .ingest(
+                "research-workspace",
+                "provenance",
+                Box::new(ProvenanceInput::LinkMarks {
+                    source_id: "lit-extended-creativity".to_string(),
+                    target_id: "draft-creativity".to_string(),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // ================================================================
+        // Analysis: Full graph topology
+        // ================================================================
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // --- Node counts by dimension ---
+        let structure_nodes: Vec<_> = ctx
+            .nodes()
+            .filter(|n| n.dimension == dimension::STRUCTURE)
+            .collect();
+        let semantic_nodes: Vec<_> = ctx
+            .nodes()
+            .filter(|n| n.dimension == dimension::SEMANTIC)
+            .collect();
+        let provenance_nodes: Vec<_> = ctx
+            .nodes()
+            .filter(|n| n.dimension == dimension::PROVENANCE)
+            .collect();
+
+        // 16 fragment nodes: 8 Trellis + 8 Carrel LLM
+        assert_eq!(structure_nodes.len(), 16, "16 fragments (8 trellis + 8 carrel-llm)");
+
+        // Count unique concepts
+        let concept_labels: std::collections::HashSet<String> = semantic_nodes
+            .iter()
+            .map(|n| n.id.to_string())
+            .collect();
+        // Expected unique concepts across all sources:
+        // distributed-computing, ai-safety, economic-disruption, federated-learning,
+        // compute-economics, policy, creativity, design-constraints,
+        // human-ai-collaboration, non-generative-ai, network-effects,
+        // decentralized-governance, autonomous-agents, governance,
+        // incentive-mechanisms, game-theory, blockchain, generative-ai,
+        // creative-industries, distributed-cognition, privacy, embodied-ai,
+        // multi-agent-systems
+        assert_eq!(
+            semantic_nodes.len(),
+            23,
+            "23 unique concept nodes from all consumers"
+        );
+
+        // Provenance nodes: chains + marks
+        // Chains: 1 (trellis:journal) + 8 (carrel-llm per paper) + 2 (provenance: writing+research) = 11
+        // Marks: 8 (trellis) + 8 (carrel-llm) + 6 (provenance: 3 writing + 3 research) = 22
+        // Total provenance: 11 + 22 = 33
+        let chains: Vec<_> = provenance_nodes
+            .iter()
+            .filter(|n| n.node_type == "chain")
+            .collect();
+        let marks: Vec<_> = provenance_nodes
+            .iter()
+            .filter(|n| n.node_type == "mark")
+            .collect();
+        assert_eq!(chains.len(), 11, "11 chains (1 trellis + 8 carrel-llm + 2 carrel-prov)");
+        assert_eq!(marks.len(), 22, "22 marks (8 trellis + 8 carrel-llm + 6 carrel-prov)");
+
+        let total_nodes = structure_nodes.len() + semantic_nodes.len() + provenance_nodes.len();
+        // 16 + 23 + 33 = 72
+        assert_eq!(total_nodes, 72, "72 total nodes across 3 dimensions");
+
+        // --- Edge counts by type ---
+        let tagged_with: Vec<_> = ctx.edges().filter(|e| e.relationship == "tagged_with").collect();
+        let contains: Vec<_> = ctx.edges().filter(|e| e.relationship == "contains").collect();
+        let references: Vec<_> = ctx.edges().filter(|e| e.relationship == "references").collect();
+        let links_to: Vec<_> = ctx.edges().filter(|e| e.relationship == "links_to").collect();
+        let may_be_related: Vec<_> = ctx.edges().filter(|e| e.relationship == "may_be_related").collect();
+
+        // tagged_with: sum of tags per fragment
+        // Trellis: 3+3+2+3+3+3+3+3 = 23
+        // Carrel LLM: 4+4+3+4+3+3+4+3 = 28
+        // Total: 51
+        assert_eq!(tagged_with.len(), 51, "51 tagged_with edges");
+
+        // contains: 1 per mark = 22
+        // Plus provenance chain→mark: 6 from carrel-prov
+        // Wait — provenance marks already counted in the 22
+        // Fragment marks: 8 trellis + 8 carrel-llm = 16 contains edges
+        // Provenance marks: 6 contains edges from 2 chains
+        assert_eq!(contains.len(), 22, "22 contains edges (chain → mark)");
+
+        // references: TagConceptBridger bridges marks with tags to concepts
+        // Trellis marks: tag counts 3+3+2+3+3+3+3+3 = 23 references
+        // Carrel LLM marks: tag counts 4+4+3+4+3+3+4+3 = 28 references
+        // Carrel prov marks: tag counts 2+3+3+3+3+3 = 17 references
+        // Total: 23 + 28 + 17 = 68
+        assert_eq!(references.len(), 68, "68 references edges (marks → concepts)");
+
+        // links_to: 3 research→writing links
+        assert_eq!(links_to.len(), 3, "3 research→writing links");
+
+        // may_be_related: co-occurrence enrichment (many pairs)
+        assert!(
+            !may_be_related.is_empty(),
+            "CoOccurrenceEnrichment should detect concept pairs"
+        );
+
+        let total_edges = tagged_with.len()
+            + contains.len()
+            + references.len()
+            + links_to.len()
+            + may_be_related.len();
+
+        // ================================================================
+        // Analysis: Cross-consumer connections
+        // ================================================================
+
+        // KEY TRAVERSAL 1: Writer's intuitive "creativity" fragment → academic research
+        //
+        // The writer wrote: "Design constraints don't limit creativity, they channel it"
+        // Can the graph connect this to formal research on Extended Creativity?
+        //
+        // Path: concept:creativity ← tagged_with (trellis fragment)
+        //       concept:creativity ← references (carrel-llm mark for Extended Creativity)
+        //       concept:creativity ← references (carrel-llm mark for Co-Creativity)
+        //       concept:creativity ← references (carrel-prov mark: lit-extended-creativity)
+        //       concept:creativity ← references (carrel-prov mark: draft-creativity)
+
+        let creativity_id = NodeId::from_string("concept:creativity");
+        let creativity_incoming: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == creativity_id)
+            .collect();
+
+        // tagged_with from fragments + references from marks
+        // Fragments tagged "creativity": trellis 3,4,7 + carrel-llm 3,5 = 5
+        // Marks referencing "creativity": trellis marks for 3,4,7 + carrel-llm marks for 3,5
+        //   + carrel-prov marks: draft-creativity, lit-extended-creativity = many
+        let creativity_fragment_sources: Vec<_> = creativity_incoming
+            .iter()
+            .filter(|e| e.relationship == "tagged_with")
+            .collect();
+        assert!(
+            creativity_fragment_sources.len() >= 5,
+            "at least 5 fragments tagged with creativity (3 trellis + 2 carrel-llm)"
+        );
+
+        let creativity_mark_sources: Vec<_> = creativity_incoming
+            .iter()
+            .filter(|e| e.relationship == "references")
+            .collect();
+        assert!(
+            creativity_mark_sources.len() >= 5,
+            "at least 5 marks reference concept:creativity"
+        );
+
+        // KEY TRAVERSAL 2: From an arXiv paper → through concepts → to writer's fragments
+        //
+        // Start at the ETHOS governance paper's mark, traverse to find
+        // the writer's "who watches the autonomous agents?" fragment.
+        //
+        // Path: carrel-llm mark (ETHOS) → references → concept:autonomous-agents
+        //       concept:autonomous-agents ← tagged_with ← trellis fragment #6
+
+        // Find the carrel-llm mark for the ETHOS paper
+        let ethos_chain = NodeId::from_string("chain:carrel-llm:arxiv-2412.17114");
+        let ethos_marks: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.source == ethos_chain && e.relationship == "contains")
+            .collect();
+        assert_eq!(ethos_marks.len(), 1, "ETHOS paper has 1 mark");
+
+        let ethos_mark_id = &ethos_marks[0].target;
+
+        // From the mark, follow references to concepts
+        let ethos_concepts: std::collections::HashSet<String> = ctx
+            .edges()
+            .filter(|e| e.source == *ethos_mark_id && e.relationship == "references")
+            .map(|e| e.target.to_string())
+            .collect();
+        assert!(
+            ethos_concepts.contains("concept:autonomous-agents"),
+            "ETHOS mark references concept:autonomous-agents"
+        );
+        assert!(
+            ethos_concepts.contains("concept:ai-safety"),
+            "ETHOS mark references concept:ai-safety"
+        );
+
+        // From concept:autonomous-agents, find trellis fragments
+        let aa_id = NodeId::from_string("concept:autonomous-agents");
+        let aa_fragments: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == aa_id && e.relationship == "tagged_with")
+            .collect();
+        // Trellis fragment #6 ("who watches the autonomous agents?") + ETHOS paper fragment
+        assert!(
+            aa_fragments.len() >= 2,
+            "at least 2 fragments tagged with autonomous-agents"
+        );
+
+        // KEY TRAVERSAL 3: Cross-consumer provenance convergence
+        //
+        // The writer's draft annotation (draft-governance) and the research
+        // annotation (lit-ethos) are explicitly linked. But they ALSO converge
+        // on the same concepts via independent tagging.
+        //
+        // draft-governance tags: decentralized-governance, ai-safety, autonomous-agents
+        // lit-ethos tags: decentralized-governance, ai-safety, blockchain
+        //
+        // Shared concepts: decentralized-governance, ai-safety
+        // This means the graph has BOTH explicit links (links_to) AND
+        // implicit concept-mediated connections.
+
+        let draft_gov_refs: std::collections::HashSet<String> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("draft-governance")
+                    && e.relationship == "references"
+            })
+            .map(|e| e.target.to_string())
+            .collect();
+
+        let lit_ethos_refs: std::collections::HashSet<String> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("lit-ethos")
+                    && e.relationship == "references"
+            })
+            .map(|e| e.target.to_string())
+            .collect();
+
+        let shared_concepts: Vec<_> = draft_gov_refs.intersection(&lit_ethos_refs).collect();
+        assert!(
+            shared_concepts.len() >= 2,
+            "draft-governance and lit-ethos share at least 2 concepts (decentralized-governance, ai-safety)"
+        );
+
+        // KEY TRAVERSAL 4: Full depth-2 BFS from a concept to discover
+        // all three consumers' contributions
+        //
+        // concept:ai-safety is tagged by fragments from Trellis AND Carrel LLM
+        // AND referenced by marks from Carrel provenance.
+        // A depth-1 traversal from concept:ai-safety should reach all three consumer types.
+
+        let ai_safety = NodeId::from_string("concept:ai-safety");
+        let traversal = TraverseQuery::from(ai_safety.clone())
+            .depth(1)
+            .direction(Direction::Both)
+            .execute(&ctx);
+
+        // Level 0: concept:ai-safety
+        assert_eq!(traversal.levels[0].len(), 1);
+
+        // Level 1: fragments (via tagged_with) + marks (via references) + co-occurring concepts
+        assert!(
+            traversal.levels.len() >= 2,
+            "traversal should reach neighbors"
+        );
+
+        let level1_dimensions: std::collections::HashSet<String> = traversal.levels[1]
+            .iter()
+            .map(|n| n.dimension.clone())
+            .collect();
+
+        // Should reach structure (fragments), provenance (marks), and semantic (co-occurring concepts)
+        assert!(
+            level1_dimensions.contains(dimension::STRUCTURE),
+            "depth-1 from ai-safety reaches structure (fragments)"
+        );
+        assert!(
+            level1_dimensions.contains(dimension::PROVENANCE),
+            "depth-1 from ai-safety reaches provenance (marks)"
+        );
+
+        // Count which consumer's fragments we reach
+        let level1_structure: Vec<_> = traversal.levels[1]
+            .iter()
+            .filter(|n| n.dimension == dimension::STRUCTURE)
+            .collect();
+        // Trellis fragments tagged ai-safety: #1, #6 = 2
+        // Carrel LLM papers tagged ai-safety: ETHOS, Multi-Agent, Embodied AI = 3
+        // Total: 5
+        assert!(
+            level1_structure.len() >= 5,
+            "at least 5 fragments from both consumers reach ai-safety"
+        );
+
+        let level1_provenance: Vec<_> = traversal.levels[1]
+            .iter()
+            .filter(|n| n.dimension == dimension::PROVENANCE)
+            .collect();
+        // Marks referencing ai-safety: trellis marks for fragments 1,6 + carrel-llm marks
+        // for ETHOS, Multi-Agent, Embodied + carrel-prov marks: draft-governance, lit-ethos
+        assert!(
+            level1_provenance.len() >= 5,
+            "at least 5 provenance marks reference ai-safety"
+        );
+
+        // KEY TRAVERSAL 5: Depth-2 BFS from a writer's fragment through
+        // provenance to discover related papers
+        //
+        // Trellis fragment about "who watches the autonomous agents?"
+        // → its mark → references → concept:autonomous-agents
+        //                         → concept:governance
+        //                         → concept:ai-safety
+        // → depth 2: other marks referencing those concepts
+        //          → fragments tagged with those concepts
+        //
+        // This should discover the ETHOS paper AND the Multi-Agent Risks paper.
+
+        // Find a specific trellis fragment: "who watches the autonomous agents?"
+        let governance_fragment = structure_nodes
+            .iter()
+            .find(|n| {
+                n.properties
+                    .get("text")
+                    .map(|v| {
+                        matches!(v, crate::graph::PropertyValue::String(s) if s.contains("who watches"))
+                    })
+                    .unwrap_or(false)
+            })
+            .expect("should find 'who watches' fragment");
+
+        let traversal = TraverseQuery::from(governance_fragment.id.clone())
+            .depth(3)
+            .direction(Direction::Both)
+            .execute(&ctx);
+
+        // Collect all nodes reached across all levels
+        let all_reached: std::collections::HashSet<String> = traversal
+            .levels
+            .iter()
+            .flatten()
+            .map(|n| n.id.to_string())
+            .collect();
+
+        // Should reach concept:autonomous-agents, concept:governance, concept:ai-safety
+        assert!(
+            all_reached.contains("concept:autonomous-agents"),
+            "traversal reaches concept:autonomous-agents"
+        );
+        assert!(
+            all_reached.contains("concept:ai-safety"),
+            "traversal reaches concept:ai-safety"
+        );
+
+        // Should reach the carrel-prov marks that share these concepts
+        assert!(
+            all_reached.contains("draft-governance"),
+            "traversal reaches draft-governance annotation (shared concepts)"
+        );
+
+        // ================================================================
+        // Analysis: Summary statistics for the essay
+        // ================================================================
+
+        // Print summary (visible in test output with --nocapture)
+        eprintln!("\n=== Two-Consumer Validation Revisited: Graph Topology ===\n");
+        eprintln!("Nodes: {} total", total_nodes);
+        eprintln!("  Structure:  {} (fragments)", structure_nodes.len());
+        eprintln!("  Semantic:   {} (concepts)", semantic_nodes.len());
+        eprintln!("  Provenance: {} ({} chains + {} marks)", provenance_nodes.len(), chains.len(), marks.len());
+        eprintln!("\nEdges: {} total", total_edges);
+        eprintln!("  tagged_with:    {} (fragment → concept)", tagged_with.len());
+        eprintln!("  contains:       {} (chain → mark)", contains.len());
+        eprintln!("  references:     {} (mark → concept)", references.len());
+        eprintln!("  links_to:       {} (research → writing)", links_to.len());
+        eprintln!("  may_be_related: {} (concept co-occurrence)", may_be_related.len());
+        eprintln!("\nConcepts: {:?}", {
+            let mut labels: Vec<_> = concept_labels.iter().collect();
+            labels.sort();
+            labels
+        });
+        eprintln!("\nCross-consumer concept:creativity connections: {} fragments + {} marks",
+            creativity_fragment_sources.len(), creativity_mark_sources.len());
+        eprintln!("Cross-consumer concept:ai-safety depth-1 reach: {} fragments + {} marks",
+            level1_structure.len(), level1_provenance.len());
+
+        // ================================================================
+        // Persistence survives restart
+        // ================================================================
+
+        drop(engine);
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+
+        assert_eq!(
+            ctx2.nodes().filter(|n| n.dimension == dimension::SEMANTIC).count(),
+            23,
+            "23 concepts survive restart"
+        );
+        assert_eq!(
+            ctx2.nodes().filter(|n| n.dimension == dimension::STRUCTURE).count(),
+            16,
+            "16 fragments survive restart"
+        );
+        assert_eq!(
+            ctx2.edges().filter(|e| e.relationship == "references").count(),
+            68,
+            "68 references edges survive restart"
+        );
+        assert_eq!(
+            ctx2.edges().filter(|e| e.relationship == "tagged_with").count(),
+            51,
+            "51 tagged_with edges survive restart"
+        );
+    }
+
+    // ================================================================
+    // Spike: Creative Writing at Scale (Essay 13 part 2)
+    // ================================================================
+    //
+    // A writer working on a novel about memory and transformation
+    // in a coastal setting. 80 Trellis fragments, 15 Carrel sources
+    // (previous writing, research, apocrypha), provenance annotations.
+    //
+    // Source material includes real Heraclitus fragments, Bachelard,
+    // Ovid, and cognitive science themes.
+    //
+    // Key question: can the graph surface thematic clusters that
+    // map to potential narrative threads or story outlines?
+
+    #[tokio::test]
+    async fn spike_creative_writing_at_scale() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::graph::dimension;
+        use crate::query::{Direction, TraverseQuery};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("coastal-novel");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "coastal-novel"))
+            .unwrap();
+
+        let enrichments: Vec<Arc<dyn crate::adapter::enrichment::Enrichment>> = vec![
+            Arc::new(TagConceptBridger::new()),
+            Arc::new(CoOccurrenceEnrichment::new()),
+        ];
+
+        let mut trellis = IngestPipeline::new(engine.clone());
+        trellis.register_integration(
+            Arc::new(FragmentAdapter::new("trellis")),
+            enrichments.clone(),
+        );
+
+        let mut carrel_llm = IngestPipeline::new(engine.clone());
+        carrel_llm.register_integration(
+            Arc::new(FragmentAdapter::new("carrel-llm")),
+            enrichments.clone(),
+        );
+
+        let mut carrel_prov = IngestPipeline::new(engine.clone());
+        carrel_prov.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            enrichments,
+        );
+
+        // ================================================================
+        // Consumer 1: Trellis — 80 writer's fragments
+        // ================================================================
+        // Organized by thematic cluster with deliberate cross-cluster
+        // tag overlaps that should produce interesting connections.
+
+        // (text, tags)
+        let fragments: Vec<(&str, Vec<&str>)> = vec![
+            // --- Memory / Time cluster ---
+            ("The smell of salt air triggers memories I didn't know I had", vec!["memory", "salt", "senses"]),
+            ("Time moves differently here — not forward but in circles, returning to the same shore", vec!["time", "return", "water"]),
+            ("She kept every letter but couldn't remember writing them", vec!["memory", "letters", "forgetting"]),
+            ("The photograph captures a moment that never existed the way I remember it", vec!["memory", "photography", "truth"]),
+            ("Nostalgia is not remembering the past — it's mourning a version of yourself", vec!["nostalgia", "identity", "loss"]),
+            ("The old songs carry the weight of every time they've been sung", vec!["memory", "repetition", "time"]),
+            ("He said forgetting was a kindness but she knew it was theft", vec!["forgetting", "loss", "silence"]),
+            ("The tide pools remember the ocean even when the water retreats", vec!["memory", "tides", "water"]),
+            ("Anniversaries are rituals for trapping time in place", vec!["time", "ritual", "memory"]),
+            ("I found my childhood in a box of someone else's photographs", vec!["memory", "photography", "identity"]),
+
+            // --- Water / Ocean cluster ---
+            ("The harbor at dawn — every boat a sentence waiting to become a story", vec!["water", "dawn", "narrative"]),
+            ("Storms teach you what the architecture was designed to withstand", vec!["storms", "architecture", "resilience"]),
+            ("Salt preserves everything except the living", vec!["salt", "preservation", "decay"]),
+            ("The current pulls memory loose like kelp from rock", vec!["water", "memory", "loss"]),
+            ("She learned to read the weather the way others read faces", vec!["water", "reading", "knowing"]),
+            ("The lighthouse keeper's log: an inventory of what darkness required", vec!["light", "darkness", "naming"]),
+            ("Tides erase and rewrite the same shore endlessly", vec!["tides", "writing", "repetition"]),
+            ("After the flood the waterline was a new kind of border", vec!["water", "thresholds", "transformation"]),
+            ("The drowned village is still visible at low tide — a city of ghosts", vec!["water", "ruins", "ghosts"]),
+            ("Sailing is the practice of trusting what you cannot see", vec!["water", "trust", "navigation"]),
+
+            // --- Identity / Transformation cluster ---
+            ("She wore names like masks, each one a different version of arriving", vec!["identity", "masks", "naming"]),
+            ("Transformation requires first the dissolution of what came before", vec!["transformation", "decay", "becoming"]),
+            ("The ship of Theseus applies to people too — when are you someone else?", vec!["identity", "transformation", "myth"]),
+            ("Mirrors show you someone who is always just leaving", vec!["identity", "seeing", "departure"]),
+            ("He became the role so completely that the original was an understudy", vec!["identity", "masks", "performance"]),
+            ("Twins are nature's argument that identity is not located in the body", vec!["identity", "doubling", "body"]),
+            ("Immigration is a form of translation — you become a different word for the same meaning", vec!["identity", "translation", "journey"]),
+            ("Every metamorphosis carries grief for the earlier form", vec!["transformation", "loss", "myth"]),
+            ("The mask doesn't hide the face — it reveals a different one", vec!["masks", "truth", "seeing"]),
+            ("You can return to a place but never to the person you were when you left it", vec!["return", "identity", "time"]),
+
+            // --- Architecture / Ruins cluster ---
+            ("The house remembers what the family forgot", vec!["architecture", "memory", "family"]),
+            ("Ruins are more honest than restoration — they admit to time", vec!["ruins", "time", "truth"]),
+            ("A threshold is where one story ends and another begins", vec!["thresholds", "narrative", "architecture"]),
+            ("The cathedral's silence is not empty — it's full of accumulated prayers", vec!["architecture", "silence", "accumulation"]),
+            ("She built rooms inside her mind and furnished them with light", vec!["architecture", "mind", "light"]),
+            ("Decay is architecture learning to let go", vec!["decay", "architecture", "loss"]),
+            ("The foundation stone holds the memory of every wall that rose above it", vec!["architecture", "foundation", "memory"]),
+            ("Windows are the building's way of looking at itself", vec!["architecture", "seeing", "reflection"]),
+            ("Abandoned buildings dream of the lives they contained", vec!["ruins", "memory", "ghosts"]),
+            ("The staircase is a negotiation between staying and leaving", vec!["architecture", "thresholds", "departure"]),
+
+            // --- Light / Shadow cluster ---
+            ("Photography is memory's most beautiful lie", vec!["photography", "memory", "truth"]),
+            ("Shadows are more faithful than light — they never leave you", vec!["shadow", "faithfulness", "light"]),
+            ("Dawn reveals what darkness kindly hid", vec!["dawn", "darkness", "revelation"]),
+            ("The darkroom is where images learn to exist", vec!["photography", "darkness", "becoming"]),
+            ("She painted only at twilight when things revealed their true colors", vec!["light", "truth", "painting"]),
+            ("Every photograph is an argument about what mattered", vec!["photography", "narrative", "seeing"]),
+            ("The shadow of a lighthouse reaches further than its beam", vec!["shadow", "light", "reach"]),
+            ("Candlelight turns faces into landscapes", vec!["light", "faces", "transformation"]),
+            ("The negative contains everything the photograph chose to forget", vec!["photography", "forgetting", "shadow"]),
+            ("At certain angles the ruin is more beautiful than the building ever was", vec!["light", "ruins", "beauty"]),
+
+            // --- Family / Inheritance cluster ---
+            ("We inherit gestures before we inherit property", vec!["inheritance", "family", "body"]),
+            ("The family tree is a map of silences", vec!["family", "silence", "naming"]),
+            ("Her mother's recipes were coded messages from another life", vec!["family", "language", "secrets"]),
+            ("To inherit a house is to inherit its arguments", vec!["inheritance", "architecture", "family"]),
+            ("Secrets are the family's most durable architecture", vec!["secrets", "family", "architecture"]),
+            ("She found her grandmother's handwriting in her own", vec!["inheritance", "writing", "identity"]),
+            ("The attic held everything too important to use and too painful to discard", vec!["family", "memory", "architecture"]),
+            ("Photographs of the dead become relics of secular saints", vec!["photography", "family", "myth"]),
+
+            // --- Language / Silence cluster ---
+            ("Naming a thing is the first step toward losing it", vec!["naming", "loss", "language"]),
+            ("Translation is the art of mourning what won't cross the border", vec!["translation", "loss", "journey"]),
+            ("Silence is not the absence of language — it's language's shadow", vec!["silence", "language", "shadow"]),
+            ("The untranslatable word is the culture's most private room", vec!["translation", "language", "architecture"]),
+            ("She spoke three languages and was homesick in all of them", vec!["language", "identity", "loss"]),
+            ("Letters are conversations with ghosts", vec!["letters", "ghosts", "language"]),
+            ("The word for home changes depending on how far away you are", vec!["language", "home", "distance"]),
+            ("His accent was a map of everywhere he'd been and couldn't return to", vec!["language", "journey", "return"]),
+
+            // --- Myth / Journey cluster ---
+            ("Odysseus's real journey was learning to forget the sea", vec!["myth", "journey", "forgetting"]),
+            ("Every labyrinth has a center that is also a mirror", vec!["labyrinth", "identity", "myth"]),
+            ("Proteus changes form because truth requires multiplicity", vec!["myth", "transformation", "truth"]),
+            ("The hero's return is always to a place that no longer exists", vec!["myth", "return", "loss"]),
+            ("Myths are the dreams a culture agrees to share", vec!["myth", "dreams", "narrative"]),
+            ("The underworld is just memory without light", vec!["myth", "memory", "darkness"]),
+            ("She carried a red thread through the labyrinth of her own making", vec!["labyrinth", "navigation", "identity"]),
+            ("Persephone chose both kingdoms — that was her real power", vec!["myth", "choice", "transformation"]),
+
+            // --- Cross-cluster bridges (deliberate thematic connections) ---
+            ("The sea wall is memory's architecture against forgetting", vec!["water", "architecture", "memory", "forgetting"]),
+            ("The lighthouse keeper keeps a journal no one will read — all naming is faith", vec!["light", "naming", "faith", "silence"]),
+            ("Storm damage reveals the house's skeleton, its secret geometry", vec!["storms", "architecture", "secrets", "revelation"]),
+            ("She translated the poem but lost the silence between the words", vec!["translation", "silence", "loss", "language"]),
+            ("The photograph of the ruin creates a double memory — of the building and its decay", vec!["photography", "ruins", "memory", "doubling"]),
+            ("The returning tide brings different debris — same ocean, different story", vec!["tides", "return", "narrative", "water"]),
+            ("The house by the harbor: where architecture meets the sea", vec!["architecture", "water", "home", "thresholds"]),
+            ("Old maps name places that no longer exist — cartography of loss", vec!["naming", "loss", "navigation", "time"]),
+        ];
+
+        assert_eq!(fragments.len(), 82, "82 trellis fragments");
+
+        for (text, tags) in &fragments {
+            let input = FragmentInput::new(
+                *text,
+                tags.iter().map(|t| t.to_string()).collect(),
+            )
+            .with_source("journal");
+            trellis
+                .ingest("coastal-novel", "fragment", Box::new(input))
+                .await
+                .unwrap();
+        }
+
+        // ================================================================
+        // Consumer 2: Carrel LLM — 15 sources (previous writing,
+        // research, apocrypha)
+        // ================================================================
+
+        // (text, tags, source)
+        let carrel_sources: Vec<(&str, Vec<&str>, &str)> = vec![
+            // --- Writer's previous work ---
+            (
+                "How coastlines erode: first the soft parts, then the foundations. \
+                 Memory works the same way — the feelings go first, then the facts, \
+                 until only the shape of what happened remains.",
+                vec!["memory", "erosion", "landscape", "time"],
+                "own-essay-coastal-erosion",
+            ),
+            (
+                "The translator lived in a house between languages. Every room held \
+                 a different grammar. The kitchen spoke her mother tongue; the study \
+                 whispered in the language of her adopted country.",
+                vec!["translation", "identity", "architecture", "language"],
+                "own-story-translators-house",
+            ),
+            (
+                "I photograph ruins because they have stopped pretending. A ruin is a \
+                 building that has finally told the truth about time.",
+                vec!["photography", "ruins", "decay", "truth"],
+                "own-essay-why-i-photograph-ruins",
+            ),
+            (
+                "The tide comes in like memory — unbidden, carrying debris from depths \
+                 you'd forgotten. The tide goes out like forgetting — slowly, leaving \
+                 behind what it thinks you need.",
+                vec!["tides", "memory", "forgetting", "ritual"],
+                "own-poem-tidal-memory",
+            ),
+
+            // --- Research papers ---
+            (
+                "Memory consolidation transforms labile short-term traces into stable \
+                 long-term representations. Reconsolidation suggests that each retrieval \
+                 opens a window during which memories can be modified or strengthened.",
+                vec!["memory", "transformation", "time", "consolidation"],
+                "paper-memory-consolidation",
+            ),
+            (
+                "Narrative identity is the internalized, evolving life story that \
+                 integrates reconstructed past and imagined future to provide life \
+                 with unity and purpose.",
+                vec!["narrative", "identity", "memory", "self"],
+                "paper-narrative-identity",
+            ),
+            (
+                "The method of loci exploits spatial memory to organize information \
+                 in imagined architectural spaces — memory palaces where each room \
+                 holds a different piece of knowledge.",
+                vec!["architecture", "memory", "navigation", "mind"],
+                "paper-memory-palaces",
+            ),
+            (
+                "Metaphors are not merely linguistic ornaments but fundamental \
+                 cognitive structures. We understand abstract concepts through \
+                 embodied experience: time as a river, arguments as buildings, \
+                 emotions as weather.",
+                vec!["language", "body", "metaphor", "knowing"],
+                "paper-embodied-cognition",
+            ),
+
+            // --- Apocrypha ---
+            (
+                "On those stepping into rivers staying the same, other and other \
+                 waters flow. All things are in flux; nothing stays still.",
+                vec!["water", "identity", "time", "transformation"],
+                "heraclitus-fragments",
+            ),
+            (
+                "The house shelters daydreaming, the house protects the dreamer, \
+                 the house allows one to dream in peace. Inhabited space transcends \
+                 geometrical space.",
+                vec!["architecture", "memory", "home", "dreams"],
+                "bachelard-poetics-of-space",
+            ),
+            (
+                "Proteus, the old man of the sea, knows all things — past, present, \
+                 and future. But to extract his knowledge you must hold him fast \
+                 through every transformation.",
+                vec!["myth", "transformation", "truth", "water"],
+                "ovid-metamorphoses-proteus",
+            ),
+            (
+                "What can be seen at one time is no more than the island which has \
+                 risen into view. The library contains all possible combinations of \
+                 letters — somewhere in it exists every story ever told and never told.",
+                vec!["labyrinth", "language", "naming", "infinity"],
+                "borges-library-of-babel",
+            ),
+            (
+                "Mono no aware: the pathos of things. The gentle sadness at the \
+                 passing of all things. Cherry blossoms are beautiful because they fall.",
+                vec!["beauty", "loss", "time", "seeing"],
+                "japanese-mono-no-aware",
+            ),
+            (
+                "Ship figureheads carried the vessel's soul. To name a ship was to \
+                 give it a fate. Sailors who renamed a vessel first had to erase \
+                 every trace of the old name — even from the ship's log.",
+                vec!["water", "naming", "myth", "navigation"],
+                "maritime-folklore-figureheads",
+            ),
+            (
+                "A palimpsest: a manuscript on which earlier writing has been effaced \
+                 to make room for later writing, but traces of the original remain \
+                 visible. Every old building is a palimpsest of renovations.",
+                vec!["architecture", "time", "layers", "memory"],
+                "architectural-palimpsest",
+            ),
+        ];
+
+        for (text, tags, source) in &carrel_sources {
+            let input = FragmentInput::new(
+                *text,
+                tags.iter().map(|t| t.to_string()).collect(),
+            )
+            .with_source(*source);
+            carrel_llm
+                .ingest("coastal-novel", "fragment", Box::new(input))
+                .await
+                .unwrap();
+        }
+
+        // ================================================================
+        // Consumer 3: Carrel provenance — annotations on sources
+        // ================================================================
+
+        // Novel drafting chain
+        carrel_prov
+            .ingest(
+                "coastal-novel",
+                "provenance",
+                Box::new(ProvenanceInput::CreateChain {
+                    chain_id: "novel-draft".to_string(),
+                    name: "Coastal Novel Draft".to_string(),
+                    description: Some("Novel about memory and transformation in a coastal town".to_string()),
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Research chain
+        carrel_prov
+            .ingest(
+                "coastal-novel",
+                "provenance",
+                Box::new(ProvenanceInput::CreateChain {
+                    chain_id: "thematic-research".to_string(),
+                    name: "Thematic Research".to_string(),
+                    description: None,
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Draft marks: annotations on novel sections
+        let draft_marks = vec![
+            ("draft-ch1-harbor", "novel-draft", "drafts/chapter-1.md", 1,
+             "Opening: protagonist returns to the harbor town — everything familiar but changed",
+             vec!["#return", "#water", "#identity", "#transformation"]),
+            ("draft-ch3-house", "novel-draft", "drafts/chapter-3.md", 1,
+             "The inherited house as repository of family memory — each room a different era",
+             vec!["#architecture", "#memory", "#family", "#inheritance"]),
+            ("draft-ch5-photographs", "novel-draft", "drafts/chapter-5.md", 1,
+             "Box of old photographs: protagonist discovers images that contradict her memories",
+             vec!["#photography", "#memory", "#truth", "#family"]),
+            ("draft-ch7-storm", "novel-draft", "drafts/chapter-7.md", 1,
+             "Storm sequence: the sea reveals foundations of a building no one remembers",
+             vec!["#storms", "#ruins", "#memory", "#revelation"]),
+            ("draft-ch9-translation", "novel-draft", "drafts/chapter-9.md", 1,
+             "The translator character: caught between languages, belonging to neither fully",
+             vec!["#translation", "#identity", "#language", "#loss"]),
+            ("draft-ch11-labyrinth", "novel-draft", "drafts/chapter-11.md", 1,
+             "Climax: the protagonist navigates a labyrinth of memory to find what was hidden",
+             vec!["#labyrinth", "#memory", "#navigation", "#secrets"]),
+        ];
+
+        for (mark_id, chain_id, file, line, annotation, tags) in &draft_marks {
+            carrel_prov
+                .ingest(
+                    "coastal-novel",
+                    "provenance",
+                    Box::new(ProvenanceInput::AddMark {
+                        mark_id: mark_id.to_string(),
+                        chain_id: chain_id.to_string(),
+                        file: file.to_string(),
+                        line: *line,
+                        annotation: annotation.to_string(),
+                        column: None,
+                        mark_type: Some("reference".to_string()),
+                        tags: Some(tags.iter().map(|t| t.to_string()).collect()),
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Research marks: annotations on sources
+        let research_marks = vec![
+            ("research-heraclitus", "thematic-research", "sources/heraclitus.md", 91,
+             "Fragment 91: the river metaphor — directly applicable to protagonist's return",
+             vec!["#water", "#identity", "#transformation"]),
+            ("research-bachelard", "thematic-research", "sources/bachelard.md", 7,
+             "The house as dreaming space — the inherited house chapters need this",
+             vec!["#architecture", "#memory", "#dreams"]),
+            ("research-proteus", "thematic-research", "sources/ovid-proteus.md", 1,
+             "Proteus: knowledge requires holding fast through transformation — the protagonist's arc",
+             vec!["#myth", "#transformation", "#truth"]),
+            ("research-memory-paper", "thematic-research", "sources/memory-consolidation.pdf", 1,
+             "Reconsolidation: memories change when retrieved — the unreliable photographs chapter",
+             vec!["#memory", "#transformation", "#truth"]),
+            ("research-palimpsest", "thematic-research", "sources/palimpsest.md", 1,
+             "The house as palimpsest: layers of renovation = layers of family history",
+             vec!["#architecture", "#time", "#layers", "#family"]),
+        ];
+
+        for (mark_id, chain_id, file, line, annotation, tags) in &research_marks {
+            carrel_prov
+                .ingest(
+                    "coastal-novel",
+                    "provenance",
+                    Box::new(ProvenanceInput::AddMark {
+                        mark_id: mark_id.to_string(),
+                        chain_id: chain_id.to_string(),
+                        file: file.to_string(),
+                        line: *line,
+                        annotation: annotation.to_string(),
+                        column: None,
+                        mark_type: Some("reference".to_string()),
+                        tags: Some(tags.iter().map(|t| t.to_string()).collect()),
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Links: research sources → draft chapters they inform
+        let links = vec![
+            ("research-heraclitus", "draft-ch1-harbor"),    // river metaphor → return chapter
+            ("research-bachelard", "draft-ch3-house"),       // poetics of space → house chapter
+            ("research-proteus", "draft-ch11-labyrinth"),    // transformation → climax
+            ("research-memory-paper", "draft-ch5-photographs"), // reconsolidation → photographs
+            ("research-palimpsest", "draft-ch3-house"),      // palimpsest → house chapter
+        ];
+
+        for (source, target) in &links {
+            carrel_prov
+                .ingest(
+                    "coastal-novel",
+                    "provenance",
+                    Box::new(ProvenanceInput::LinkMarks {
+                        source_id: source.to_string(),
+                        target_id: target.to_string(),
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+
+        // ================================================================
+        // Analysis
+        // ================================================================
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // --- Node counts ---
+        let structure_count = ctx.nodes().filter(|n| n.dimension == dimension::STRUCTURE).count();
+        let semantic_nodes: Vec<_> = ctx.nodes().filter(|n| n.dimension == dimension::SEMANTIC).collect();
+        let provenance_count = ctx.nodes().filter(|n| n.dimension == dimension::PROVENANCE).count();
+        let chains_count = ctx.nodes().filter(|n| n.node_type == "chain").count();
+        let marks_count = ctx.nodes().filter(|n| n.node_type == "mark").count();
+
+        // 97 fragments: 82 Trellis + 15 Carrel LLM
+        assert_eq!(structure_count, 97, "97 fragment nodes (82 trellis + 15 carrel-llm)");
+
+        // Count unique tags across all fragments
+        let concept_ids: std::collections::BTreeSet<String> = semantic_nodes
+            .iter()
+            .map(|n| n.id.to_string())
+            .collect();
+
+        // Provenance: chains + marks
+        // Chains: 1 (trellis:journal) + 15 (carrel-llm per source) + 2 (prov: novel-draft + thematic-research) = 18
+        // Marks: 82 (trellis) + 15 (carrel-llm) + 11 (prov: 6 draft + 5 research) = 108
+        assert_eq!(chains_count, 18, "18 chains");
+        assert_eq!(marks_count, 108, "108 marks");
+
+        let total_nodes = structure_count + semantic_nodes.len() + provenance_count;
+
+        // --- Edge counts ---
+        let tagged_with_count = ctx.edges().filter(|e| e.relationship == "tagged_with").count();
+        let contains_count = ctx.edges().filter(|e| e.relationship == "contains").count();
+        let references_count = ctx.edges().filter(|e| e.relationship == "references").count();
+        let links_to_count = ctx.edges().filter(|e| e.relationship == "links_to").count();
+        let may_be_related: Vec<_> = ctx.edges().filter(|e| e.relationship == "may_be_related").collect();
+
+        assert_eq!(contains_count, 108, "108 contains edges (1 per mark)");
+        assert_eq!(links_to_count, 5, "5 research→draft links");
+
+        let total_edges = tagged_with_count + contains_count + references_count
+            + links_to_count + may_be_related.len();
+
+        // ================================================================
+        // Thematic cluster analysis via co-occurrence
+        // ================================================================
+
+        // Find the strongest co-occurrence pairs (highest raw_weight)
+        let mut cooccurrence_pairs: Vec<(String, String, f32)> = may_be_related
+            .iter()
+            .filter(|e| e.source.to_string() < e.target.to_string()) // deduplicate symmetric pairs
+            .map(|e| (e.source.to_string(), e.target.to_string(), e.raw_weight))
+            .collect();
+        cooccurrence_pairs.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+
+        // The top co-occurrence pairs should reveal thematic clusters.
+        // memory + time, memory + identity, water + memory, etc.
+        assert!(
+            !cooccurrence_pairs.is_empty(),
+            "should have co-occurrence pairs"
+        );
+
+        // --- Cross-cluster discovery ---
+
+        // TRAVERSAL 1: From Heraclitus → through concepts → to writer's fragments
+        // Heraclitus has tags: water, identity, time, transformation
+        // These bridge the Water, Identity, and Memory clusters.
+        let heraclitus_chain = NodeId::from_string("chain:carrel-llm:heraclitus-fragments");
+        let heraclitus_mark_edges: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.source == heraclitus_chain && e.relationship == "contains")
+            .collect();
+        assert_eq!(heraclitus_mark_edges.len(), 1);
+
+        let heraclitus_mark = &heraclitus_mark_edges[0].target;
+        let heraclitus_concepts: std::collections::HashSet<String> = ctx
+            .edges()
+            .filter(|e| e.source == *heraclitus_mark && e.relationship == "references")
+            .map(|e| e.target.to_string())
+            .collect();
+
+        assert!(heraclitus_concepts.contains("concept:water"));
+        assert!(heraclitus_concepts.contains("concept:identity"));
+        assert!(heraclitus_concepts.contains("concept:transformation"));
+        assert!(heraclitus_concepts.contains("concept:time"));
+
+        // From concept:transformation, how many fragments from different consumers?
+        let transformation_id = NodeId::from_string("concept:transformation");
+        let transformation_fragments: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == transformation_id && e.relationship == "tagged_with")
+            .collect();
+        // Trellis fragments with "transformation" + Carrel sources with "transformation"
+        assert!(
+            transformation_fragments.len() >= 5,
+            "concept:transformation should connect fragments from both consumers"
+        );
+
+        // TRAVERSAL 2: From the protagonist's return (Ch1) through concepts
+        // to discover the Heraclitus connection
+        //
+        // draft-ch1-harbor tags: return, water, identity, transformation
+        // Heraclitus tags: water, identity, time, transformation
+        // Shared concepts: water, identity, transformation
+        let ch1_refs: std::collections::HashSet<String> = ctx
+            .edges()
+            .filter(|e| {
+                e.source == NodeId::from_string("draft-ch1-harbor")
+                    && e.relationship == "references"
+            })
+            .map(|e| e.target.to_string())
+            .collect();
+
+        let shared_with_heraclitus: Vec<_> = ch1_refs
+            .intersection(&heraclitus_concepts)
+            .collect();
+        assert!(
+            shared_with_heraclitus.len() >= 3,
+            "draft-ch1-harbor and Heraclitus share at least 3 concepts (water, identity, transformation)"
+        );
+
+        // TRAVERSAL 3: concept:memory as the central hub
+        // Memory should be the most connected concept — it appears across
+        // nearly every cluster and consumer.
+        let memory_id = NodeId::from_string("concept:memory");
+        let memory_tagged_with = ctx
+            .edges()
+            .filter(|e| e.target == memory_id && e.relationship == "tagged_with")
+            .count();
+        let memory_references = ctx
+            .edges()
+            .filter(|e| e.target == memory_id && e.relationship == "references")
+            .count();
+        let memory_cooccurrences = ctx
+            .edges()
+            .filter(|e| {
+                e.relationship == "may_be_related"
+                    && (e.source == memory_id || e.target == memory_id)
+            })
+            .count();
+
+        // Memory should be heavily connected across all relationship types
+        assert!(memory_tagged_with >= 15, "memory tagged in many fragments");
+        assert!(memory_references >= 15, "memory referenced by many marks");
+        assert!(memory_cooccurrences >= 10, "memory co-occurs with many other concepts");
+
+        // TRAVERSAL 4: depth-2 from concept:architecture should reach
+        // concept:memory (via co-occurrence or shared fragments), creating
+        // the "house as memory" thematic thread
+        let arch_id = NodeId::from_string("concept:architecture");
+        let arch_traversal = TraverseQuery::from(arch_id.clone())
+            .depth(2)
+            .direction(Direction::Both)
+            .execute(&ctx);
+
+        let arch_reached: std::collections::HashSet<String> = arch_traversal
+            .levels
+            .iter()
+            .flatten()
+            .map(|n| n.id.to_string())
+            .collect();
+
+        // Architecture should reach memory through shared fragments and co-occurrence
+        assert!(
+            arch_reached.contains("concept:memory"),
+            "architecture reaches memory (the house-as-memory theme)"
+        );
+
+        // TRAVERSAL 5: From Borges' Library of Babel → through labyrinth →
+        // to the writer's myth fragments
+        let borges_chain = NodeId::from_string("chain:carrel-llm:borges-library-of-babel");
+        let borges_marks: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.source == borges_chain && e.relationship == "contains")
+            .collect();
+        assert_eq!(borges_marks.len(), 1);
+
+        let borges_concepts: std::collections::HashSet<String> = ctx
+            .edges()
+            .filter(|e| e.source == borges_marks[0].target.clone() && e.relationship == "references")
+            .map(|e| e.target.to_string())
+            .collect();
+        assert!(borges_concepts.contains("concept:labyrinth"));
+        assert!(borges_concepts.contains("concept:naming"));
+
+        // From concept:labyrinth, reach the myth cluster
+        let lab_id = NodeId::from_string("concept:labyrinth");
+        let labyrinth_fragments = ctx
+            .edges()
+            .filter(|e| e.target == lab_id && e.relationship == "tagged_with")
+            .count();
+        assert!(
+            labyrinth_fragments >= 3,
+            "labyrinth connects Borges to writer's myth fragments"
+        );
+
+        // ================================================================
+        // Narrative thread analysis: what story outline does the graph suggest?
+        // ================================================================
+
+        // Collect the top N co-occurrence pairs as potential narrative threads
+        let top_pairs: Vec<_> = cooccurrence_pairs.iter().take(20).collect();
+
+        // Identify hub concepts (appear in most co-occurrence pairs)
+        let mut concept_frequency: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for (src, tgt, _) in &cooccurrence_pairs {
+            *concept_frequency.entry(src.clone()).or_default() += 1;
+            *concept_frequency.entry(tgt.clone()).or_default() += 1;
+        }
+        let mut hub_concepts: Vec<_> = concept_frequency.into_iter().collect();
+        hub_concepts.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // ================================================================
+        // Summary output
+        // ================================================================
+
+        eprintln!("\n=== Creative Writing at Scale: Graph Topology ===\n");
+        eprintln!("Nodes: {} total", total_nodes);
+        eprintln!("  Structure:  {} (82 trellis + 15 carrel-llm)", structure_count);
+        eprintln!("  Semantic:   {} concepts", semantic_nodes.len());
+        eprintln!("  Provenance: {} ({} chains + {} marks)", provenance_count, chains_count, marks_count);
+        eprintln!("\nEdges: {} total", total_edges);
+        eprintln!("  tagged_with:    {}", tagged_with_count);
+        eprintln!("  contains:       {}", contains_count);
+        eprintln!("  references:     {}", references_count);
+        eprintln!("  links_to:       {}", links_to_count);
+        eprintln!("  may_be_related: {} ({} unique pairs)",
+            may_be_related.len(), cooccurrence_pairs.len());
+
+        eprintln!("\n--- Concept vocabulary ({} concepts) ---", concept_ids.len());
+        for id in &concept_ids {
+            eprintln!("  {}", id);
+        }
+
+        eprintln!("\n--- Top 20 co-occurrence pairs (narrative threads) ---");
+        for (src, tgt, weight) in &top_pairs {
+            eprintln!("  {:.1}  {} ↔ {}", weight,
+                src.strip_prefix("concept:").unwrap_or(src),
+                tgt.strip_prefix("concept:").unwrap_or(tgt));
+        }
+
+        eprintln!("\n--- Hub concepts (most connected) ---");
+        for (concept, freq) in hub_concepts.iter().take(10) {
+            eprintln!("  {} — {} co-occurrence connections",
+                concept.strip_prefix("concept:").unwrap_or(concept), freq);
+        }
+
+        eprintln!("\n--- Cross-consumer discovery ---");
+        eprintln!("  Heraclitus → concept:transformation → {} trellis+carrel fragments",
+            transformation_fragments.len());
+        eprintln!("  concept:memory hub: {} tagged_with + {} references + {} co-occurrences",
+            memory_tagged_with, memory_references, memory_cooccurrences);
+        eprintln!("  Borges → concept:labyrinth → {} myth/journey fragments",
+            labyrinth_fragments);
+
+        // ================================================================
+        // Persistence
+        // ================================================================
+
+        drop(engine);
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+
+        assert_eq!(
+            ctx2.nodes().filter(|n| n.dimension == dimension::STRUCTURE).count(),
+            97,
+            "97 fragments survive restart"
+        );
+        assert_eq!(
+            ctx2.nodes().filter(|n| n.dimension == dimension::SEMANTIC).count(),
+            semantic_nodes.len(),
+            "concepts survive restart"
+        );
+    }
 }
