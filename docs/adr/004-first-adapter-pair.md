@@ -69,7 +69,7 @@ This maintains the abstraction boundary: the enrichment depends on the graph mod
 
 ### 5. Symmetric edge pairs for may_be_related
 
-The CoOccurrenceAdapter emits both `A → B` and `B → A` for each co-occurring concept pair, with identical contribution values. This ensures query-time normalization (outgoing divisive: `w_ij / Σ_k w_ik`) sees the relationship from both endpoints.
+The CoOccurrenceEnrichment emits both `A → B` and `B → A` for each co-occurring concept pair, with identical contribution values. This ensures query-time normalization (outgoing divisive: `w_ij / Σ_k w_ik`) sees the relationship from both endpoints.
 
 **Alternatives considered:**
 

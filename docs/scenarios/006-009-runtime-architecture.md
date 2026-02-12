@@ -126,12 +126,9 @@
 **When** `add_mark` is called with tags `["#Travel"]` in context "provence-research"
 **Then** a `references` edge exists from the mark to `concept:travel` (normalization: strip `#`, lowercase)
 
-### Scenario: Mark created before concept is not bridged (known limitation)
-**Given** a context "provence-research" with no concept nodes
-**And** a chain "reading-notes" in context "provence-research"
-**When** `add_mark` is called with tags `["#travel"]` in context "provence-research"
-**Then** the mark is created successfully with no `references` edges
-**And** when a concept node `concept:travel` is later added to the context, no retroactive bridging occurs
+### Scenario: ~~Mark created before concept is not bridged (known limitation)~~ SUPERSEDED by ADR-010
+
+> **Superseded.** Under the enrichment model (ADR-010), the `TagConceptBridger` enrichment bridges bidirectionally — new concepts retroactively bridge to existing marks. See scenarios in [010-012-public-surface.md](./010-012-public-surface.md), Feature: TagConceptBridger Enrichment.
 
 ### Scenario: Mark with no tags gets no references edges
 **Given** a context "provence-research" containing concept nodes

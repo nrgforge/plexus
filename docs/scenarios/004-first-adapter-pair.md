@@ -165,17 +165,17 @@ Scale normalization uses dynamic epsilon to prevent the weakest real contributio
 
 ## Feature: End-to-End — Fragment Processing Through Co-Occurrence Detection
 
-The full pipeline: fragments enter via FragmentAdapter, co-occurrence is detected by CoOccurrenceAdapter, and the graph contains both structural and propositional edges.
+The full pipeline: fragments enter via FragmentAdapter, the enrichment loop detects co-occurrence via CoOccurrenceEnrichment, and the graph contains both structural and propositional edges.
 
 ### Scenario: Three fragments produce tagged_with and may_be_related edges
 **Given** a FragmentAdapter with adapter ID "manual-fragment"
-**And** a CoOccurrenceAdapter with adapter ID "co-occurrence" and ProposalSink cap 1.0
+**And** a CoOccurrenceEnrichment with enrichment ID "co-occurrence" and contribution cap 1.0
 **When** the FragmentAdapter processes:
   - Fragment F1 with tags ["travel", "avignon", "walking"]
   - Fragment F2 with tags ["travel", "avignon", "paris"]
   - Fragment F3 with tags ["walking", "nature"]
-**And** the framework creates a graph state snapshot
-**And** the CoOccurrenceAdapter processes the snapshot
+**And** the enrichment loop runs after each primary emission
+**And** the CoOccurrenceEnrichment processes the context snapshot
 **Then** the graph contains 3 fragment nodes and 5 concept nodes (travel, avignon, walking, paris, nature)
 **And** 9 `tagged_with` edges exist (3 + 3 + 2 per fragment, one per tag)
 **And** `may_be_related` symmetric edge pairs exist between all co-occurring concept pairs
@@ -183,8 +183,8 @@ The full pipeline: fragments enter via FragmentAdapter, co-occurrence is detecte
 **And** all `tagged_with` edges have contributions from "manual-fragment"
 **And** all `may_be_related` edges have contributions from "co-occurrence"
 
-### Scenario: Re-running the CoOccurrenceAdapter with unchanged graph is idempotent
-**Given** the CoOccurrenceAdapter has already processed a graph state snapshot and proposed `may_be_related` edges
+### Scenario: Re-running the CoOccurrenceEnrichment with unchanged graph is idempotent
+**Given** the CoOccurrenceEnrichment has already processed a context snapshot and emitted `may_be_related` edges
 **When** the CoOccurrenceEnrichment processes a new snapshot of the same graph (no new fragments)
 **Then** all `may_be_related` edge contributions are replaced with the same values (latest-value-replace)
 **And** no `WeightsChanged` events fire (contributions unchanged)

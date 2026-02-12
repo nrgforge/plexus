@@ -43,14 +43,9 @@ The normalization also lowercases the tag to match ADR-004's convention: `#Trave
 
 This convention must be consistent across all mark creation and concept node creation paths.
 
-### 3. Bridging is creation-time only (known limitation)
+### 3. ~~Bridging is creation-time only~~ **RESOLVED by ADR-010 (enrichment model)**
 
-If a mark is created before the matching concept node exists, no `references` edge is created. The mark exists unbridged until a future mechanism closes the gap. Two future options:
-
-- A reflexive adapter that scans for unbridged marks
-- A hook on concept node creation that scans for marks with matching tags
-
-Neither is implemented now. This is a documented limitation, not a defect. The common workflow — ingest fragments first, then mark passages — produces concepts before marks, so bridging works in the expected order.
+> **Status:** Resolved. The `TagConceptBridger` enrichment runs in the enrichment loop after every emission, bridging bidirectionally: new marks to existing concepts, and new concepts to existing marks. The creation-time-only limitation no longer applies.
 
 ### 4. `references` as the relationship type
 
@@ -69,11 +64,11 @@ Cross-dimensional edges from marks to concepts use the relationship type `refere
 
 **Negative:**
 
-- Order-dependent: marks created before concepts are not bridged. This affects users who mark passages before ingesting fragments. The limitation is documented; a future reflexive adapter can address it.
+- ~~Order-dependent: marks created before concepts are not bridged.~~ Resolved by ADR-010: the `TagConceptBridger` enrichment bridges bidirectionally.
 - Exact-match only: `#walking` does not bridge to `concept:walk`. Fuzzy matching could be added later but introduces ambiguity. Exact match is the right starting point.
 - Adds processing to every `add_mark` call: for each tag, look up a concept node ID. This is a HashMap lookup in the in-memory context — negligible cost.
 
 **Neutral:**
 
-- The `references` edges are regular cross-dimensional edges. They participate in query-time normalization like any other edge. Their raw weight is 1.0 (binary: the tag was applied to the mark), matching `tagged_with` contribution semantics.
-- `references` edges are created via `Context.add_edge()`, bypassing the adapter emission pipeline. They have raw_weight 1.0 set directly (not from contributions), and they do not fire graph events. This is acceptable because bridge edges are structural connections, not evidence-bearing edges — their existence is binary (the tag matched a concept), not graduated. If this needs to change (e.g., for provenance of the bridge itself), the reflexive adapter approach would be the right migration path.
+- The `references` edges are regular cross-dimensional edges. They participate in query-time normalization like any other edge.
+- Under the enrichment model (ADR-010), `references` edges are created via `Emission` from the `TagConceptBridger` enrichment. They go through the standard commit path with contribution tracking (contribution value 1.0 from the enrichment, matching `tagged_with` binary semantics) and fire graph events. This replaces the previous `Context.add_edge()` bypass.
