@@ -24,13 +24,21 @@ A single external adapter produces graph structure but no graph refinement. Addi
 
 ## Decisions
 
-### 1. FragmentAdapter: external adapter for tagged writing
+### 1. FragmentAdapter: external adapter for tagged writing **UPDATED by Essay 12**
 
 The FragmentAdapter is an external adapter with `input_kind: "fragment"`. It receives a `FragmentInput` containing text, tags, an optional source, and an optional date. It emits a single emission containing:
 
+**Semantic output:**
 - A **fragment node** — `ContentType::Document`, dimension `"structure"`, unique ID per fragment, with text and metadata as properties.
 - A **concept node per tag** — `ContentType::Concept`, dimension `"semantic"`, with a deterministic concept ID: `concept:{lowercase_tag}`.
 - An **edge per tag** — relationship `tagged_with`, from fragment node to concept node, contribution value 1.0.
+
+**Provenance output** (added by Essay 12):
+- A **chain node** — `ContentType::Provenance`, dimension `"provenance"`, with deterministic ID `chain:{adapter_id}:{source}`. Re-ingesting from the same source upserts the existing chain.
+- A **mark node** — `ContentType::Provenance`, dimension `"provenance"`, carrying the fragment's text as annotation, source file reference, and tags.
+- A **`contains` edge** — from chain to mark, within the provenance dimension.
+
+The mark's tags trigger automatic tag-to-concept bridging via `TagConceptBridger`, creating `references` edges from the mark to matching concept nodes. This makes every fragment's origin graph-traversable without any additional enrichment code.
 
 **Alternatives considered:**
 

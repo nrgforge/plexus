@@ -64,16 +64,24 @@ If the downcast fails (wrong type for the matched adapter), the adapter returns 
 
 - *Typed enum* (`AdapterData::FileContent { path, content }`, etc.) — Rejected: couples the framework to every domain's input shape. Adding a new domain means modifying the enum. The framework doesn't need to know what's inside.
 
-### 5. Two-layer provenance
+### 5. Dual-obligation provenance **UPDATED by Essay 12**
 
-Adapters annotate nodes and edges with what they know about the extraction: confidence, method, source location. The engine wraps each emission with structural context: adapter ID, timestamp, input summary, context ID. The engine constructs `ProvenanceEntry` records by combining both layers.
+> **Updated.** The original "two-layer provenance" design (adapters annotate, engine wraps) remains valid for operational metadata. But Essay 12 ("Provenance as Epistemological Infrastructure") established a stronger requirement: adapters must produce epistemological provenance — chain and mark nodes in the provenance dimension — alongside their semantic output. Only the adapter understands its source material well enough to produce meaningful provenance.
 
-Adapters never build provenance entries directly. Nodes emitted without annotation still receive provenance marks (structural context only).
+Adapters have a dual obligation: **semantic contribution** (concepts, relationships) and **provenance contribution** (chains, marks, source evidence). Each adapter produces:
 
-**Alternatives considered:**
+- **Semantic output:** domain-meaningful nodes and edges (e.g., fragment node, concept nodes, `tagged_with` edges)
+- **Provenance output:** a chain node (deterministic ID: `chain:{adapter_id}:{source}`), mark nodes (with annotation text, source file, and tags), and `contains` edges (chain → mark)
 
-- *Adapter builds full provenance* — adapter constructs `ProvenanceEntry` objects with all fields. Rejected: duplicates framework-known information (adapter ID, timestamp, context) and requires every adapter author to get it right. Inconsistent provenance formats across adapters.
-- *Framework handles all provenance* — no adapter input, framework auto-generates everything. Rejected: the framework doesn't know epistemological detail — extraction method, confidence, source location within the input. Only the adapter knows *how* it came to know something.
+The mark's tags trigger automatic tag-to-concept bridging via `TagConceptBridger` enrichment, creating cross-dimensional `references` edges from provenance to semantic dimension. This makes every concept's origin graph-traversable: concept ← `references` ← mark ← `contains` ← chain → source.
+
+Adapters also continue to annotate nodes and edges with extraction metadata (confidence, method, source location). The engine continues to add framework context (adapter ID, timestamp, context ID). These two layers provide operational provenance. The chain/mark structure provides epistemological provenance — where knowledge came from, not just how it was processed.
+
+**Alternatives considered (historical):**
+
+- *Pipeline-level provenance* — the ingest pipeline wraps adapter output in provenance after processing. Rejected (Essay 12): the pipeline doesn't know what the nodes represent. Marks without domain-meaningful annotations are operational bookkeeping, not evidence.
+- *Sink-level provenance* — EngineSink auto-generates provenance on commit. Rejected (Essay 12): same knowledge gap as pipeline-level. The sink validates and commits but doesn't understand domain semantics.
+- *Adapter-level provenance* — the adapter that understands the source material produces provenance alongside semantics. **Accepted (Essay 12):** provenance without domain knowledge is empty.
 
 ### 6. Atomic sink emissions with validation
 
@@ -120,7 +128,7 @@ No special unification logic. Labels are the bridge where vocabulary overlaps; t
 
 ### 9. ~~Reflexive adapters propose, don't merge — enforced by ProposalSink~~ **SUPERSEDED by enrichment model (Essay 09)**
 
-> **Status:** Superseded. The reflexive adapter and ProposalSink concepts have been replaced by **enrichments** — reactive components registered globally on the engine that respond to graph events and produce additional mutations. The "propose, don't merge" principle survives as a design convention: enrichments like CoOccurrenceEnrichment emit weak `may_be_related` edges; Hebbian reinforcement from actual evidence validates them. The structural enforcement (ProposalSink) is no longer needed — enrichments are framework-level code with built-in termination via idempotency. See domain model §10 (Adapter ≠ Enrichment) and invariants 33–38.
+> **Status:** Superseded. The reflexive adapter and ProposalSink concepts have been replaced by **enrichments** — reactive components registered globally on the engine that respond to graph events and produce additional mutations. The "propose, don't merge" principle survives as a design convention: enrichments like CoOccurrenceEnrichment emit weak `may_be_related` edges; Hebbian reinforcement from actual evidence validates them. The structural enforcement (ProposalSink) is no longer needed — enrichments are framework-level code with built-in termination via idempotency. See domain model §10 (Adapter ≠ Enrichment) and invariants 35–40.
 
 ### 10. Five low-level graph events
 
@@ -148,7 +156,7 @@ Adapters are independent — they don't know about each other. Enrichments depen
 
 - Adapters are independently developable and testable — each is a self-contained unit with a clear contract
 - Progressive emission enables responsive UIs across all application timescales
-- Two-layer provenance is consistent without burdening adapter authors
+- Dual-obligation provenance (semantic + epistemological) makes every concept's origin graph-traversable
 - Query-time normalization means the stored graph is ground truth — no information lost to decay
 - The framework is domain-agnostic — new input types require a new adapter, not framework changes
 - Enrichments enable graph self-improvement without destructive operations

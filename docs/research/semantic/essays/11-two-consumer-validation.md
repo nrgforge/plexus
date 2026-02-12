@@ -1,5 +1,7 @@
 # Two-Consumer Validation: Cross-Dimensional Bridges with Shared Vocabulary
 
+> **Superseded.** This essay describes an architecture where FragmentAdapter produces only semantic output and ProvenanceAdapter produces only provenance output. Essay 12 ("Provenance as Epistemological Infrastructure") changed this fundamentally: adapters now produce provenance alongside semantics. Essay 13 ("Two-Consumer Validation Revisited") revalidates the two-consumer scenario under the new architecture at larger scale with real public data. The spike test from this essay has been removed as redundant. This essay is preserved for historical context only.
+
 Essay 10 ended with a recommendation: feed real data through the pipeline and see what the graph produces. Not more infrastructure — sample data. This essay describes what happened when that experiment ran, using synthetic data shaped by two real consumers.
 
 ## The Chicken-and-Egg Problem

@@ -6,7 +6,7 @@
 
 **Research:** [Essay 08](../research/semantic/essays/08-runtime-architecture.md), [Research Log Q3](../research-log.md)
 
-**Domain model:** [domain-model.md](../domain-model.md) — Invariants 26–27, 30
+**Domain model:** [domain-model.md](../domain-model.md) — Invariants 28–29, 32
 
 **Depends on:** ADR-006 (adapter-engine wiring), ADR-007 (contribution persistence)
 
@@ -23,6 +23,8 @@ The dimension system was designed for cross-dimensional connections within a con
 Building cross-context edges would solve the same problem but require infrastructure (cross-context edge storage, cross-context queries, cross-context consistency guarantees) that doesn't exist. Moving marks into project contexts works with the existing within-context dimension system.
 
 The system is new enough that backward compatibility is not a constraint.
+
+> **Note (Essay 12):** Marks now enter contexts from two sources: (1) user-driven provenance via ProvenanceApi/ProvenanceAdapter (explicit research annotations), and (2) adapter-produced provenance alongside semantic output (automatic evidence trails from FragmentAdapter and other semantic adapters). Both produce identical provenance-dimension nodes in project contexts, and both participate in tag-to-concept bridging.
 
 ---
 

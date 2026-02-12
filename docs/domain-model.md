@@ -2,7 +2,7 @@
 
 Ubiquitous language for the Plexus knowledge graph. All ADRs, behavior scenarios, and code must use these terms consistently. If this glossary says "emission," the code says `emission`, not "output batch" or "result set."
 
-Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPER.md, SPIKE-OUTCOME.md, Essay 07 (first adapter pair), Essay 08 (runtime architecture), Essay 09 (public surface).
+Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPER.md, SPIKE-OUTCOME.md, Essay 07 (first adapter pair), Essay 08 (runtime architecture), Essay 09 (public surface), Essay 12 (provenance as epistemological infrastructure), Essay 13 (two-consumer validation revisited).
 
 ---
 
@@ -10,7 +10,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 
 | Term | Definition | Aliases to Avoid |
 |------|-----------|------------------|
-| **Adapter** | A bidirectional integration contract. Inbound: transforms domain-specific input into graph mutations via `process()`. Outbound: transforms raw graph events into domain-meaningful events for the consumer via `transform_events()`. Owns its entire processing pipeline internally. The single artifact a consumer needs to understand. | plugin, processor, handler |
+| **Adapter** | A bidirectional integration contract with a dual obligation. Inbound: transforms domain-specific input into graph mutations via `process()`, producing both semantic contributions (concepts, relationships) and provenance contributions (chains, marks, source evidence). Outbound: transforms raw graph events into domain-meaningful events for the consumer via `transform_events()`. Owns its entire processing pipeline internally. The single artifact a consumer needs to understand. | plugin, processor, handler |
 | **Sink** | The interface through which an adapter pushes graph mutations into the engine. `AdapterSink` is the trait; `EngineSink` is the production implementation. | output, writer, channel |
 | **Emission** | The data payload of a single `sink.emit()` call: a bundle of annotated nodes, annotated edges, and removals. Each emission is validated and committed atomically. **Not** the act of emitting — use "emit" as the verb. | batch, result, output (when meaning the data) |
 | **Node** | A vertex in the knowledge graph. Has an ID, type, content type, dimension, and properties. | vertex, entity |
@@ -21,7 +21,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **Normalized weight** | Relative importance of an edge, computed at query time via a NormalizationStrategy from raw weight. Not stored. Different consumers can apply different strategies to the same raw weights. | — |
 | **Annotation** | Adapter-provided metadata about a single extraction: confidence, method, source location, detail. Lives on an AnnotatedNode or AnnotatedEdge. Describes *how* the adapter came to know something. Distinct from **tag** — see disambiguation §7. | metadata (too generic) |
 | **Annotation confidence** | A single adapter's certainty about a single extraction. Range 0.0–1.0. Lives in the annotation, not on the edge. Distinct from raw weight and normalized weight. | score, certainty |
-| **Provenance entry** | The full record of how a piece of knowledge entered the graph. Constructed by the engine (not by adapters) by combining the adapter's annotation with framework context: adapter ID, timestamp, input summary, context ID. | — |
+| **Provenance entry** | The full record of how a piece of knowledge entered the graph. Two sources: (1) adapter-produced provenance — chain and mark nodes emitted directly by the adapter alongside its semantic output, carrying source-meaningful annotation text, file references, and tags; (2) framework-constructed provenance — the engine combines the adapter's annotation with framework context (adapter ID, timestamp, context ID). Adapter-produced provenance is epistemological (where knowledge came from); framework-constructed provenance is operational (how it was processed). | — |
 | **Dimension** | A facet of the knowledge graph. Adapters declare which dimensions they populate. Known dimensions: structure, semantic, relational, temporal, provenance. | layer, category |
 | **Content type** | A field on Node that disambiguates which domain produced it. Enables the shared semantic namespace — all domains contribute concept nodes, and ContentType tells you where each one came from. | — |
 | **Concept** | A node in the semantic dimension representing an extracted idea, theme, or entity. Concepts from different domains share a namespace — cross-modal bridging happens when independent adapters produce the same concept label. | topic, keyword, term |
@@ -39,6 +39,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **Tag** | A label applied to a fragment, either manually by a human or by an LLM. Each tag produces a concept node in the semantic dimension. Distinct from **annotation** — a tag is input-side vocabulary (what the fragment is about); an annotation is extraction-side vocabulary (how the adapter came to know something). | label (acceptable informally), keyword |
 | **`tagged_with`** | The edge relationship type from a fragment node to a concept node. Represents "this fragment was labeled with this concept." Contribution value is 1.0 (binary: the tag was applied). | — |
 | **Deterministic concept ID** | The scheme by which concept nodes receive stable, convergent IDs derived from their label: `concept:{lowercase_tag}`. Ensures that two fragments tagged "travel" produce the same concept node, triggering upsert rather than creating duplicates. | — |
+| **Deterministic chain ID** | The scheme by which chain nodes receive stable, convergent IDs: `chain:{adapter_id}:{source}`. Ensures that re-ingesting from the same source with the same adapter upserts the existing chain rather than creating duplicates. Different adapters processing the same source receive distinct chains, preserving independent provenance trails per processing phase. | — |
 | **Co-occurrence** | The pattern where two concepts appear together across multiple fragments — both tagged on the same fragment. The signal the CoOccurrenceEnrichment detects. Measured by counting shared fragments between a concept pair. | correlation (too statistical), co-location |
 | **Co-occurrence score** | The normalized count of shared fragments between a concept pair, used as the contribution value for a `may_be_related` proposal. Normalized relative to the maximum co-occurrence count in the current graph: `count / max_count`. | — |
 | **Context snapshot** | A cloned Context provided to enrichments during the enrichment loop. Provides a consistent, immutable view of the graph at enrichment time. The framework creates the snapshot; enrichments read it. | graph state snapshot (old name) |
@@ -51,7 +52,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **Mark** | A provenance-dimension node annotating a specific location in a file. Carries: file path, line number, annotation text, tags, type label, column (optional). Lives in a project context, not a global container. Connected to concept nodes via automatic tag-to-concept bridging. | bookmark, annotation (ambiguous — see §7) |
 | **Chain** | A provenance-dimension node grouping related marks into a narrative trail. Either a writing chain (one per writing project) or a research chain (one per research run). Has a status: active or archived. | trail |
 | **Link** | A provenance-dimension edge with relationship `links_to` connecting two marks. Encodes a specific cross-reference: "this paper is relevant to this passage." Distinct from adapter-produced edges. | cross-reference (acceptable informally) |
-| **ProvenanceApi** | The high-level API for mark, chain, and link operations. Scoped to a specific context (not global). Creates marks as provenance-dimension nodes, chains as grouping nodes, and links as directed edges. Performs tag-to-concept bridging on mark creation. | — |
+| **ProvenanceApi** | The high-level API for user-driven mark, chain, and link operations (e.g., Carrel's explicit research annotations). Scoped to a specific context (not global). Creates marks as provenance-dimension nodes, chains as grouping nodes, and links as directed edges. Distinct from adapter-produced provenance: ProvenanceApi handles explicit user actions (create chain, add mark, link marks, delete); adapters produce provenance automatically alongside semantic output. Both paths produce identical provenance-dimension nodes that participate in tag-to-concept bridging. | — |
 | **Cross-dimensional edge** | An edge connecting nodes in different dimensions within the same context. The mechanism by which provenance (marks) connects to semantics (concepts). Created by `Edge::new_cross_dimensional()`. | bridge edge (acceptable informally) |
 | **`references`** | The edge relationship type from a mark to a concept node, created automatically by tag-to-concept bridging. A cross-dimensional edge (provenance → semantic). | — |
 | **Tag-to-concept bridging** | Automatic creation of `references` edges between marks and concept nodes when tags match concept node IDs in the same context. Implemented as an enrichment (`TagConceptBridger`) that runs in the enrichment loop after each emission. Bridges bidirectionally: new marks to existing concepts and new concepts to existing marks. The connection between what a user annotates and what the adapter layer discovered. | auto-bridging |
@@ -121,9 +122,11 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 - **Fragment node** lives in the **structure** dimension; **concept nodes** live in the **semantic** dimension
 - **`tagged_with`** edges connect **fragment nodes** to **concept nodes** (one per tag)
 - Multiple **fragments** sharing a **tag** converge on the same **concept** node via **deterministic concept ID** and **upsert**
+- **FragmentAdapter** produces provenance alongside semantics: a **chain** node (**deterministic chain ID** per adapter+source), a **mark** node (carrying annotation text, source file, and tags), and a `contains` edge (chain → mark). All in the **provenance** dimension.
+- **TagConceptBridger** automatically creates `references` edges from adapter-produced **marks** to matching **concept** nodes — identical to how it bridges user-created marks. This makes every concept's origin graph-traversable: concept ← `references` ← mark ← `contains` ← chain.
 - **CoOccurrenceEnrichment** reads a **context snapshot**, detects **co-occurrence**, and emits `may_be_related` **symmetric edge pairs** between co-occurring **concepts**
 - **Co-occurrence score** is the **contribution** value on `may_be_related` edges
-- One **FragmentAdapter** type, instantiated with different **adapter IDs** per evidence source (manual, LLM, OCR) — same `process()` logic, distinct **contributions** and **provenance**
+- One **FragmentAdapter** type, instantiated with different **adapter IDs** per evidence source (manual, LLM, OCR) — same `process()` logic, distinct **contributions** and **provenance** chains
 
 ### Public surface
 - **Consumer** sends domain data through a **transport**, receives **outbound events** back through the same **transport**
@@ -158,52 +161,54 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 4. Cancellation is checked **between** emissions, not during. Committed items are never rolled back.
 
 ### Provenance rules
-5. Adapters **never** construct provenance entries directly — they annotate, the engine wraps.
-6. Nodes emitted without annotation still receive provenance marks (structural context only).
+5. Adapters produce provenance (chains, marks, contains edges) alongside their semantic output. This is the adapter's dual obligation: semantic contribution AND source evidence. Only the adapter understands its source material well enough to produce meaningful provenance — marks with domain-meaningful annotation text, file references, and tags. The engine adds framework context (adapter ID, timestamp) but does not create the epistemological trail.
+6. Enrichments do not produce provenance. They react to graph events and produce semantic/relational mutations (co-occurrence edges, cross-dimensional bridges), but provenance originates exclusively from adapters — the components that understand source material.
+7. User-driven provenance (via ProvenanceApi/ProvenanceAdapter) and adapter-produced provenance are structurally identical: same node types, same dimensions, same tag-to-concept bridging. They differ in origin: explicit user action vs. automatic adapter output.
 
 ### Weight rules (updated by ADR-003)
-7. Per-adapter contributions are stored. Raw weights are computed from contributions via scale normalization. Normalized weights are computed from raw weights at query time. Three layers: contribution (stored) → raw weight (engine-computed) → normalized weight (query-time-computed).
-8. No temporal decay. Weakening happens only through normalization as the graph grows around an edge.
-9. A quiet graph stays stable — silence is not evidence against previous observations.
-10. Contributions use latest-value-replace: each adapter's slot stores the value from its most recent emission. Contributions can increase or decrease.
-11. Contributions can be any finite f32 value. Adapters and enrichments emit in whatever scale is natural to their domain (e.g., 0–20 for test counts, 0–500 for gesture repetitions, 0–127 for MIDI velocities, -1.0–1.0 for sentiment). The engine's scale normalization (initially divide-by-range) maps these to comparable ranges regardless of whether the native scale is signed or unsigned.
-12. Adapter and enrichment IDs must be stable across sessions. If reconfigured with a new ID, previous contributions become orphaned. Old contributions should be explicitly removed.
+8. Per-adapter contributions are stored. Raw weights are computed from contributions via scale normalization. Normalized weights are computed from raw weights at query time. Three layers: contribution (stored) → raw weight (engine-computed) → normalized weight (query-time-computed).
+9. No temporal decay. Weakening happens only through normalization as the graph grows around an edge.
+10. A quiet graph stays stable — silence is not evidence against previous observations.
+11. Contributions use latest-value-replace: each adapter's slot stores the value from its most recent emission. Contributions can increase or decrease.
+12. Contributions can be any finite f32 value. Adapters and enrichments emit in whatever scale is natural to their domain (e.g., 0–20 for test counts, 0–500 for gesture repetitions, 0–127 for MIDI velocities, -1.0–1.0 for sentiment). The engine's scale normalization (initially divide-by-range) maps these to comparable ranges regardless of whether the native scale is signed or unsigned.
+13. Adapter and enrichment IDs must be stable across sessions. If reconfigured with a new ID, previous contributions become orphaned. Old contributions should be explicitly removed.
 
 ### Adapter rules
-13. The framework never inspects the opaque data payload. Adapters downcast internally.
-14. Adapters are independent — they don't know about each other.
-15. An adapter owns its full internal pipeline. The framework has no opinion on internal phase ordering.
+14. The framework never inspects the opaque data payload. Adapters downcast internally.
+15. Adapters are independent — they don't know about each other.
+16. An adapter owns its full internal pipeline. The framework has no opinion on internal phase ordering.
 
 ### Routing rules
-16. Input routing is fan-out: all adapters matching the input kind receive the input.
-17. Each matched adapter is spawned independently with its own sink and cancellation token.
+17. Input routing is fan-out: all adapters matching the input kind receive the input.
+18. Each matched adapter is spawned independently with its own sink and cancellation token.
 
 ### Fragment adapter rules
-18. Concept IDs are deterministic: `concept:{lowercase_tag}`. Same tag always produces the same node ID, ensuring convergence via upsert.
-19. Tags produce binary contributions (1.0) on `tagged_with` edges. The contribution means "this tag was applied," not a graduated strength.
-20. Symmetric relationships (`may_be_related`) are emitted as two directed edges (A→B and B→A) with identical contributions, so query-time normalization sees the relationship from both endpoints.
-21. The normalization floor ensures the weakest real contribution from any adapter or enrichment maps to ~α (default 0.01), not 0.0. Formula: `(value - min + α·range) / ((1 + α)·range)`. Degenerate case (range = 0) returns 1.0.
+19. Concept IDs are deterministic: `concept:{lowercase_tag}`. Same tag always produces the same node ID, ensuring convergence via upsert.
+20. Chain IDs are deterministic: `chain:{adapter_id}:{source}`. Same adapter + source always produces the same chain node, ensuring convergence via upsert. Different adapters processing the same source produce distinct chains.
+21. Tags produce binary contributions (1.0) on `tagged_with` edges. The contribution means "this tag was applied," not a graduated strength.
+22. Symmetric relationships (`may_be_related`) are emitted as two directed edges (A→B and B→A) with identical contributions, so query-time normalization sees the relationship from both endpoints.
+23. The normalization floor ensures the weakest real contribution from any adapter or enrichment maps to ~α (default 0.01), not 0.0. Formula: `(value - min + α·range) / ((1 + α)·range)`. Degenerate case (range = 0) returns 1.0.
 
 ### Runtime architecture rules
-22. Marks always live in a project context, in the provenance dimension. There is no global `__provenance__` context.
-23. `add_mark` requires a context parameter. No default, no fallback.
-24. Tag format normalization is an invariant: strip `#` prefix if present, lowercase, then prepend `concept:` to match concept node IDs. `#Travel` → `concept:travel`, `travel` → `concept:travel`.
-25. Tag-to-concept bridging is automatic via the enrichment loop. A `TagConceptBridger` enrichment detects new concept nodes, finds marks with matching tags, and creates cross-dimensional `references` edges. Because the enrichment runs on every emission round (not just mark creation), it bridges in both directions: a new mark bridges to existing concepts, and a new concept bridges to existing marks.
-26. `list_tags()` queries across all contexts, not a single context.
-27. Tags are the shared vocabulary between provenance and semantics. A tag string on a mark and the ID of a concept node must use the same normalized form.
-28. Persist-per-emission: each `emit()` call results in exactly one `save_context()` call. Emissions are the persistence boundary.
-29. Contributions must survive persistence. After save → load, `edge.contributions` must be identical. Scale normalization depends on this.
-30. Sources can appear in multiple contexts. A file that is a source in both `trellis` and `desk` contexts produces independent graph nodes in each. Overlap is handled by Plexus, not by the contributing tools.
-31. A source update fans out to all contexts that include it. Each context gets its own adapter run through its own context-scoped EngineSink. The fan-out is a routing concern — adapters are context-unaware.
+24. Marks always live in a project context, in the provenance dimension. There is no global `__provenance__` context.
+25. `add_mark` requires a context parameter. No default, no fallback.
+26. Tag format normalization is an invariant: strip `#` prefix if present, lowercase, then prepend `concept:` to match concept node IDs. `#Travel` → `concept:travel`, `travel` → `concept:travel`.
+27. Tag-to-concept bridging is automatic via the enrichment loop. A `TagConceptBridger` enrichment detects new concept nodes, finds marks with matching tags, and creates cross-dimensional `references` edges. Because the enrichment runs on every emission round (not just mark creation), it bridges in both directions: a new mark bridges to existing concepts, and a new concept bridges to existing marks. Works identically for user-created marks (via ProvenanceAdapter) and adapter-created marks (via FragmentAdapter).
+28. `list_tags()` queries across all contexts, not a single context.
+29. Tags are the shared vocabulary between provenance and semantics. A tag string on a mark and the ID of a concept node must use the same normalized form.
+30. Persist-per-emission: each `emit()` call results in exactly one `save_context()` call. Emissions are the persistence boundary.
+31. Contributions must survive persistence. After save → load, `edge.contributions` must be identical. Scale normalization depends on this.
+32. Sources can appear in multiple contexts. A file that is a source in both `trellis` and `desk` contexts produces independent graph nodes in each. Overlap is handled by Plexus, not by the contributing tools.
+33. A source update fans out to all contexts that include it. Each context gets its own adapter run through its own context-scoped EngineSink. The fan-out is a routing concern — adapters are context-unaware.
 
 ### Public surface rules
-32. All writes go through `ingest()`. There is no separate public API for raw graph primitives. Consumers say "here is a fragment," not "create node X with edge Y."
-33. Enrichments are registered globally on the engine. They self-select based on events and context state — the framework does not filter events for them.
-34. The enrichment loop terminates via idempotency. Each enrichment checks context state before emitting. The framework runs the loop; the enrichment implements the termination condition. `EdgesAdded` fires for ALL committed edges including re-emissions — enrichments must not rely on events alone to detect novelty.
-35. Outbound events flow through the adapter. Consumers never see raw graph events. The adapter's `transform_events()` receives all events from the primary emission and all enrichment rounds, and filters what its consumer cares about.
-36. Transports are thin shells. All transports call the same `ingest()` and query endpoints. Adding a transport doesn't touch adapters, enrichments, or the engine.
-37. Enrichments shared across integrations are deduplicated by `id()`. If two integrations register the same enrichment, it runs once per enrichment loop round.
-38. Adapters extend the domain side, enrichments extend the graph intelligence side, transports extend the protocol side. These three dimensions are independent — changes in one don't affect the others.
+34. All writes go through `ingest()`. There is no separate public API for raw graph primitives. Consumers say "here is a fragment," not "create node X with edge Y."
+35. Enrichments are registered globally on the engine. They self-select based on events and context state — the framework does not filter events for them.
+36. The enrichment loop terminates via idempotency. Each enrichment checks context state before emitting. The framework runs the loop; the enrichment implements the termination condition. `EdgesAdded` fires for ALL committed edges including re-emissions — enrichments must not rely on events alone to detect novelty.
+37. Outbound events flow through the adapter. Consumers never see raw graph events. The adapter's `transform_events()` receives all events from the primary emission and all enrichment rounds, and filters what its consumer cares about.
+38. Transports are thin shells. All transports call the same `ingest()` and query endpoints. Adding a transport doesn't touch adapters, enrichments, or the engine.
+39. Enrichments shared across integrations are deduplicated by `id()`. If two integrations register the same enrichment, it runs once per enrichment loop round.
+40. Adapters extend the domain side, enrichments extend the graph intelligence side, transports extend the protocol side. These three dimensions are independent — changes in one don't affect the others.
 
 ---
 
@@ -255,11 +260,11 @@ Unresolved issues that block or constrain behavior scenarios and implementation.
 
 ### Resolved by Essay 08 (Runtime Architecture)
 
-**5. Provenance-semantic isolation.** Resolved: marks live in project contexts (provenance dimension), not a global `__provenance__` context. Cross-dimensional `references` edges connect marks to concept nodes via automatic tag-to-concept bridging. See invariants 22–27.
+**5. Provenance-semantic isolation.** Resolved: marks live in project contexts (provenance dimension), not a global `__provenance__` context. Cross-dimensional `references` edges connect marks to concept nodes via automatic tag-to-concept bridging. See invariants 24–29.
 
-**6. Contribution persistence.** Resolved: `contributions_json` column in edges table. Schema migration follows the dimension migration pattern. See invariant 29.
+**6. Contribution persistence.** Resolved: `contributions_json` column in edges table. Schema migration follows the dimension migration pattern. See invariant 31.
 
-**7. Adapter-to-engine wiring.** Resolved: EngineSink gains a constructor taking `Arc<PlexusEngine>` + `ContextId`. Routes emissions through the engine with persist-per-emission. See invariant 28.
+**7. Adapter-to-engine wiring.** Resolved: EngineSink gains a constructor taking `Arc<PlexusEngine>` + `ContextId`. Routes emissions through the engine with persist-per-emission. See invariant 30.
 
 ### Resolved by ADR-003
 
@@ -270,7 +275,7 @@ Resolved by ADR-003. Reinforcement is implicit: emitting an edge that already ex
 
 ### Resolved by Essay 09 (Public Surface) — reflexive adapter migration
 
-**2. Reflexive adapter cycle convergence.** Resolved: the reflexive adapter concept has been superseded by enrichments. Enrichments terminate via idempotency — each enrichment checks context state before emitting, and the enrichment loop repeats until quiescence (all enrichments return `None`). See invariant 34. The schedule monitor and ProposalSink are no longer needed.
+**2. Reflexive adapter cycle convergence.** Resolved: the reflexive adapter concept has been superseded by enrichments. Enrichments terminate via idempotency — each enrichment checks context state before emitting, and the enrichment loop repeats until quiescence (all enrichments return `None`). See invariant 36. The schedule monitor and ProposalSink are no longer needed.
 
 **3. ProposalSink and non-relational metadata edges.** Resolved: ProposalSink has been removed along with the reflexive adapter concept. Enrichments emit freely through the standard emission pipeline. A topology enrichment can emit any relationship type appropriate to its domain. The constraint that co-occurrence proposals use `may_be_related` is a design convention of the CoOccurrenceEnrichment, not a framework-enforced restriction.
 
@@ -281,10 +286,10 @@ Routing is now two-dimensional. A source update fans out across contexts (all co
 
 Open sub-questions:
 
-- **Concurrency model.** All 6 runs concurrent? Contexts are independent (DashMap per-shard locking, no cross-context edges), and adapters within a context are independent (invariant 14). Full concurrency seems safe but has performance implications for large fan-outs.
-- **Ordering.** Fan-out should be context-first (for each context, route to matching adapters), not adapter-first. Each context is the natural unit of independent work. But is there an ordering guarantee within a context across adapters? Probably not needed (invariant 14), but should be stated.
+- **Concurrency model.** All 6 runs concurrent? Contexts are independent (DashMap per-shard locking, no cross-context edges), and adapters within a context are independent (invariant 15). Full concurrency seems safe but has performance implications for large fan-outs.
+- **Ordering.** Fan-out should be context-first (for each context, route to matching adapters), not adapter-first. Each context is the natural unit of independent work. But is there an ordering guarantee within a context across adapters? Probably not needed (invariant 15), but should be stated.
 - **Partial failure.** If processing succeeds in 2 of 3 contexts, each context is independently consistent. No cross-context rollback needed. But should failures be surfaced? This is operational, not architectural.
-- **Cascade scaling.** A single source update can trigger adapters in N contexts, each producing mutations that trigger enrichment loops. Total work scales as N × (adapters + enrichment rounds per context). Enrichment loops terminate via quiescence (invariant 34).
+- **Cascade scaling.** A single source update can trigger adapters in N contexts, each producing mutations that trigger enrichment loops. Total work scales as N × (adapters + enrichment rounds per context). Enrichment loops terminate via quiescence (invariant 36).
 
 ### Introduced by Essay 09 (Public Surface)
 

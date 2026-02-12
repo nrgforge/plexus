@@ -6,7 +6,7 @@
 
 **Research:** [Essay 08](../research/semantic/essays/08-runtime-architecture.md), [Research Log Q3](../research-log.md)
 
-**Domain model:** [domain-model.md](../domain-model.md) — Invariants 28–29, 31
+**Domain model:** [domain-model.md](../domain-model.md) — Invariants 27, 29
 
 **Depends on:** ADR-008 (project-scoped provenance), ADR-004 (deterministic concept IDs)
 
@@ -17,6 +17,8 @@
 With marks living in project contexts (ADR-008), marks and adapter-produced concept nodes share a context. A mark tagged `#travel` and a concept node `concept:travel` are in the same graph. But nothing connects them — they exist in different dimensions (provenance and semantic) with no edge between them.
 
 The dimension system supports cross-dimensional edges within a context. The connection between what a user annotates (marks) and what the adapter layer discovered (concepts) is the core value proposition of a knowledge graph with provenance. This connection should be automatic, not manual.
+
+> **Note (Essay 12):** Marks now come from two sources: user-created (via ProvenanceAdapter) and adapter-created (via FragmentAdapter's automatic provenance emission). Tag-to-concept bridging works identically for both — TagConceptBridger enrichment required zero modifications to handle adapter-created marks. This is the mechanism that makes every concept's origin graph-traversable.
 
 Tags are the shared vocabulary between provenance and semantics — a tag string on a mark and a concept node ID express the same semantic idea. Tag format normalization provides the mapping: strip `#` prefix, prepend `concept:` to match deterministic concept IDs (ADR-004).
 

@@ -29,7 +29,9 @@ In the common case, one adapter matches and the pipeline is linear. When multipl
 
 ### All writes through ingest
 
-There is no separate public API for raw graph primitives. Consumers say "here is a fragment," not "create node X with edge Y." Provenance operations (create chain, add mark, link marks) go through the adapter pipeline via a provenance input kind — the adapter transforms them into graph mutations with contribution tracking and provenance.
+There is no separate public API for raw graph primitives. Consumers say "here is a fragment," not "create node X with edge Y." Provenance operations (create chain, add mark, link marks) go through the adapter pipeline via a provenance input kind — the ProvenanceAdapter transforms them into graph mutations with contribution tracking.
+
+> **Note (Essay 12):** Semantic adapters (FragmentAdapter, future DocumentAdapter) also produce provenance — chain and mark nodes alongside their semantic output. ProvenanceAdapter is not a special case; it handles user-driven provenance (explicit annotations), while semantic adapters produce automatic evidence trails. Both paths produce identical provenance-dimension nodes that participate in tag-to-concept bridging and cross-dimensional traversal.
 
 Two operations (`unlink_marks`, `delete_chain` with cascade) require an edge removal variant in `Emission` that doesn't exist yet (domain model OQ10). Until resolved, these remain engine-level commands.
 
