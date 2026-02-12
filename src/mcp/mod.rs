@@ -167,12 +167,37 @@ impl PlexusMcpServer {
     }
 
     #[tool(description = "Delete a chain and all its marks")]
-    fn delete_chain(
+    async fn delete_chain(
         &self,
         Parameters(p): Parameters<ChainIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.prov_api().delete_chain(&p.chain_id) {
-            Ok(()) => ok_text(format!("deleted chain {} and its marks", p.chain_id)),
+        let ctx_id = provenance_context(&self.engine);
+
+        // Pre-resolve mark IDs belonging to this chain
+        let mark_ids = if let Some(ctx) = self.engine.get_context(&ctx_id) {
+            let chain_nid = crate::graph::NodeId::from(p.chain_id.as_str());
+            if ctx.get_node(&chain_nid).is_none() {
+                return err_text(format!("chain not found: {}", p.chain_id));
+            }
+            ctx.edges()
+                .filter(|e| e.source == chain_nid && e.relationship == "contains")
+                .map(|e| e.target.to_string())
+                .collect::<Vec<_>>()
+        } else {
+            return err_text("provenance context not found".to_string());
+        };
+
+        let input = ProvenanceInput::DeleteChain {
+            chain_id: p.chain_id.clone(),
+            mark_ids,
+        };
+
+        match self
+            .pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await
+        {
+            Ok(_) => ok_text(format!("deleted chain {} and its marks", p.chain_id)),
             Err(e) => err_text(e.to_string()),
         }
     }
@@ -315,12 +340,23 @@ impl PlexusMcpServer {
     }
 
     #[tool(description = "Remove a link between two marks")]
-    fn unlink_marks(
+    async fn unlink_marks(
         &self,
         Parameters(p): Parameters<LinkMarksParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.prov_api().unlink_marks(&p.source_id, &p.target_id) {
-            Ok(()) => ok_text(format!("unlinked {} -> {}", p.source_id, p.target_id)),
+        let ctx_id = provenance_context(&self.engine);
+
+        let input = ProvenanceInput::UnlinkMarks {
+            source_id: p.source_id.clone(),
+            target_id: p.target_id.clone(),
+        };
+
+        match self
+            .pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await
+        {
+            Ok(_) => ok_text(format!("unlinked {} -> {}", p.source_id, p.target_id)),
             Err(e) => err_text(e.to_string()),
         }
     }

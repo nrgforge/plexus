@@ -118,6 +118,28 @@ impl Removal {
     }
 }
 
+/// A request to remove a specific edge by its source, target, and relationship.
+#[derive(Debug, Clone)]
+pub struct EdgeRemoval {
+    pub source: NodeId,
+    pub target: NodeId,
+    pub relationship: String,
+}
+
+impl EdgeRemoval {
+    pub fn new(
+        source: NodeId,
+        target: NodeId,
+        relationship: impl Into<String>,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            relationship: relationship.into(),
+        }
+    }
+}
+
 /// The data payload of a single `sink.emit()` call.
 ///
 /// A bundle of annotated nodes, annotated edges, and removals.
@@ -128,6 +150,7 @@ pub struct Emission {
     pub nodes: Vec<AnnotatedNode>,
     pub edges: Vec<AnnotatedEdge>,
     pub removals: Vec<Removal>,
+    pub edge_removals: Vec<EdgeRemoval>,
 }
 
 impl Emission {
@@ -136,6 +159,7 @@ impl Emission {
             nodes: Vec::new(),
             edges: Vec::new(),
             removals: Vec::new(),
+            edge_removals: Vec::new(),
         }
     }
 
@@ -154,8 +178,16 @@ impl Emission {
         self
     }
 
+    pub fn with_edge_removal(mut self, edge_removal: EdgeRemoval) -> Self {
+        self.edge_removals.push(edge_removal);
+        self
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty() && self.edges.is_empty() && self.removals.is_empty()
+        self.nodes.is_empty()
+            && self.edges.is_empty()
+            && self.removals.is_empty()
+            && self.edge_removals.is_empty()
     }
 }
 

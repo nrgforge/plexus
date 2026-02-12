@@ -15,7 +15,7 @@
 
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::Emission;
+use crate::adapter::types::{EdgeRemoval, Emission};
 use crate::graph::{dimension, ContentType, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 
@@ -53,6 +53,17 @@ pub enum ProvenanceInput {
     /// Delete a mark (and cascade its edges).
     DeleteMark {
         mark_id: String,
+    },
+    /// Remove a links_to edge between two marks.
+    UnlinkMarks {
+        source_id: String,
+        target_id: String,
+    },
+    /// Delete a chain and all its marks.
+    /// mark_ids are pre-resolved by the caller (MCP boundary).
+    DeleteChain {
+        chain_id: String,
+        mark_ids: Vec<String>,
     },
 }
 
@@ -197,6 +208,34 @@ impl Adapter for ProvenanceAdapter {
             ProvenanceInput::DeleteMark { mark_id } => {
                 sink.emit(Emission::new().with_removal(NodeId::from(mark_id.as_str())))
                     .await?;
+            }
+
+            ProvenanceInput::UnlinkMarks {
+                source_id,
+                target_id,
+            } => {
+                sink.emit(
+                    Emission::new().with_edge_removal(EdgeRemoval::new(
+                        NodeId::from(source_id.as_str()),
+                        NodeId::from(target_id.as_str()),
+                        "links_to",
+                    )),
+                )
+                .await?;
+            }
+
+            ProvenanceInput::DeleteChain {
+                chain_id,
+                mark_ids,
+            } => {
+                let mut emission = Emission::new();
+                // Remove all marks (cascade handles their edges)
+                for mid in mark_ids {
+                    emission = emission.with_removal(NodeId::from(mid.as_str()));
+                }
+                // Remove the chain node (cascade handles contains edges)
+                emission = emission.with_removal(NodeId::from(chain_id.as_str()));
+                sink.emit(emission).await?;
             }
         }
 
@@ -580,6 +619,171 @@ mod tests {
 
         // Should succeed — removal of nonexistent is noop per emit_inner
         adapter.process(&input, &sink).await.unwrap();
+    }
+
+    // === UnlinkMarks ===
+
+    #[tokio::test]
+    async fn unlink_marks_removes_links_to_edge() {
+        let adapter = ProvenanceAdapter::new();
+        let (sink, ctx) = make_sink();
+
+        // Pre-create marks and a links_to edge
+        {
+            let mut ctx = ctx.lock().unwrap();
+            let mut m1 = Node::new_in_dimension(
+                "mark",
+                ContentType::Provenance,
+                dimension::PROVENANCE,
+            );
+            m1.id = NodeId::from("mark-1");
+            ctx.add_node(m1);
+
+            let mut m2 = Node::new_in_dimension(
+                "mark",
+                ContentType::Provenance,
+                dimension::PROVENANCE,
+            );
+            m2.id = NodeId::from("mark-2");
+            ctx.add_node(m2);
+
+            ctx.add_edge(Edge::new_in_dimension(
+                NodeId::from("mark-1"),
+                NodeId::from("mark-2"),
+                "links_to",
+                dimension::PROVENANCE,
+            ));
+        }
+
+        let input = AdapterInput::new(
+            "provenance",
+            ProvenanceInput::UnlinkMarks {
+                source_id: "mark-1".to_string(),
+                target_id: "mark-2".to_string(),
+            },
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // Edge removed but both nodes remain
+        assert_eq!(ctx.edge_count(), 0);
+        assert!(ctx.get_node(&NodeId::from("mark-1")).is_some());
+        assert!(ctx.get_node(&NodeId::from("mark-2")).is_some());
+    }
+
+    #[tokio::test]
+    async fn unlink_nonexistent_edge_is_noop() {
+        let adapter = ProvenanceAdapter::new();
+        let (sink, ctx) = make_sink();
+
+        // Pre-create marks but no links_to edge
+        {
+            let mut ctx = ctx.lock().unwrap();
+            let mut m1 = Node::new_in_dimension(
+                "mark",
+                ContentType::Provenance,
+                dimension::PROVENANCE,
+            );
+            m1.id = NodeId::from("mark-1");
+            ctx.add_node(m1);
+
+            let mut m2 = Node::new_in_dimension(
+                "mark",
+                ContentType::Provenance,
+                dimension::PROVENANCE,
+            );
+            m2.id = NodeId::from("mark-2");
+            ctx.add_node(m2);
+        }
+
+        let input = AdapterInput::new(
+            "provenance",
+            ProvenanceInput::UnlinkMarks {
+                source_id: "mark-1".to_string(),
+                target_id: "mark-2".to_string(),
+            },
+            "test",
+        );
+
+        // Should succeed — removing nonexistent edge is noop
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        assert_eq!(ctx.edge_count(), 0);
+    }
+
+    // === DeleteChain ===
+
+    #[tokio::test]
+    async fn delete_chain_removes_chain_and_marks() {
+        let adapter = ProvenanceAdapter::new();
+        let (sink, ctx) = make_sink();
+
+        // Setup: chain + 2 marks + contains edges + a links_to edge between marks
+        {
+            let mut ctx = ctx.lock().unwrap();
+            let mut chain = Node::new_in_dimension(
+                "chain",
+                ContentType::Provenance,
+                dimension::PROVENANCE,
+            );
+            chain.id = NodeId::from("chain-1");
+            ctx.add_node(chain);
+
+            let mut m1 = Node::new_in_dimension(
+                "mark",
+                ContentType::Provenance,
+                dimension::PROVENANCE,
+            );
+            m1.id = NodeId::from("mark-1");
+            ctx.add_node(m1);
+
+            let mut m2 = Node::new_in_dimension(
+                "mark",
+                ContentType::Provenance,
+                dimension::PROVENANCE,
+            );
+            m2.id = NodeId::from("mark-2");
+            ctx.add_node(m2);
+
+            ctx.add_edge(Edge::new_in_dimension(
+                NodeId::from("chain-1"),
+                NodeId::from("mark-1"),
+                "contains",
+                dimension::PROVENANCE,
+            ));
+            ctx.add_edge(Edge::new_in_dimension(
+                NodeId::from("chain-1"),
+                NodeId::from("mark-2"),
+                "contains",
+                dimension::PROVENANCE,
+            ));
+            ctx.add_edge(Edge::new_in_dimension(
+                NodeId::from("mark-1"),
+                NodeId::from("mark-2"),
+                "links_to",
+                dimension::PROVENANCE,
+            ));
+        }
+
+        let input = AdapterInput::new(
+            "provenance",
+            ProvenanceInput::DeleteChain {
+                chain_id: "chain-1".to_string(),
+                mark_ids: vec!["mark-1".to_string(), "mark-2".to_string()],
+            },
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        assert!(ctx.get_node(&NodeId::from("chain-1")).is_none());
+        assert!(ctx.get_node(&NodeId::from("mark-1")).is_none());
+        assert!(ctx.get_node(&NodeId::from("mark-2")).is_none());
+        assert_eq!(ctx.edge_count(), 0);
     }
 
     // === Invalid input ===

@@ -200,7 +200,25 @@ impl EngineSink {
             ctx.recompute_raw_weights();
         }
 
-        // Phase 3: Process removals
+        // Phase 3: Process edge removals (targeted)
+        let mut explicitly_removed_edge_ids: Vec<EdgeId> = Vec::new();
+        for edge_removal in emission.edge_removals {
+            let before_count = ctx.edges.len();
+            ctx.edges.retain(|e| {
+                if e.source == edge_removal.source
+                    && e.target == edge_removal.target
+                    && e.relationship == edge_removal.relationship
+                {
+                    explicitly_removed_edge_ids.push(e.id.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            result.edge_removals_committed += before_count - ctx.edges.len();
+        }
+
+        // Phase 4: Process node removals (cascade connected edges)
         let mut removed_node_ids: Vec<NodeId> = Vec::new();
         let mut cascaded_edge_ids: Vec<EdgeId> = Vec::new();
         for removal in emission.removals {
@@ -220,7 +238,7 @@ impl EngineSink {
             }
         }
 
-        // Phase 4: Fire graph events (order: NodesAdded, EdgesAdded, NodesRemoved, EdgesRemoved)
+        // Phase 5: Fire graph events (order: NodesAdded, EdgesAdded, NodesRemoved, EdgesRemoved)
         if !committed_node_ids.is_empty() {
             result.events.push(GraphEvent::NodesAdded {
                 node_ids: committed_node_ids,
@@ -240,6 +258,14 @@ impl EngineSink {
                 node_ids: removed_node_ids,
                 adapter_id: adapter_id.clone(),
                 context_id: context_id.clone(),
+            });
+        }
+        if !explicitly_removed_edge_ids.is_empty() {
+            result.events.push(GraphEvent::EdgesRemoved {
+                edge_ids: explicitly_removed_edge_ids,
+                adapter_id: adapter_id.clone(),
+                context_id: context_id.clone(),
+                reason: "explicit".to_string(),
             });
         }
         if !cascaded_edge_ids.is_empty() {
@@ -325,6 +351,7 @@ impl EngineSink {
                 accumulated.nodes_committed += enrichment_result.nodes_committed;
                 accumulated.edges_committed += enrichment_result.edges_committed;
                 accumulated.removals_committed += enrichment_result.removals_committed;
+                accumulated.edge_removals_committed += enrichment_result.edge_removals_committed;
                 accumulated.rejections.extend(enrichment_result.rejections);
                 accumulated.provenance.extend(enrichment_result.provenance);
                 accumulated.events.extend(enrichment_result.events);
@@ -379,6 +406,7 @@ impl AdapterSink for EngineSink {
                         result.nodes_committed += enrichment_result.nodes_committed;
                         result.edges_committed += enrichment_result.edges_committed;
                         result.removals_committed += enrichment_result.removals_committed;
+                        result.edge_removals_committed += enrichment_result.edge_removals_committed;
                         result.rejections.extend(enrichment_result.rejections);
                         result.provenance.extend(enrichment_result.provenance);
                         result.events.extend(enrichment_result.events);
@@ -628,6 +656,38 @@ mod tests {
         let ctx = ctx.lock().unwrap();
         assert!(ctx.get_node(&NodeId::from_string("A")).is_none());
         assert_eq!(ctx.edge_count(), 0); // cascade
+    }
+
+    // === Scenario: Targeted edge removal removes specific edge ===
+    #[tokio::test]
+    async fn targeted_edge_removal() {
+        use crate::adapter::types::EdgeRemoval;
+
+        let (sink, ctx) = make_sink();
+
+        // Setup: A, B, C; edges A→B and A→C
+        let setup = Emission::new()
+            .with_node(node("A"))
+            .with_node(node("B"))
+            .with_node(node("C"))
+            .with_edge(edge("A", "B"))
+            .with_edge(edge("A", "C"));
+        sink.emit(setup).await.unwrap();
+
+        // Remove only A→B
+        let removal = Emission::new().with_edge_removal(
+            EdgeRemoval::new(NodeId::from_string("A"), NodeId::from_string("B"), "related_to"),
+        );
+        let result = sink.emit(removal).await.unwrap();
+
+        assert_eq!(result.edge_removals_committed, 1);
+
+        let ctx = ctx.lock().unwrap();
+        // A→C remains, A→B gone
+        assert_eq!(ctx.edge_count(), 1);
+        assert_eq!(ctx.edges[0].target, NodeId::from_string("C"));
+        // All nodes remain
+        assert_eq!(ctx.node_count(), 3);
     }
 
     // === Scenario: All edges missing endpoints; nodes still commit ===

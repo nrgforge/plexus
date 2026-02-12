@@ -57,8 +57,10 @@ pub struct EmitResult {
     pub nodes_committed: usize,
     /// Number of edges committed
     pub edges_committed: usize,
-    /// Number of removals committed
+    /// Number of node removals committed
     pub removals_committed: usize,
+    /// Number of edge removals committed
+    pub edge_removals_committed: usize,
     /// Items that were rejected, with reasons
     pub rejections: Vec<Rejection>,
     /// Provenance entries constructed for committed items
@@ -73,6 +75,7 @@ impl EmitResult {
             nodes_committed: 0,
             edges_committed: 0,
             removals_committed: 0,
+            edge_removals_committed: 0,
             rejections: Vec::new(),
             provenance: Vec::new(),
             events: Vec::new(),
@@ -89,6 +92,7 @@ impl EmitResult {
         self.nodes_committed == 0
             && self.edges_committed == 0
             && self.removals_committed == 0
+            && self.edge_removals_committed == 0
             && self.rejections.is_empty()
     }
 }
@@ -137,6 +141,7 @@ mod tests {
             nodes_committed: 2,
             edges_committed: 1,
             removals_committed: 0,
+            edge_removals_committed: 0,
             rejections: Vec::new(),
             provenance: Vec::new(),
             events: Vec::new(),
@@ -151,6 +156,7 @@ mod tests {
             nodes_committed: 1,
             edges_committed: 0,
             removals_committed: 0,
+            edge_removals_committed: 0,
             rejections: vec![Rejection::new(
                 "edge A→Z",
                 RejectionReason::MissingEndpoint(NodeId::from_string("Z")),
