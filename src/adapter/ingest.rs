@@ -10,7 +10,7 @@
 //! 5. Return merged outbound events
 
 use super::engine_sink::EngineSink;
-use super::enrichment::EnrichmentRegistry;
+use super::enrichment::{Enrichment, EnrichmentRegistry};
 use super::events::GraphEvent;
 use super::provenance::FrameworkContext;
 use super::sink::AdapterError;
@@ -49,6 +49,20 @@ impl IngestPipeline {
     pub fn with_enrichments(mut self, registry: Arc<EnrichmentRegistry>) -> Self {
         self.enrichments = registry;
         self
+    }
+
+    /// Register an integration: an adapter bundled with its enrichments.
+    ///
+    /// Enrichments are deduplicated by `id()` across all integrations.
+    pub fn register_integration(
+        &mut self,
+        adapter: Arc<dyn Adapter>,
+        enrichments: Vec<Arc<dyn Enrichment>>,
+    ) {
+        self.adapters.push(adapter);
+        let mut all: Vec<Arc<dyn Enrichment>> = self.enrichments.enrichments().to_vec();
+        all.extend(enrichments);
+        self.enrichments = Arc::new(EnrichmentRegistry::new(all));
     }
 
     /// The single write endpoint (ADR-012).

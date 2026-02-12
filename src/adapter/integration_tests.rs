@@ -1546,6 +1546,86 @@ mod tests {
         );
     }
 
+    // === Scenario: Integration bundles adapter and enrichments ===
+    #[tokio::test]
+    async fn integration_bundles_adapter_and_enrichments() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
+        let enrichment = Arc::new(OneShotEdgeEnrichment::new(
+            "co-occurrence",
+            "concept:travel",
+            "concept:avignon",
+        ));
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            adapter,
+            vec![enrichment as Arc<dyn Enrichment>],
+        );
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["travel".to_string(), "avignon".to_string()]);
+
+        pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // Adapter processed
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+
+        // Enrichment ran (via register_integration, not separate with_enrichments)
+        assert!(ctx
+            .edges
+            .iter()
+            .any(|e| e.relationship == "may_be_related"));
+    }
+
+    // === Scenario: Enrichments from multiple integrations are deduplicated ===
+    #[tokio::test]
+    async fn integration_enrichments_deduplicated_across_registrations() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("provence-research");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
+            .unwrap();
+
+        // Two integrations register the same enrichment id
+        let adapter_a = Arc::new(EmittingAdapter::new("adapter-a", "fragment"));
+        let enrichment_a = Arc::new(RecordingEnrichment::new("tag-bridger"));
+
+        let adapter_b = Arc::new(EmittingAdapter::new("adapter-b", "other"));
+        let enrichment_b = Arc::new(RecordingEnrichment::new("tag-bridger"));
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            adapter_a,
+            vec![enrichment_a.clone() as Arc<dyn Enrichment>],
+        );
+        pipeline.register_integration(
+            adapter_b,
+            vec![enrichment_b.clone() as Arc<dyn Enrichment>],
+        );
+
+        let data: Box<dyn std::any::Any + Send + Sync> =
+            Box::new(vec!["travel".to_string()]);
+
+        pipeline
+            .ingest("provence-research", "fragment", data)
+            .await
+            .unwrap();
+
+        // Only the first enrichment instance was called (dedup by id)
+        assert_eq!(enrichment_a.call_count(), 1);
+        assert_eq!(enrichment_b.call_count(), 0);
+    }
+
     // === Scenario: Consumer receives outbound events, never raw graph events ===
     #[tokio::test]
     async fn consumer_receives_outbound_events_not_graph_events() {
