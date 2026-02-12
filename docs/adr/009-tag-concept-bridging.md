@@ -32,7 +32,7 @@ This happens inline in `ProvenanceApi.add_mark()` — no separate pass, no defer
 
 **Alternatives considered:**
 
-- *Reflexive adapter scanning for tag-concept matches.* More principled — the adapter pipeline handles all graph refinement. Rejected for now: requires schedule monitor infrastructure that doesn't exist. The inline approach can be replaced by a reflexive adapter later without changing external behavior.
+- *Enrichment scanning for tag-concept matches.* More principled — the enrichment loop handles all graph refinement. **Update (Essay 09):** this is now the chosen approach. A `TagConceptBridger` enrichment runs in the enrichment loop, bridging bidirectionally (new marks to existing concepts, new concepts to existing marks). The inline approach in `ProvenanceApi.add_mark()` is superseded.
 - *Explicit user action (manual linking).* Rejected: defeats the purpose. The user already expressed the semantic connection by choosing the tag. The system should close the loop automatically.
 
 ### 2. Tag format normalization: `#travel` → `concept:travel`

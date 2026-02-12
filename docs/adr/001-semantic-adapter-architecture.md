@@ -118,26 +118,9 @@ When independent adapters happen to produce the same label (e.g., both emit `con
 
 No special unification logic. Labels are the bridge where vocabulary overlaps; the NormalizationAdapter bridges where it doesn't.
 
-### 9. Reflexive adapters propose, don't merge — enforced by ProposalSink
+### 9. ~~Reflexive adapters propose, don't merge — enforced by ProposalSink~~ **SUPERSEDED by enrichment model (Essay 09)**
 
-Scheduled adapters that examine the graph (NormalizationAdapter, TopologyAdapter, CoherenceAdapter) emit weak `may_be_related` edges. They never merge nodes or overwrite data. Graph dynamics — Hebbian reinforcement and normalization — determine which proposed connections are real.
-
-This invariant is enforced structurally, not by convention. The framework gives reflexive adapters a `ProposalSink` (a constrained wrapper around `AdapterSink`) instead of the full sink. The adapter's `process()` signature is unchanged — it still receives `&dyn AdapterSink` — but the implementation it receives enforces:
-
-| Operation | ProposalSink behavior |
-|---|---|
-| Emit edge with weight > cap | **Clamp** to cap (configurable per adapter) |
-| Emit edge with relationship ≠ `may_be_related` | **Reject** |
-| Emit node removal | **Reject** |
-| Emit node (e.g., topology metadata) | **Allow** |
-| Emit annotation | **Allow** |
-
-Two concepts may appear similar (e.g., "sudden" in text and movement) but differ entirely in context. The reflexive adapter proposes the connection; reinforcement from actual cross-adapter co-occurrence validates it. Community formation and continued edge strengthening are the signals for real relationships, not any single adapter's judgment.
-
-**Alternatives considered:**
-
-- *Auto-merge on high weight* — when a `may_be_related` edge exceeds a weight threshold, merge the two nodes. Rejected: two similarly-labeled concepts may be entirely different in context. Merging is destructive and irreversible. Strong equivalence edges preserve both nodes and their distinct provenance.
-- *Convention only* — document the constraint, trust adapter authors. Rejected: this is a core architectural invariant. A reflexive adapter that removes nodes or overwrites strong edges could corrupt the graph irreversibly. The ProposalSink makes violation impossible rather than merely discouraged.
+> **Status:** Superseded. The reflexive adapter and ProposalSink concepts have been replaced by **enrichments** — reactive components registered globally on the engine that respond to graph events and produce additional mutations. The "propose, don't merge" principle survives as a design convention: enrichments like CoOccurrenceEnrichment emit weak `may_be_related` edges; Hebbian reinforcement from actual evidence validates them. The structural enforcement (ProposalSink) is no longer needed — enrichments are framework-level code with built-in termination via idempotency. See domain model §10 (Adapter ≠ Enrichment) and invariants 33–38.
 
 ### 10. Five low-level graph events
 
@@ -151,11 +134,11 @@ Every `sink.emit()` produces mutations. The engine fires events per mutation typ
 | `EdgesRemoved` | Cascade from node removal, or cleanup |
 | `WeightsChanged` | Reinforcement applied |
 
-Higher-level events (topology shifts, cross-modal bridges) are modeled as nodes and edges emitted by reflexive adapters — not as special event types. One event mechanism for everything.
+Higher-level events (topology shifts, cross-modal bridges) are modeled as nodes and edges emitted by enrichments — not as special event types. One event mechanism for everything.
 
 ### 11. Cross-adapter dependency via graph state
 
-External adapters are independent — they don't know about each other. Reflexive adapters depend on accumulated graph state, not on specific adapter outputs. This avoids ordering constraints and coupling between adapters.
+Adapters are independent — they don't know about each other. Enrichments depend on accumulated graph state and events, not on specific adapter outputs. This avoids ordering constraints and coupling between adapters.
 
 ---
 
@@ -168,7 +151,7 @@ External adapters are independent — they don't know about each other. Reflexiv
 - Two-layer provenance is consistent without burdening adapter authors
 - Query-time normalization means the stored graph is ground truth — no information lost to decay
 - The framework is domain-agnostic — new input types require a new adapter, not framework changes
-- Reflexive adapters enable graph self-improvement without destructive operations
+- Enrichments enable graph self-improvement without destructive operations
 
 **Negative:**
 

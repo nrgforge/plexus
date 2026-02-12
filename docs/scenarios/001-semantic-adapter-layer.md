@@ -87,55 +87,9 @@ The engine validates each item in an emission independently. Valid items commit;
 
 ---
 
-## Feature: ProposalSink Constraints
+## ~~Feature: ProposalSink Constraints~~ **SUPERSEDED (Essay 09)**
 
-The ProposalSink intercepts emissions from reflexive adapters before the engine sees them. It enforces the propose-don't-merge invariant structurally.
-
-### Scenario: may_be_related edge passes through ProposalSink
-**Given** a reflexive adapter with a ProposalSink (contribution cap = 0.3)
-**When** the adapter emits an emission containing edge A→B with relationship `may_be_related` and contribution value 0.2
-**Then** the ProposalSink forwards the emission to the engine
-**And** the engine commits edge A→B with contribution 0.2 from the adapter
-
-### Scenario: Non-may_be_related edge is rejected by ProposalSink
-**Given** a reflexive adapter with a ProposalSink
-**When** the adapter emits an emission containing edge A→B with relationship `related_to`
-**Then** the ProposalSink rejects edge A→B
-**And** the edge does not reach the engine
-**And** `emit()` returns a result listing the edge as rejected with reason "invalid relationship type"
-
-### Scenario: Contribution value exceeding cap is clamped
-**Given** a reflexive adapter with a ProposalSink (contribution cap = 0.3)
-**When** the adapter emits an emission containing edge A→B with relationship `may_be_related` and contribution value 0.8
-**Then** the ProposalSink clamps the contribution value to 0.3
-**And** the engine commits edge A→B with contribution 0.3 from the adapter
-
-### Scenario: Node removal is rejected by ProposalSink
-**Given** a reflexive adapter with a ProposalSink
-**When** the adapter emits an emission containing a removal for node A
-**Then** the ProposalSink rejects the removal
-**And** node A remains in the graph
-**And** `emit()` returns a result listing the removal as rejected
-
-### Scenario: Node emission is allowed through ProposalSink
-**Given** a reflexive adapter with a ProposalSink
-**When** the adapter emits an emission containing a new node M (topology metadata)
-**Then** the ProposalSink forwards the emission to the engine
-**And** the engine commits node M
-
-### Scenario: Annotation on node passes through ProposalSink
-**Given** a reflexive adapter with a ProposalSink
-**When** the adapter emits an emission containing node M with an annotation (confidence = 0.7, method = "near-miss-detection")
-**Then** the ProposalSink forwards the emission to the engine
-**And** the engine constructs a provenance entry with the annotation
-
-### Scenario: Mixed emission with valid nodes and invalid edge type
-**Given** a reflexive adapter with a ProposalSink
-**And** node A exists in the graph
-**When** the adapter emits an emission containing node M and edge M→A with relationship `contains`
-**Then** the ProposalSink rejects edge M→A (invalid relationship type)
-**And** node M is forwarded to the engine and committed
-**And** `emit()` returns a result listing edge M→A as rejected
+> The ProposalSink and reflexive adapter concepts have been replaced by **enrichments**. Enrichments emit through the standard emission pipeline without ProposalSink constraints. The "propose, don't merge" principle is a design convention of individual enrichments (e.g., CoOccurrenceEnrichment self-caps contributions and only emits `may_be_related` edges), not a framework-enforced restriction. See domain model §10 (Adapter ≠ Enrichment).
 
 ---
 
@@ -404,22 +358,6 @@ The engine fires low-level graph events per mutation type when an emission is co
 
 ---
 
-## Feature: Schedule Monitor
+## ~~Feature: Schedule Monitor~~ **SUPERSEDED (Essay 09)**
 
-The schedule monitor evaluates trigger conditions and fires reflexive adapters.
-
-### Scenario: Mutation threshold triggers reflexive adapter
-**Given** a reflexive adapter "normalization-adapter" with schedule `MutationThreshold(count = 10)`
-**When** 10 mutations have been committed since the last time "normalization-adapter" ran
-**Then** the schedule monitor triggers "normalization-adapter"
-**And** the adapter receives a ProposalSink (not a full AdapterSink)
-
-### Scenario: Periodic schedule triggers reflexive adapter
-**Given** a reflexive adapter "topology-adapter" with schedule `Periodic(interval_secs = 60)`
-**When** 60 seconds have elapsed since the last run
-**Then** the schedule monitor triggers "topology-adapter"
-
-### Scenario: Condition schedule evaluated against graph state
-**Given** a reflexive adapter "coherence-adapter" with a condition schedule that checks for nodes with conflicting provenance entries
-**When** the schedule monitor evaluates the condition and it returns true
-**Then** the schedule monitor triggers "coherence-adapter"
+> The schedule monitor concept has been replaced by the **enrichment loop**. Enrichments run after every emission as part of the ingest pipeline — no separate scheduling infrastructure needed. Enrichments self-select based on events and context state. Termination is via idempotency (quiescence), not external scheduling. See domain model invariants 33–34.

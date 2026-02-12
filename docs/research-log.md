@@ -309,3 +309,31 @@ Enrichments shared across integrations (like `TagConceptBridger`) are deduplicat
 
 The public surface architecture is now clear. Three flat registries in the engine (adapters, enrichments, outbound is part of adapter). One pipeline on ingest: route → adapter.process() → enrichment loop → adapter.transform_events(). The consumer sends domain data in via the adapter and receives domain events back through the same adapter. The graph's internal reactive behavior (enrichments, cross-dimensional bridging) is invisible to the consumer.
 
+## Question 5: Can reflexive adapters be fully replaced by enrichments?
+
+**Method:** Code exploration + architectural analysis
+
+**Findings:**
+
+The CoOccurrenceAdapter is the only reflexive adapter implementation. The schedule monitor (which would trigger it automatically) was never built — tests invoke it manually. The ProposalSink (which enforces structural constraints) exists in code but its constraints are better expressed as design conventions on enrichments.
+
+Analysis of what changes:
+- **Trigger model:** Schedule-based (unimplemented) → event-driven (built into enrichment loop)
+- **Constraints:** Structural enforcement via ProposalSink → self-imposed by enrichment convention
+- **Termination:** Open question (no convergence guarantee) → solved (quiescence via idempotency)
+- **Pipeline position:** Outside ingest pipeline → inside ingest pipeline
+
+What's preserved:
+- **Hebbian reinforcement:** The contribution system is independent of whether the emitter is a reflexive adapter or an enrichment. Weak proposals + strong external evidence = same dynamic.
+- **Propose-don't-merge:** Survives as a design convention — CoOccurrenceEnrichment self-caps contributions and only emits `may_be_related` edges.
+
+What's removed:
+- Reflexive adapter (concept), ProposalSink (concept + code), Schedule and Schedule monitor (concepts), `propose`/`clamp`/`intercept` (actions), 4 invariants (ProposalSink rules)
+- Open questions 2 (convergence) and 3 (ProposalSink metadata edges) dissolve
+
+**Decision:** Full migration. Reflexive adapters → enrichments. Applied cleanup to domain model, ADRs 001/004/009, and scenarios 001/004.
+
+**Implications:**
+
+The model is simpler: one concept (enrichment) for all reactive graph intelligence instead of two (reflexive adapter + enrichment). The unimplemented schedule monitor is no longer needed. Two open questions dissolve. The domain model drops from 42 invariants to 38, and from ~65 concepts to ~60.
+

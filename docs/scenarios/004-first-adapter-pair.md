@@ -72,21 +72,21 @@ One FragmentAdapter type serves multiple evidence sources. Each instance has a d
 
 ---
 
-## Feature: CoOccurrenceAdapter Proposes Relationships Between Co-Occurring Concepts
+## Feature: CoOccurrenceEnrichment Proposes Relationships Between Co-Occurring Concepts
 
-The CoOccurrenceAdapter is a reflexive adapter that detects co-occurrence (concepts sharing fragments) and proposes `may_be_related` edges via ProposalSink.
+The CoOccurrenceEnrichment is an enrichment that detects co-occurrence (concepts sharing fragments) and emits `may_be_related` edges during the enrichment loop.
 
 ### Scenario: Two concepts sharing one fragment get a co-occurrence proposal
 **Given** concept:travel and concept:avignon both appear on fragment F1 (via `tagged_with` edges)
 **And** no other fragments exist
-**When** the CoOccurrenceAdapter processes a graph state snapshot
-**Then** a `may_be_related` edge is proposed between concept:travel and concept:avignon
+**When** the CoOccurrenceEnrichment processes a context snapshot
+**Then** a `may_be_related` edge is emitted between concept:travel and concept:avignon
 **And** the co-occurrence score is 1.0 (1 shared fragment / 1 max)
 
 ### Scenario: Two concepts sharing multiple fragments score higher than single-shared
 **Given** concept:travel and concept:avignon co-occur on fragments F1 and F2
 **And** concept:travel and concept:paris co-occur on fragment F2 only
-**When** the CoOccurrenceAdapter processes a graph state snapshot
+**When** the CoOccurrenceEnrichment processes a context snapshot
 **Then** concept:travel ↔ concept:avignon has co-occurrence score 1.0 (2/2 max)
 **And** concept:travel ↔ concept:paris has co-occurrence score 0.5 (1/2 max)
 
@@ -94,34 +94,32 @@ The CoOccurrenceAdapter is a reflexive adapter that detects co-occurrence (conce
 **Given** concept:travel appears only on fragment F1
 **And** concept:morning appears only on fragment F3
 **And** F1 and F3 share no tags
-**When** the CoOccurrenceAdapter processes a graph state snapshot
-**Then** no `may_be_related` edge is proposed between concept:travel and concept:morning
+**When** the CoOccurrenceEnrichment processes a context snapshot
+**Then** no `may_be_related` edge is emitted between concept:travel and concept:morning
 
 ### Scenario: Co-occurrence proposals are symmetric edge pairs
 **Given** concept:travel and concept:avignon co-occur on fragment F1
-**When** the CoOccurrenceAdapter processes a graph state snapshot
+**When** the CoOccurrenceEnrichment processes a context snapshot
 **Then** two directed edges are emitted: concept:travel→concept:avignon and concept:avignon→concept:travel
 **And** both edges have relationship `may_be_related`
 **And** both edges have the same contribution value
 
-### Scenario: ProposalSink clamps co-occurrence contribution to cap
-**Given** the CoOccurrenceAdapter's ProposalSink has contribution cap 0.5
+### Scenario: Co-occurrence contribution is self-capped by enrichment
+**Given** the CoOccurrenceEnrichment has a configured contribution cap of 0.5
 **And** concept:travel and concept:avignon have co-occurrence score 1.0
-**When** the CoOccurrenceAdapter emits the proposal
-**Then** the `may_be_related` edge contribution is clamped to 0.5
+**When** the enrichment emits the proposal
+**Then** the `may_be_related` edge contribution is capped to 0.5
 
 ### Scenario: Empty graph produces no proposals
 **Given** the graph contains no `tagged_with` edges
-**When** the CoOccurrenceAdapter processes a graph state snapshot
-**Then** no emissions are made (or the emission is empty)
+**When** the CoOccurrenceEnrichment processes a context snapshot
+**Then** no emissions are made (the enrichment returns None)
 
-### Scenario: CoOccurrenceAdapter reads graph state snapshot, not live state
-**Given** the framework creates a graph state snapshot of the current Context
-**And** the snapshot is passed as the opaque payload in AdapterInput with input kind "graph_state"
-**When** the CoOccurrenceAdapter processes the input
-**Then** the adapter downcasts the payload to Context
-**And** the adapter reads `tagged_with` edges from the snapshot
-**And** no mutations to the live graph affect the adapter's view
+### Scenario: CoOccurrenceEnrichment reads context snapshot, not live state
+**Given** the framework creates a context snapshot of the current Context
+**When** the CoOccurrenceEnrichment receives the snapshot during the enrichment loop
+**Then** the enrichment reads `tagged_with` edges from the snapshot
+**And** no mutations to the live graph affect the enrichment's view
 
 ---
 
@@ -187,7 +185,7 @@ The full pipeline: fragments enter via FragmentAdapter, co-occurrence is detecte
 
 ### Scenario: Re-running the CoOccurrenceAdapter with unchanged graph is idempotent
 **Given** the CoOccurrenceAdapter has already processed a graph state snapshot and proposed `may_be_related` edges
-**When** the CoOccurrenceAdapter processes a new snapshot of the same graph (no new fragments)
+**When** the CoOccurrenceEnrichment processes a new snapshot of the same graph (no new fragments)
 **Then** all `may_be_related` edge contributions are replaced with the same values (latest-value-replace)
 **And** no `WeightsChanged` events fire (contributions unchanged)
 
@@ -197,6 +195,5 @@ The full pipeline: fragments enter via FragmentAdapter, co-occurrence is detecte
 
 The following scenarios cannot be written until their design questions are resolved:
 
-- **Node property merge on multi-source upsert:** When two different external adapters emit the same concept node with different properties, what merge semantics apply? Not exercised by this pair (single FragmentAdapter type produces identical concept nodes). See domain model OQ1.
-- **Reflexive cycle convergence:** What prevents the CoOccurrenceAdapter from triggering itself in a loop? Not exercised without a schedule monitor. See domain model OQ2.
-- **Schedule monitor integration:** When and how the framework triggers the CoOccurrenceAdapter automatically. Not built yet. The test harness triggers directly.
+- **Node property merge on multi-source upsert:** When two different adapters emit the same concept node with different properties, what merge semantics apply? Not exercised by this pair (single FragmentAdapter type produces identical concept nodes). See domain model OQ1.
+- **Enrichment loop integration:** The full pipeline (fragment ingestion → enrichment loop → co-occurrence detection → outbound events) is not exercised end-to-end. Enrichment loop scenarios will be written during the public surface build phase.
