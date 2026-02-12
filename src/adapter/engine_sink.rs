@@ -6,6 +6,7 @@
 //! - Removals: no-op if node doesn't exist; cascade connected edges
 //! - Empty emission: no-op
 
+use super::enrichment::EnrichmentRegistry;
 use super::events::GraphEvent;
 use super::provenance::{FrameworkContext, ProvenanceEntry};
 use super::sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
@@ -44,12 +45,13 @@ enum SinkBackend {
 pub struct EngineSink {
     backend: SinkBackend,
     framework: Option<FrameworkContext>,
+    enrichments: Option<Arc<EnrichmentRegistry>>,
 }
 
 impl EngineSink {
     /// Create a sink backed by a bare Mutex (test path, no persistence).
     pub fn new(context: Arc<Mutex<Context>>) -> Self {
-        Self { backend: SinkBackend::Mutex(context), framework: None }
+        Self { backend: SinkBackend::Mutex(context), framework: None, enrichments: None }
     }
 
     /// Create a sink backed by PlexusEngine (ADR-006).
@@ -60,11 +62,22 @@ impl EngineSink {
         Self {
             backend: SinkBackend::Engine { engine, context_id },
             framework: None,
+            enrichments: None,
         }
     }
 
     pub fn with_framework_context(mut self, framework: FrameworkContext) -> Self {
         self.framework = Some(framework);
+        self
+    }
+
+    /// Attach an enrichment registry (ADR-010).
+    ///
+    /// After each primary emission (Engine backend only), the enrichment loop
+    /// runs: enrichments receive events and a context snapshot, and may produce
+    /// additional emissions committed through the same path.
+    pub fn with_enrichments(mut self, registry: Arc<EnrichmentRegistry>) -> Self {
+        self.enrichments = Some(registry);
         self
     }
 
@@ -231,6 +244,87 @@ impl EngineSink {
 
         Ok(result)
     }
+
+    /// Map a PlexusError to an AdapterError.
+    fn map_engine_error(e: crate::graph::PlexusError) -> AdapterError {
+        match e {
+            crate::graph::PlexusError::ContextNotFound(id) =>
+                AdapterError::ContextNotFound(id.to_string()),
+            other => AdapterError::Internal(other.to_string()),
+        }
+    }
+
+    /// Run the enrichment loop after a primary emission (ADR-010).
+    ///
+    /// Per-round events: each round sees only events from the previous round.
+    /// All enrichments in a round see the same context snapshot.
+    /// The loop terminates when all enrichments return None (quiescence)
+    /// or the safety valve (max rounds) is reached.
+    fn run_enrichment_loop(
+        engine: &PlexusEngine,
+        context_id: &ContextId,
+        registry: &EnrichmentRegistry,
+        primary_events: &[GraphEvent],
+        primary_result: &mut EmitResult,
+    ) -> Result<(), AdapterError> {
+        let mut round_events: Vec<GraphEvent> = primary_events.to_vec();
+        let mut round = 0;
+
+        while round < registry.max_rounds() && !round_events.is_empty() {
+            // Snapshot the context (clone for consistent, immutable view)
+            let snapshot = engine.get_context(context_id)
+                .ok_or_else(|| AdapterError::ContextNotFound(context_id.to_string()))?;
+
+            // Run all enrichments with the same snapshot
+            let mut round_emissions: Vec<(String, Emission)> = Vec::new();
+            for enrichment in registry.enrichments() {
+                if let Some(emission) = enrichment.enrich(&round_events, &snapshot) {
+                    round_emissions.push((enrichment.id().to_string(), emission));
+                }
+            }
+
+            // Quiescence: all enrichments returned None
+            if round_emissions.is_empty() {
+                break;
+            }
+
+            // Commit each enrichment's emission through the same path
+            let mut new_events: Vec<GraphEvent> = Vec::new();
+            for (enrichment_id, emission) in round_emissions {
+                let enrichment_framework = Some(FrameworkContext {
+                    adapter_id: enrichment_id,
+                    context_id: context_id.to_string(),
+                    input_summary: None,
+                });
+
+                let enrichment_result = engine.with_context_mut(context_id, |ctx| {
+                    Self::emit_inner(ctx, emission, &enrichment_framework)
+                }).map_err(Self::map_engine_error)??;
+
+                new_events.extend(enrichment_result.events.clone());
+
+                // Accumulate enrichment results into the primary result
+                primary_result.nodes_committed += enrichment_result.nodes_committed;
+                primary_result.edges_committed += enrichment_result.edges_committed;
+                primary_result.removals_committed += enrichment_result.removals_committed;
+                primary_result.rejections.extend(enrichment_result.rejections);
+                primary_result.provenance.extend(enrichment_result.provenance);
+                primary_result.events.extend(enrichment_result.events);
+            }
+
+            round_events = new_events;
+            round += 1;
+        }
+
+        if round >= registry.max_rounds() && !round_events.is_empty() {
+            eprintln!(
+                "warning: enrichment loop aborted after {} rounds (safety valve)",
+                registry.max_rounds()
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -245,15 +339,25 @@ impl AdapterSink for EngineSink {
             }
             SinkBackend::Engine { engine, context_id } => {
                 let framework = self.framework.clone();
-                engine.with_context_mut(context_id, |ctx| {
+                let mut result = engine.with_context_mut(context_id, |ctx| {
                     Self::emit_inner(ctx, emission, &framework)
-                }).map_err(|e| {
-                    match e {
-                        crate::graph::PlexusError::ContextNotFound(id) =>
-                            AdapterError::ContextNotFound(id.to_string()),
-                        other => AdapterError::Internal(other.to_string()),
+                }).map_err(Self::map_engine_error)??;
+
+                // Run enrichment loop if enrichments are registered (ADR-010)
+                if let Some(ref registry) = self.enrichments {
+                    if !registry.enrichments().is_empty() {
+                        let primary_events = result.events.clone();
+                        Self::run_enrichment_loop(
+                            engine,
+                            context_id,
+                            registry,
+                            &primary_events,
+                            &mut result,
+                        )?;
                     }
-                })?
+                }
+
+                Ok(result)
             }
         }
     }

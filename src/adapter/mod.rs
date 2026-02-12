@@ -6,6 +6,7 @@
 mod cancel;
 pub mod cooccurrence;
 mod engine_sink;
+mod enrichment;
 mod events;
 pub mod fragment;
 #[cfg(test)]
@@ -19,6 +20,7 @@ mod types;
 
 pub use cancel::CancellationToken;
 pub use engine_sink::EngineSink;
+pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use events::GraphEvent;
 pub use proposal_sink::ProposalSink;
 pub use provenance::{FrameworkContext, ProvenanceEntry};
