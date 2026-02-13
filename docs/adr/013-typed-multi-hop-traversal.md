@@ -1,6 +1,6 @@
 # ADR-013: Typed Multi-Hop Traversal
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 14](../research/semantic/essays/14-public-surface-redesign.md), [Research Log Q1](../research-log.md)
 

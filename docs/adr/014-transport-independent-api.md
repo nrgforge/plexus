@@ -1,6 +1,6 @@
 # ADR-014: Transport-Independent API Layer
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 14](../research/semantic/essays/14-public-surface-redesign.md), [Research Log Q2](../research-log.md)
 

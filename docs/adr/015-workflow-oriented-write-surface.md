@@ -1,6 +1,6 @@
 # ADR-015: Workflow-Oriented Write Surface
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 14](../research/semantic/essays/14-public-surface-redesign.md), [Research Log Q2](../research-log.md)
 
