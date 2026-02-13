@@ -77,3 +77,11 @@ pub struct LinkMarksParams {
     pub target_id: String,
 }
 
+// ── Graph read params ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvidenceTrailParams {
+    #[schemars(description = "The node ID to query evidence for (e.g. a concept ID)")]
+    pub node_id: String,
+}
+

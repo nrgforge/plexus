@@ -263,6 +263,18 @@ impl PlexusMcpServer {
         }
     }
 
+    // ── Graph reads ────────────────────────────────────────────────────
+
+    #[tool(description = "Query the evidence trail for a concept: marks, fragments, and chains (ADR-013)")]
+    fn evidence_trail(
+        &self,
+        Parameters(p): Parameters<EvidenceTrailParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.evidence_trail(PROV_CTX, &p.node_id) {
+            Ok(result) => ok_text(serde_json::to_string_pretty(&result).unwrap()),
+            Err(e) => err_text(e.to_string()),
+        }
+    }
 }
 
 #[tool_handler]

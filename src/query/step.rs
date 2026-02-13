@@ -130,7 +130,7 @@ impl StepResult {
 // --- Evidence trail: composite query over two StepQuery branches ---
 
 /// Result of an evidence trail query for a concept.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct EvidenceTrailResult {
     /// The concept node ID queried.
     pub concept: NodeId,
