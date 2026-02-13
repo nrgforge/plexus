@@ -127,6 +127,58 @@ impl StepResult {
     }
 }
 
+// --- Evidence trail: composite query over two StepQuery branches ---
+
+/// Result of an evidence trail query for a concept.
+#[derive(Debug, Clone)]
+pub struct EvidenceTrailResult {
+    /// The concept node ID queried.
+    pub concept: NodeId,
+    /// Marks that reference the concept (via `references` edges).
+    pub marks: Vec<Node>,
+    /// Fragments tagged with the concept (via `tagged_with` edges).
+    pub fragments: Vec<Node>,
+    /// Chains containing the discovered marks (via `contains` edges).
+    pub chains: Vec<Node>,
+    /// All edges traversed across both branches.
+    pub edges: Vec<Edge>,
+}
+
+/// Query the evidence trail for a concept: marks, fragments, and chains.
+///
+/// Composes two StepQuery branches:
+/// - Branch 1: concept ← references ← contains (marks → chains)
+/// - Branch 2: concept ← tagged_with (fragments)
+pub fn evidence_trail(concept_id: impl Into<NodeId>, context: &Context) -> EvidenceTrailResult {
+    let concept = concept_id.into();
+
+    // Branch 1: marks referencing the concept, then chains containing those marks
+    let branch1 = StepQuery::from(concept.clone())
+        .step(Direction::Incoming, "references")
+        .step(Direction::Incoming, "contains")
+        .execute(context);
+
+    // Branch 2: fragments tagged with the concept
+    let branch2 = StepQuery::from(concept.clone())
+        .step(Direction::Incoming, "tagged_with")
+        .execute(context);
+
+    let marks = branch1.at_step(0).to_vec();
+    let chains = branch1.at_step(1).to_vec();
+    let fragments = branch2.at_step(0).to_vec();
+
+    let mut edges = branch1.edges;
+    edges.extend(branch2.edges);
+
+    EvidenceTrailResult {
+        concept,
+        marks,
+        fragments,
+        chains,
+        edges,
+    }
+}
+
 // --- Edge index for efficient lookups ---
 
 struct EdgeIndex<'a> {
@@ -322,5 +374,84 @@ mod tests {
         let ids: Vec<String> = result.at_step(0).iter().map(|n| n.id.to_string()).collect();
         assert!(ids.contains(&"mark:1".to_string()));
         assert!(ids.contains(&"mark:2".to_string()));
+    }
+
+    // === Evidence trail scenarios ===
+
+    fn evidence_context() -> Context {
+        let mut ctx = Context::new("test");
+
+        add(&mut ctx, node("concept:travel", "concept", dimension::SEMANTIC));
+        add(&mut ctx, node("mark:1", "mark", dimension::PROVENANCE));
+        add(&mut ctx, node("fragment:abc", "fragment", dimension::STRUCTURE));
+        add(&mut ctx, node("chain:provenance:research", "chain", dimension::PROVENANCE));
+
+        // mark:1 → concept:travel (references)
+        ctx.edges.push(Edge::new_cross_dimensional(
+            NodeId::from("mark:1"), dimension::PROVENANCE,
+            NodeId::from("concept:travel"), dimension::SEMANTIC,
+            "references",
+        ));
+        // fragment:abc → concept:travel (tagged_with)
+        ctx.edges.push(Edge::new_cross_dimensional(
+            NodeId::from("fragment:abc"), dimension::STRUCTURE,
+            NodeId::from("concept:travel"), dimension::SEMANTIC,
+            "tagged_with",
+        ));
+        // chain:provenance:research → mark:1 (contains)
+        ctx.edges.push(Edge::new(
+            NodeId::from("chain:provenance:research"),
+            NodeId::from("mark:1"),
+            "contains",
+        ));
+
+        ctx
+    }
+
+    // === Scenario 7: Evidence trail returns marks, fragments, and chains ===
+    #[test]
+    fn evidence_trail_returns_all_evidence() {
+        let ctx = evidence_context();
+
+        let result = evidence_trail("concept:travel", &ctx);
+
+        assert_eq!(result.marks.len(), 1);
+        assert_eq!(result.marks[0].id.to_string(), "mark:1");
+        assert_eq!(result.fragments.len(), 1);
+        assert_eq!(result.fragments[0].id.to_string(), "fragment:abc");
+        assert_eq!(result.chains.len(), 1);
+        assert_eq!(result.chains[0].id.to_string(), "chain:provenance:research");
+        // 1 references + 1 contains + 1 tagged_with
+        assert_eq!(result.edges.len(), 3);
+    }
+
+    // === Scenario 8: Evidence trail with no evidence returns empty ===
+    #[test]
+    fn evidence_trail_empty_for_isolated_concept() {
+        let mut ctx = Context::new("test");
+        add(&mut ctx, node("concept:obscure", "concept", dimension::SEMANTIC));
+
+        let result = evidence_trail("concept:obscure", &ctx);
+
+        assert_eq!(result.marks.len(), 0);
+        assert_eq!(result.fragments.len(), 0);
+        assert_eq!(result.chains.len(), 0);
+        assert_eq!(result.edges.len(), 0);
+    }
+
+    // === Scenario 9: Evidence trail composes two StepQuery branches ===
+    #[test]
+    fn evidence_trail_composes_two_branches() {
+        let ctx = evidence_context();
+
+        let result = evidence_trail("concept:travel", &ctx);
+
+        // Branch 1 found marks and chains; branch 2 found fragments.
+        // If these were a single query, fragments would need to be at step 0
+        // alongside marks, which would lose the type distinction.
+        // The composite nature is verified by having all three categories populated.
+        assert!(!result.marks.is_empty(), "branch 1 step 0: marks");
+        assert!(!result.chains.is_empty(), "branch 1 step 1: chains");
+        assert!(!result.fragments.is_empty(), "branch 2 step 0: fragments");
     }
 }
