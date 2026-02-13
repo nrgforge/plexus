@@ -31,6 +31,11 @@ Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified a
 **When** the query executes
 **Then** the result distinguishes step 0 nodes from step 1 nodes — they are not flattened into a single list
 
+### Scenario: StepQuery supports Outgoing direction
+**Given** a context with chain `chain:provenance:research` that has outgoing `contains` edges to marks `mark:1` and `mark:2`
+**When** `StepQuery::from("chain:provenance:research").step(Outgoing, "contains")` is executed
+**Then** the result contains `mark:1` and `mark:2` at step 0
+
 ---
 
 ## Feature: Evidence trail query (ADR-013)
@@ -101,6 +106,11 @@ Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified a
 **When** both are resolved to chain IDs
 **Then** both produce the same ID: `chain:provenance:field-notes`
 
+### Scenario: Chain name normalization handles special characters
+**Given** an annotate call with chain name "research: phase 1/2"
+**When** the chain name is resolved to a chain ID
+**Then** the ID is `chain:provenance:research--phase-1-2` (colons and slashes replaced by hyphens, whitespace replaced by hyphens)
+
 ### Scenario: Annotate triggers enrichment loop
 **Given** context "research" with existing concept `concept:refactor`
 **When** `annotate(context_id: "research", chain_name: "notes", file: "src/main.rs", line: 1, annotation: "cleanup", tags: ["#refactor"])` is called
@@ -111,7 +121,12 @@ Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified a
 **When** a consumer inspects available operations
 **Then** there is no standalone `create_chain` operation — chains are created via `annotate` or via adapter-produced provenance
 
-### Scenario: Annotate returns outbound events
-**Given** a successful annotate call that creates a chain and a mark
+### Scenario: Annotate returns merged outbound events
+**Given** a successful annotate call that creates a chain and a mark (two ingest calls)
 **When** the operation completes
-**Then** outbound events are returned for both the chain creation and mark creation ingest calls
+**Then** the consumer receives a single merged list of outbound events from both ingest calls — chain creation events followed by mark creation events — not two separate response batches
+
+### Scenario: Annotate rejects empty chain name
+**Given** an annotate call with an empty string as chain_name
+**When** the operation is invoked
+**Then** it returns an error without creating any chain or mark

@@ -12,7 +12,7 @@
 
 ## Context
 
-Plexus has four known consumers (Trellis, Carrel, Manza, Sketchbin) that will connect via different transports: MCP, gRPC, REST, direct Rust embedding, or future protocols. Currently the MCP server calls `ProvenanceApi` and `PlexusEngine` methods directly — there is no formal API layer between transports and the engine. This means each new transport must independently discover which engine methods to call and how to compose them.
+Plexus has multiple known consumers (Trellis, Carrel, Manza, Sketchbin among them) that will connect via different transports: MCP, gRPC, REST, direct Rust embedding, or future protocols. Currently the MCP server calls `ProvenanceApi` and `PlexusEngine` methods directly — there is no formal API layer between transports and the engine. This means each new transport must independently discover which engine methods to call and how to compose them.
 
 ADR-012 established that transports are thin shells calling the same `ingest()` and query endpoints. But those endpoints aren't formalized as a single API surface — they're spread across `IngestPipeline`, `ProvenanceApi`, `PlexusEngine`, and the query system.
 
@@ -31,7 +31,7 @@ Introduce a `PlexusApi` struct that is the single entry point for all consumer-f
 - `list_chains(context_id, status?) -> Vec<ChainView>`
 - `get_chain(context_id, chain_id) -> (ChainView, Vec<MarkView>)`
 - `list_marks(context_id, filters) -> Vec<MarkView>`
-- `list_tags(context_id) -> Vec<String>` (Note: the domain model's invariant 28 says `list_tags()` is cross-context. This ADR scopes it to a context, consistent with all other API operations. Invariant 28 should be updated to match.)
+- `list_tags(context_id) -> Vec<String>` (Note: ADR-012 listed `list_tags()` without a context parameter. This ADR scopes it to a context, consistent with all other API operations and with the existing `ProvenanceApi.list_tags()` implementation, which is already context-scoped. Domain model invariant 28 has been updated to match.)
 - `get_links(context_id, mark_id) -> (Vec<MarkView>, Vec<MarkView>)`
 
 **Graph reads:**

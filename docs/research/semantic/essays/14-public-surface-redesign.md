@@ -8,9 +8,9 @@ But the public surface — what consumers actually interact with — hasn't kept
 
 The architecture promises rich, traversable, multi-dimensional knowledge. The interface doesn't deliver on that promise.
 
-## Three consumers, one shared need
+## Multiple consumers, one shared need
 
-To understand what the surface should look like, we mapped the concrete queries four known consumers would need.
+To understand what the surface should look like, we mapped the concrete queries that representative consumers would need. These four — Trellis, Carrel, Manza, Sketchbin — are not exhaustive; they're a sample of text-based consumers chosen to prove out use cases across different interaction patterns.
 
 **Trellis** is an app-to-app consumer that ingests tagged writing fragments. Its needs are write-heavy: send fragments, get back confirmation. On the read side, it needs basic queries — list concepts, find fragments for a concept, check edge weights. These are simple single-dimension queries that the existing `FindQuery` and single-hop `TraverseQuery` handle adequately.
 
@@ -20,12 +20,12 @@ To understand what the surface should look like, we mapped the concrete queries 
 
 **Sketchbin** is a federated creative workshop where each instance runs Plexus locally as its semantic engine. A SketchAdapter ingests each published sketch (tagged creative artifacts — audio, code, writing, visual work), and a FederationAdapter ingests incoming ActivityPub activities from followed creators. The enrichment loop discovers cross-creator semantic connections: co-occurrences between your "ambient" work and a followed creator's "texture" explorations, concept bridges between your field recordings and someone else's generative code. Discovery propagates through the trust network — two-hop semantic resonance dampened by social distance. Sketchbin's key requirement is provenance transparency: every discovery must be explainable ("Carol's sketch connects to your 'generative' cluster — via Alice's engagement with similar themes"). This is the `evidence_trail` query as a user-facing feature.
 
-The pattern is clear. All four consumers, despite radically different interaction patterns (app-to-app ingestion, writer's research coordination, real-time visualization, federated creative discovery), converge on the same query: **"What is the evidence trail for this node?"**
+The pattern is clear. All four representative consumers, despite radically different interaction patterns (app-to-app ingestion, writer's research coordination, real-time visualization, federated creative discovery), converge on the same query: **"What is the evidence trail for this node?"**
 
 This query follows a specific shape:
-1. From a concept node → traverse `references` edges (incoming) → marks in the provenance dimension
-2. From the same concept → traverse `tagged_with` edges (incoming) → fragments in the structure dimension
-3. From each mark → traverse `contains` edges (incoming) → the chain it belongs to
+1. concept ← marks (via `references`, incoming — marks have outgoing `references` edges to the concept)
+2. concept ← fragments (via `tagged_with`, incoming — fragments have outgoing `tagged_with` edges to the concept)
+3. marks ← chains (via `contains`, incoming — chains have outgoing `contains` edges to marks)
 
 Each hop follows a different relationship type. Each hop crosses or stays within specific dimensions. This is not a generic "find everything within 2 hops" — it's a typed, multi-step traversal where the relationship at each step matters.
 
@@ -37,16 +37,20 @@ Each hop follows a different relationship type. Each hop crosses or stays within
 
 `PathQuery` finds the shortest path between two known nodes. It requires you to already know both endpoints — it can't discover the evidence trail, only verify a connection.
 
-The gap isn't about missing features on these primitives. It's a missing *primitive*: a typed multi-hop traversal where each step specifies its own relationship filter and direction. Something like:
+The gap isn't about missing features on these primitives. It's a missing *primitive*: a typed multi-hop traversal where each step specifies its own relationship filter and direction. The evidence trail has a branching shape — two independent paths from the same origin — so it composes two sequential traversals:
 
 ```
+// Branch 1: concept ← marks ← chains
 from(concept_id)
   .step(Incoming, "references")    // → marks
-  .step(Incoming, "tagged_with")   // → fragments
   .step(Incoming, "contains")      // → chains
+
+// Branch 2: concept ← fragments
+from(concept_id)
+  .step(Incoming, "tagged_with")   // → fragments
 ```
 
-This would express the evidence trail as a single query instead of three separate traversals with post-filtering. It belongs in Plexus core — not in transport-specific code — because all four consumers need it regardless of how they connect.
+This would express the evidence trail as two typed queries instead of three separate traversals with post-filtering. It belongs in Plexus core — not in transport-specific code — because all consumers need it regardless of how they connect.
 
 ## The MCP surface problem
 

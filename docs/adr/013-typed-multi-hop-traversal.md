@@ -12,7 +12,7 @@
 
 ## Context
 
-Four consumers (Trellis, Carrel, Manza, Sketchbin) converge on the same cross-dimensional query: "What is the evidence trail for this concept?" This query follows a specific shape — each hop follows a different relationship type through different dimensions:
+Multiple consumers (Trellis, Carrel, Manza, Sketchbin among them) converge on the same cross-dimensional query: "What is the evidence trail for this concept?" This query follows a specific shape — each hop follows a different relationship type through different dimensions:
 
 1. concept ← marks (via `references`, incoming — marks have outgoing `references` edges to the concept)
 2. concept ← fragments (via `tagged_with`, incoming — fragments have outgoing `tagged_with` edges to the concept)
@@ -72,7 +72,7 @@ The results are merged into an `EvidenceTrailResult` containing marks, fragments
 **Positive:**
 
 - The evidence trail query becomes a single call instead of 3 separate traversals with post-filtering
-- All four consumers get the query they need, expressed in Plexus core (not transport-specific code)
+- All consumers get the query they need, expressed in Plexus core (not transport-specific code)
 - Existing query primitives (`FindQuery`, `TraverseQuery`, `PathQuery`) are unaffected
 - `StepQuery` is general-purpose — any typed traversal pattern can be expressed, not just evidence trails
 
