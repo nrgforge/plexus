@@ -20,6 +20,7 @@
 
 pub mod adapter;
 pub mod analysis;
+pub mod api;
 mod graph;
 pub mod mcp;
 pub mod provenance;
@@ -41,6 +42,7 @@ pub use graph::{
 };
 pub use query::{Direction, EvidenceTrailResult, FindQuery, PathQuery, PathResult, QueryResult, StepQuery, StepResult, TraversalResult, TraverseQuery, evidence_trail};
 pub use provenance::{ChainStatus, ChainView, MarkView, ProvenanceApi};
+pub use api::PlexusApi;
 pub use storage::{GraphStore, OpenStore, SqliteStore, StorageError, StorageResult};
 
 /// Library version
