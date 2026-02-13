@@ -39,7 +39,7 @@ pub use graph::{
     ContentType, Context, ContextId, ContextMetadata, Edge, EdgeId, Node, NodeId, PlexusEngine,
     PlexusError, PlexusResult, PropertyValue, Source, dimension,
 };
-pub use query::{Direction, FindQuery, PathQuery, PathResult, QueryResult, TraversalResult, TraverseQuery};
+pub use query::{Direction, FindQuery, PathQuery, PathResult, QueryResult, StepQuery, StepResult, TraversalResult, TraverseQuery};
 pub use provenance::{ChainStatus, ChainView, MarkView, ProvenanceApi};
 pub use storage::{GraphStore, OpenStore, SqliteStore, StorageError, StorageResult};
 
