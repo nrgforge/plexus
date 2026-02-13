@@ -13,10 +13,11 @@
 //! - update_mark, archive_chain: read-modify-write pattern
 //! - delete_chain, unlink_marks: deferred per OQ10 (edge removal)
 
+use crate::adapter::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{EdgeRemoval, Emission};
-use crate::graph::{dimension, ContentType, Edge, Node, NodeId, PropertyValue};
+use crate::adapter::types::{EdgeRemoval, Emission, OutboundEvent};
+use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 
 /// Input data for the ProvenanceAdapter.
@@ -240,6 +241,40 @@ impl Adapter for ProvenanceAdapter {
         }
 
         Ok(())
+    }
+
+    fn transform_events(&self, events: &[GraphEvent], _context: &Context) -> Vec<OutboundEvent> {
+        let mut outbound = Vec::new();
+        for event in events {
+            match event {
+                GraphEvent::NodesAdded { node_ids, adapter_id, .. } if adapter_id == "provenance" => {
+                    let ids: Vec<String> = node_ids.iter().map(|id| id.to_string()).collect();
+                    if !ids.is_empty() {
+                        outbound.push(OutboundEvent::new("provenance_updated", ids.join(", ")));
+                    }
+                }
+                GraphEvent::EdgesAdded { edge_ids, adapter_id, .. } if adapter_id == "provenance" => {
+                    if !edge_ids.is_empty() {
+                        let ids: Vec<String> = edge_ids.iter().map(|id| id.to_string()).collect();
+                        outbound.push(OutboundEvent::new("edges_added", ids.join(", ")));
+                    }
+                }
+                GraphEvent::NodesRemoved { node_ids, adapter_id, .. } if adapter_id == "provenance" => {
+                    let ids: Vec<String> = node_ids.iter().map(|id| id.to_string()).collect();
+                    if !ids.is_empty() {
+                        outbound.push(OutboundEvent::new("provenance_removed", ids.join(", ")));
+                    }
+                }
+                GraphEvent::EdgesRemoved { edge_ids, adapter_id, .. } if adapter_id == "provenance" => {
+                    if !edge_ids.is_empty() {
+                        let ids: Vec<String> = edge_ids.iter().map(|id| id.to_string()).collect();
+                        outbound.push(OutboundEvent::new("edges_removed", ids.join(", ")));
+                    }
+                }
+                _ => {}
+            }
+        }
+        outbound
     }
 }
 

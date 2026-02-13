@@ -1,18 +1,23 @@
 //! FragmentAdapter — external adapter for tagged writing fragments (ADR-004)
 //!
 //! Maps a fragment (text + tags) to graph structure:
-//! - A fragment node (Document, structure dimension)
-//! - A concept node per tag (Concept, semantic dimension)
+//! - A fragment node (Document, structure dimension) — deterministic ID via content hash
+//! - A concept node per tag (Concept, semantic dimension) — deterministic ID via tag label
 //! - A tagged_with edge per tag (fragment → concept, contribution 1.0)
 //! - A chain node (Provenance, provenance dimension) — per adapter+source, idempotent
 //! - A mark node (Provenance, provenance dimension) — source evidence for the fragment
 //! - A contains edge (chain → mark, within provenance)
+//!
+//! All node IDs are deterministic. Re-ingesting the same fragment produces the same
+//! nodes, triggering upsert rather than creating duplicates.
 
+use crate::adapter::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::Emission;
-use crate::graph::{dimension, ContentType, Edge, Node, NodeId, PropertyValue};
+use crate::adapter::types::{Emission, OutboundEvent};
+use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
+use uuid::Uuid;
 
 /// Input data for the FragmentAdapter.
 ///
@@ -88,7 +93,24 @@ impl Adapter for FragmentAdapter {
             .ok_or(AdapterError::InvalidInput)?;
 
         // Build the fragment node (Document, structure dimension)
-        let fragment_id = NodeId::new();
+        // Deterministic ID: content-hash of adapter_id + text + sorted tags.
+        // Re-ingesting the same fragment produces the same node → upsert, not duplicate.
+        let mut sorted_tags: Vec<String> = fragment.tags.iter().map(|t| t.to_lowercase()).collect();
+        sorted_tags.sort();
+        let hash_input = format!(
+            "{}:{}:{}",
+            self.adapter_id,
+            fragment.text,
+            sorted_tags.join(",")
+        );
+        // UUID v5 namespace for Plexus fragments (stable, arbitrary)
+        const FRAGMENT_NS: Uuid = Uuid::from_bytes([
+            0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1,
+            0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
+        ]);
+        let fragment_id = NodeId::from_string(
+            format!("fragment:{}", Uuid::new_v5(&FRAGMENT_NS, hash_input.as_bytes()))
+        );
         let mut fragment_node =
             Node::new_in_dimension("fragment", ContentType::Document, dimension::STRUCTURE);
         fragment_node.id = fragment_id.clone();
@@ -210,6 +232,39 @@ impl Adapter for FragmentAdapter {
 
         sink.emit(emission).await?;
         Ok(())
+    }
+
+    fn transform_events(&self, events: &[GraphEvent], _context: &Context) -> Vec<OutboundEvent> {
+        let mut outbound = Vec::new();
+        for event in events {
+            if let GraphEvent::NodesAdded { node_ids, adapter_id, .. } = event {
+                if adapter_id != &self.adapter_id {
+                    continue;
+                }
+                // Fragment indexed
+                let fragments: Vec<String> = node_ids
+                    .iter()
+                    .filter(|id| id.to_string().starts_with("fragment:"))
+                    .map(|id| id.to_string())
+                    .collect();
+                for frag_id in fragments {
+                    outbound.push(OutboundEvent::new("fragment_indexed", frag_id));
+                }
+                // Concepts detected
+                let concepts: Vec<String> = node_ids
+                    .iter()
+                    .filter(|id| id.to_string().starts_with("concept:"))
+                    .map(|id| id.to_string().strip_prefix("concept:").unwrap().to_string())
+                    .collect();
+                if !concepts.is_empty() {
+                    outbound.push(OutboundEvent::new(
+                        "concepts_detected",
+                        concepts.join(", "),
+                    ));
+                }
+            }
+        }
+        outbound
     }
 }
 
@@ -432,6 +487,63 @@ mod tests {
         assert_eq!(ctx.node_count(), 5);
         // 3 edges: 2 tagged_with + 1 contains
         assert_eq!(ctx.edge_count(), 3);
+    }
+
+    // === Scenario: Re-ingesting the same fragment produces the same node (upsert, not duplicate) ===
+    #[tokio::test]
+    async fn idempotent_reingest() {
+        let adapter = FragmentAdapter::new("manual-fragment");
+        let (sink, ctx) = make_sink("manual-fragment");
+
+        let input = AdapterInput::new(
+            "fragment",
+            FragmentInput::new(
+                "Walked through Avignon",
+                vec!["travel".to_string(), "avignon".to_string()],
+            ),
+            "test",
+        );
+
+        // Ingest the same fragment twice
+        adapter.process(&input, &sink).await.unwrap();
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // Still 5 nodes — upserted, not duplicated
+        // 1 fragment + 2 concepts + 1 chain + 1 mark
+        assert_eq!(ctx.node_count(), 5);
+        // Still 3 edges — 2 tagged_with + 1 contains
+        assert_eq!(ctx.edge_count(), 3);
+    }
+
+    // === Scenario: Different text with same tags produces different fragment nodes ===
+    #[tokio::test]
+    async fn different_text_different_fragment_id() {
+        let adapter = FragmentAdapter::new("manual-fragment");
+        let (sink, ctx) = make_sink("manual-fragment");
+
+        let input1 = AdapterInput::new(
+            "fragment",
+            FragmentInput::new("Fragment A", vec!["travel".to_string()]),
+            "test",
+        );
+        let input2 = AdapterInput::new(
+            "fragment",
+            FragmentInput::new("Fragment B", vec!["travel".to_string()]),
+            "test",
+        );
+
+        adapter.process(&input1, &sink).await.unwrap();
+        adapter.process(&input2, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+        // 2 distinct fragment nodes (different text → different hash)
+        let fragments: Vec<_> = ctx
+            .nodes
+            .values()
+            .filter(|n| n.node_type == "fragment")
+            .collect();
+        assert_eq!(fragments.len(), 2);
     }
 
     // ================================================================
