@@ -6,14 +6,6 @@ use serde::Deserialize;
 // ── Chain params ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateChainParams {
-    #[schemars(description = "Name of the chain")]
-    pub name: String,
-    #[schemars(description = "Optional description of the chain")]
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListChainsParams {
     #[schemars(description = "Filter by status: 'active' or 'archived'")]
     pub status: Option<String>,
@@ -28,9 +20,9 @@ pub struct ChainIdParams {
 // ── Mark params ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AddMarkParams {
-    #[schemars(description = "The chain this mark belongs to")]
-    pub chain_id: String,
+pub struct AnnotateParams {
+    #[schemars(description = "Name of the chain (auto-created if it doesn't exist)")]
+    pub chain_name: String,
     #[schemars(description = "Path to the file or artifact")]
     pub file: String,
     #[schemars(description = "Line number (1-indexed)")]
@@ -85,46 +77,3 @@ pub struct LinkMarksParams {
     pub target_id: String,
 }
 
-// ── Context params ──────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ContextCreateParams {
-    #[schemars(description = "Name of the context")]
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ContextDeleteParams {
-    #[schemars(description = "Name of the context to delete")]
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ContextAddSourcesParams {
-    #[schemars(description = "Name of the context")]
-    pub name: String,
-    #[schemars(description = "Source paths (files or directories) to add")]
-    pub paths: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ContextRemoveSourcesParams {
-    #[schemars(description = "Name of the context")]
-    pub name: String,
-    #[schemars(description = "Source paths to remove")]
-    pub paths: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ContextListParams {
-    #[schemars(description = "Show sources for this context (omit to list all)")]
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ContextRenameParams {
-    #[schemars(description = "Current context name")]
-    pub old_name: String,
-    #[schemars(description = "New context name")]
-    pub new_name: String,
-}
