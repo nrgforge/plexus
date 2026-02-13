@@ -302,5 +302,7 @@ Graph events are currently produced and discarded. Cursor-based delivery require
 **9. Wire protocol choice.**
 gRPC (via tonic) is the recommended app-to-app protocol based on industry survey. But the specific protobuf schema for `ingest()` and query endpoints hasn't been designed. The choice of whether to also offer REST (via tonic-web or a gateway) is open.
 
+### Resolved by ADR-012 implementation
+
 **10. Emission removal variant.**
-Two provenance operations (`unlink_marks`, `delete_chain` with cascade) don't fit cleanly through the adapter pipeline because `Emission` has no edge removal variant. Adding one would let all writes go through `ingest()`. Without it, these remain engine-level commands outside the adapter pipeline.
+Resolved: `Emission` now has both `removals: Vec<Removal>` (node removals) and `edge_removals: Vec<EdgeRemoval>` (edge removals). `ProvenanceAdapter` handles `DeleteMark`, `UnlinkMarks`, and `DeleteChain` through the adapter pipeline via these variants. MCP routes all three through `pipeline.ingest()`. The engine's `emit_inner` handles node removals with edge cascade and edge removals as targeted operations. `ProvenanceApi` retains direct methods for these operations but they are vestigial — unused by any transport.

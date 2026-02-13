@@ -33,7 +33,7 @@ There is no separate public API for raw graph primitives. Consumers say "here is
 
 > **Note (Essay 12):** Semantic adapters (FragmentAdapter, future DocumentAdapter) also produce provenance — chain and mark nodes alongside their semantic output. ProvenanceAdapter is not a special case; it handles user-driven provenance (explicit annotations), while semantic adapters produce automatic evidence trails. Both paths produce identical provenance-dimension nodes that participate in tag-to-concept bridging and cross-dimensional traversal.
 
-Two operations (`unlink_marks`, `delete_chain` with cascade) require an edge removal variant in `Emission` that doesn't exist yet (domain model OQ10). Until resolved, these remain engine-level commands.
+> **Note (Essay 10):** OQ10 (emission removal variant) is resolved. `Emission` now has `edge_removals: Vec<EdgeRemoval>` for targeted edge removal and `removals: Vec<Removal>` for node removal with cascade. All provenance operations including `unlink_marks` and `delete_chain` route through the adapter pipeline.
 
 ### Integration registration
 
@@ -76,7 +76,7 @@ The read surface is outside the adapter pipeline. Queries go directly to the eng
 
 **Negative:**
 
-- Provenance operations that don't fit the adapter pipeline (`unlink_marks`, `delete_chain` with cascade) require either an `Emission` removal variant or engine-level escape hatches. This is a known gap (OQ10).
+- ~~Provenance operations that don't fit the adapter pipeline require an `Emission` removal variant or engine-level escape hatches.~~ Resolved: OQ10 is closed. `Emission` now supports both node and edge removals.
 - The ingest pipeline is synchronous — the consumer waits for the full pipeline (process + enrichment loop + outbound transformation) to complete. For burst ingestion, pipelining or async enrichment may be needed later.
 
 **Neutral:**

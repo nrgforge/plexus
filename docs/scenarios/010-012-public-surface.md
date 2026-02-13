@@ -238,7 +238,7 @@ Behaviors deferred or out of scope for this decision cycle:
 
 - **Event persistence and cursor-based delivery** (OQ8) — deferred. Outbound events are synchronous with ingest; async delivery requires event persistence.
 - **Wire protocol schema** (OQ9) — deferred. The protobuf schema for gRPC ingest/query endpoints hasn't been designed.
-- **Emission removal variant** (OQ10) — deferred. `unlink_marks` and `delete_chain` with cascade remain engine-level commands until Emission supports edge removal.
+- ~~**Emission removal variant** (OQ10)~~ — resolved. `Emission` now supports `edge_removals` and `removals`. All provenance operations route through the adapter pipeline.
 - **Cross-pollination visibility** — an adapter surfacing events from another adapter's mutations requires event cursors (OQ8). Under the current synchronous model, a consumer only receives outbound events from its own ingestion.
 - **Async enrichment / batching** — enrichments run synchronously after every emission. If enrichments become expensive during burst ingestion, pipelining is a future optimization.
 - **Provenance operations through ingest** — provenance operations (create chain, add mark, link marks) routing through the adapter pipeline via a provenance input kind. This is described in ADR-012 but the provenance adapter design is not specified here.

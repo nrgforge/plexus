@@ -110,38 +110,6 @@ impl<'a> ProvenanceApi<'a> {
         self.set_chain_status(chain_id, "archived")
     }
 
-    /// Delete a chain and all its marks and links.
-    pub fn delete_chain(&self, chain_id: &str) -> PlexusResult<()> {
-        let mut context = self.engine.get_context(&self.context_id)
-            .ok_or_else(|| PlexusError::ContextNotFound(self.context_id.clone()))?;
-
-        let chain_node_id = NodeId::from(chain_id);
-        if context.get_node(&chain_node_id).is_none() {
-            return Err(PlexusError::NodeNotFound(chain_id.into()));
-        }
-
-        // Find all mark IDs belonging to this chain
-        let mark_ids: Vec<NodeId> = context.edges()
-            .filter(|e| e.source == chain_node_id && e.relationship == "contains")
-            .map(|e| e.target.clone())
-            .collect();
-
-        // Remove all marks
-        for mid in &mark_ids {
-            context.nodes.remove(mid);
-        }
-
-        // Remove the chain node
-        context.nodes.remove(&chain_node_id);
-
-        // Remove all edges involving deleted nodes
-        let deleted: HashSet<&NodeId> = mark_ids.iter().chain(std::iter::once(&chain_node_id)).collect();
-        context.edges.retain(|e| !deleted.contains(&e.source) && !deleted.contains(&e.target));
-
-        self.engine.upsert_context(context)?;
-        Ok(())
-    }
-
     // === Mark operations ===
 
     /// Add a mark to a chain.
@@ -241,23 +209,6 @@ impl<'a> ProvenanceApi<'a> {
         Ok(())
     }
 
-    /// Delete a mark and clean up its links.
-    pub fn delete_mark(&self, mark_id: &str) -> PlexusResult<()> {
-        let mut context = self.engine.get_context(&self.context_id)
-            .ok_or_else(|| PlexusError::ContextNotFound(self.context_id.clone()))?;
-
-        let node_id = NodeId::from(mark_id);
-        if context.nodes.remove(&node_id).is_none() {
-            return Err(PlexusError::NodeNotFound(mark_id.into()));
-        }
-
-        // Remove all edges involving this mark
-        context.edges.retain(|e| e.source != node_id && e.target != node_id);
-
-        self.engine.upsert_context(context)?;
-        Ok(())
-    }
-
     /// List marks with optional filters.
     pub fn list_marks(
         &self,
@@ -293,51 +244,6 @@ impl<'a> ProvenanceApi<'a> {
     }
 
     // === Link operations ===
-
-    /// Create a link from one mark to another.
-    pub fn link_marks(&self, source_id: &str, target_id: &str) -> PlexusResult<()> {
-        let context = self.engine.get_context(&self.context_id)
-            .ok_or_else(|| PlexusError::ContextNotFound(self.context_id.clone()))?;
-
-        let source_nid = NodeId::from(source_id);
-        let target_nid = NodeId::from(target_id);
-
-        if context.get_node(&source_nid).is_none() {
-            return Err(PlexusError::NodeNotFound(format!("source mark not found: {}", source_id)));
-        }
-        if context.get_node(&target_nid).is_none() {
-            return Err(PlexusError::NodeNotFound(format!("target mark not found: {}", target_id)));
-        }
-
-        // Check if link already exists
-        let already = context.edges().any(|e| {
-            e.source == source_nid && e.target == target_nid && e.relationship == "links_to"
-        });
-        if already {
-            return Ok(());
-        }
-        drop(context);
-
-        let edge = Edge::new_in_dimension(source_nid, target_nid, "links_to", dimension::PROVENANCE);
-        self.engine.add_edge(&self.context_id, edge)?;
-        Ok(())
-    }
-
-    /// Remove a link between two marks.
-    pub fn unlink_marks(&self, source_id: &str, target_id: &str) -> PlexusResult<()> {
-        let mut context = self.engine.get_context(&self.context_id)
-            .ok_or_else(|| PlexusError::ContextNotFound(self.context_id.clone()))?;
-
-        let source_nid = NodeId::from(source_id);
-        let target_nid = NodeId::from(target_id);
-
-        context.edges.retain(|e| {
-            !(e.source == source_nid && e.target == target_nid && e.relationship == "links_to")
-        });
-
-        self.engine.upsert_context(context)?;
-        Ok(())
-    }
 
     /// Get incoming and outgoing links for a mark.
     pub fn get_links(&self, mark_id: &str) -> PlexusResult<(Vec<String>, Vec<String>)> {
@@ -392,28 +298,6 @@ impl<'a> ProvenanceApi<'a> {
         self.engine.upsert_context(context)?;
         Ok(())
     }
-}
-
-/// List all unique tags across all contexts in the engine.
-///
-/// This aggregates provenance mark tags from every context,
-/// returning a sorted, deduplicated list.
-pub fn list_tags_all(engine: &PlexusEngine) -> PlexusResult<Vec<String>> {
-    let mut all_tags = HashSet::new();
-    for ctx_id in engine.list_contexts() {
-        if let Some(context) = engine.get_context(&ctx_id) {
-            for node in context.nodes() {
-                if node.node_type == "mark" && node.dimension == dimension::PROVENANCE {
-                    for tag in prop_tags(&node.properties) {
-                        all_tags.insert(tag);
-                    }
-                }
-            }
-        }
-    }
-    let mut tags: Vec<String> = all_tags.into_iter().collect();
-    tags.sort();
-    Ok(tags)
 }
 
 // === Free helper functions ===
@@ -542,34 +426,6 @@ mod tests {
         let contexts = engine.list_contexts();
         assert!(contexts.is_empty());
         assert!(!contexts.iter().any(|c| c.as_str() == "__provenance__"));
-    }
-
-    // === Scenario: list_tags returns tags from all contexts ===
-    #[test]
-    fn list_tags_returns_tags_from_all_contexts() {
-        let engine = PlexusEngine::new();
-        let ctx1 = ContextId::from("provence-research");
-        let ctx2 = ContextId::from("desk");
-        engine.upsert_context(Context::with_id(ctx1.clone(), "provence-research")).unwrap();
-        engine.upsert_context(Context::with_id(ctx2.clone(), "desk")).unwrap();
-
-        let api1 = ProvenanceApi::new(&engine, ctx1.clone());
-        let api2 = ProvenanceApi::new(&engine, ctx2.clone());
-
-        let chain1 = api1.create_chain("reading-notes", None).unwrap();
-        api1.add_mark(&chain1, "notes.md", 1, "travel note", None, None,
-            Some(vec!["#travel".into(), "#avignon".into()])).unwrap();
-
-        let chain2 = api2.create_chain("desk-notes", None).unwrap();
-        api2.add_mark(&chain2, "desk.md", 1, "desk note", None, None,
-            Some(vec!["#travel".into(), "#writing".into()])).unwrap();
-
-        // Cross-context list_tags should return deduplicated tags from all contexts
-        let all_tags = list_tags_all(&engine).unwrap();
-        assert!(all_tags.contains(&"#travel".to_string()));
-        assert!(all_tags.contains(&"#avignon".to_string()));
-        assert!(all_tags.contains(&"#writing".to_string()));
-        assert_eq!(all_tags.len(), 3);
     }
 
     // Note: Tag-to-concept bridging (ADR-009) is now handled by
