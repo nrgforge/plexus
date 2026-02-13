@@ -194,7 +194,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 25. `add_mark` requires a context parameter. No default, no fallback.
 26. Tag format normalization is an invariant: strip `#` prefix if present, lowercase, then prepend `concept:` to match concept node IDs. `#Travel` → `concept:travel`, `travel` → `concept:travel`.
 27. Tag-to-concept bridging is automatic via the enrichment loop. A `TagConceptBridger` enrichment detects new concept nodes, finds marks with matching tags, and creates cross-dimensional `references` edges. Because the enrichment runs on every emission round (not just mark creation), it bridges in both directions: a new mark bridges to existing concepts, and a new concept bridges to existing marks. Works identically for user-created marks (via ProvenanceAdapter) and adapter-created marks (via FragmentAdapter).
-28. `list_tags()` queries across all contexts, not a single context.
+28. `list_tags(context_id)` is scoped to a single context, consistent with all other API operations. Tags are per-context — there is no cross-context tag aggregation at the API layer.
 29. Tags are the shared vocabulary between provenance and semantics. A tag string on a mark and the ID of a concept node must use the same normalized form.
 30. Persist-per-emission: each `emit()` call results in exactly one `save_context()` call. Emissions are the persistence boundary.
 31. Contributions must survive persistence. After save → load, `edge.contributions` must be identical. Scale normalization depends on this.
@@ -251,6 +251,9 @@ Both produce graph mutations via `Emission`, but they are structurally distinct.
 
 ### 11. "Graph event" ≠ "Outbound event"
 A **graph event** is a low-level per-mutation notification (`NodesAdded`, `EdgesAdded`, etc.) — internal to the engine. An **outbound event** is a domain-meaningful event translated by the adapter's `transform_events()` for a consumer (`concepts_detected`, `bridges_created`, etc.). Consumers receive outbound events, never raw graph events. When discussing event delivery, always specify which kind.
+
+### 12. "Annotate" has two meanings at different layers
+The adapter-level **annotate** action (§Actions table) means attaching extraction metadata (confidence, method, source location) to a node or edge in an emission — an internal action within the adapter's `process()` method. The consumer-facing **annotate** operation (ADR-015) means marking a file location with tags in a named chain — a `PlexusApi` workflow composing one or two `ingest()` calls. They share a name because both involve "adding descriptive information," but they operate at different layers: one is internal to adapter processing, the other is a consumer-facing API operation. Context disambiguates — if a consumer calls it, it's the workflow; if an adapter does it during processing, it's the metadata attachment.
 
 ---
 
