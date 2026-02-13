@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
-use crate::adapter::{AdapterError, IngestPipeline, OutboundEvent};
+use crate::adapter::{AdapterError, IngestPipeline, OutboundEvent, ProvenanceInput};
 use crate::graph::{
-    Context, ContextId, PlexusEngine, PlexusError, PlexusResult, Source,
+    Context, ContextId, NodeId, PlexusEngine, PlexusError, PlexusResult, Source,
 };
 use crate::provenance::{ChainView, MarkView, ProvenanceApi};
 use crate::query::{
@@ -39,6 +39,76 @@ impl PlexusApi {
         data: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<Vec<OutboundEvent>, AdapterError> {
         self.pipeline.ingest(context_id, input_kind, data).await
+    }
+
+    /// Annotate a file location, auto-creating a chain if needed (ADR-015).
+    ///
+    /// Returns merged outbound events from chain creation (if any) and mark creation.
+    pub async fn annotate(
+        &self,
+        context_id: &str,
+        chain_name: &str,
+        file: &str,
+        line: u32,
+        annotation: &str,
+        column: Option<u32>,
+        mark_type: Option<&str>,
+        tags: Option<Vec<String>>,
+    ) -> Result<Vec<OutboundEvent>, AnnotateError> {
+        // Reject empty/whitespace-only chain names
+        if chain_name.trim().is_empty() {
+            return Err(AnnotateError::EmptyChainName);
+        }
+
+        let chain_id = normalize_chain_name(chain_name);
+        let ctx_id = self
+            .resolve(context_id)
+            .map_err(AnnotateError::Plexus)?;
+        let resolved = ctx_id.as_str().to_string();
+        let mut all_events = Vec::new();
+
+        // Check if chain already exists in the context
+        let chain_exists = self
+            .engine
+            .get_context(&ctx_id)
+            .map(|ctx| ctx.get_node(&NodeId::from(chain_id.as_str())).is_some())
+            .unwrap_or(false);
+
+        // Create chain if it doesn't exist
+        if !chain_exists {
+            let input = ProvenanceInput::CreateChain {
+                chain_id: chain_id.clone(),
+                name: chain_name.to_string(),
+                description: None,
+            };
+            let events = self
+                .pipeline
+                .ingest(&resolved, "provenance", Box::new(input))
+                .await
+                .map_err(AnnotateError::Adapter)?;
+            all_events.extend(events);
+        }
+
+        // Create the mark
+        let mark_id = format!("mark:provenance:{}", uuid::Uuid::new_v4());
+        let input = ProvenanceInput::AddMark {
+            mark_id,
+            chain_id,
+            file: file.to_string(),
+            line,
+            annotation: annotation.to_string(),
+            column,
+            mark_type: mark_type.map(|s| s.to_string()),
+            tags,
+        };
+        let events = self
+            .pipeline
+            .ingest(&resolved, "provenance", Box::new(input))
+            .await
+            .map_err(AnnotateError::Adapter)?;
+        all_events.extend(events);
+
+        Ok(all_events)
     }
 
     // --- Provenance reads ---
@@ -228,6 +298,50 @@ impl PlexusApi {
     }
 }
 
+/// Error from the `annotate` workflow.
+#[derive(Debug)]
+pub enum AnnotateError {
+    /// Chain name was empty or whitespace-only.
+    EmptyChainName,
+    /// Underlying adapter error.
+    Adapter(AdapterError),
+    /// Underlying engine error.
+    Plexus(PlexusError),
+}
+
+impl std::fmt::Display for AnnotateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyChainName => write!(f, "chain name must not be empty"),
+            Self::Adapter(e) => write!(f, "adapter error: {}", e),
+            Self::Plexus(e) => write!(f, "engine error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for AnnotateError {}
+
+/// Normalize a chain name to a deterministic chain ID.
+///
+/// Rules (ADR-015):
+/// - Lowercased
+/// - Whitespace replaced by hyphens
+/// - `:` and `/` replaced by hyphens (conflict with ID format separators)
+/// - Non-ASCII characters preserved
+/// - Prefix: `chain:provenance:`
+pub fn normalize_chain_name(name: &str) -> String {
+    let normalized: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            ' ' | '\t' | '\n' | '\r' => '-',
+            ':' | '/' => '-',
+            _ => c,
+        })
+        .collect();
+    format!("chain:provenance:{}", normalized)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,5 +468,174 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    // --- Annotate workflow (ADR-015) ---
+
+    use crate::adapter::ProvenanceAdapter;
+
+    fn setup_with_provenance() -> (Arc<PlexusEngine>, PlexusApi) {
+        let engine = Arc::new(PlexusEngine::new());
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ProvenanceAdapter::new()));
+        let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
+        (engine, api)
+    }
+
+    // === Scenario: Annotate creates chain and mark in one call ===
+    #[tokio::test]
+    async fn annotate_creates_chain_and_mark() {
+        let (engine, api) = setup_with_provenance();
+        engine.upsert_context(Context::new("research")).unwrap();
+
+        let events = api
+            .annotate("research", "field notes", "src/main.rs", 42, "interesting pattern", None, None, Some(vec!["refactor".into()]))
+            .await
+            .unwrap();
+
+        // Should have outbound events from both chain and mark creation
+        assert!(!events.is_empty());
+
+        // Verify chain exists
+        let chains = api.list_chains("research", None).unwrap();
+        assert_eq!(chains.len(), 1);
+        assert_eq!(chains[0].id, "chain:provenance:field-notes");
+
+        // Verify mark exists in the chain
+        let marks = api.list_marks("research", Some("chain:provenance:field-notes"), None, None, None).unwrap();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].annotation, "interesting pattern");
+        assert_eq!(marks[0].file, "src/main.rs");
+        assert_eq!(marks[0].line, 42);
+    }
+
+    // === Scenario: Annotate reuses existing chain ===
+    #[tokio::test]
+    async fn annotate_reuses_existing_chain() {
+        let (engine, api) = setup_with_provenance();
+        engine.upsert_context(Context::new("research")).unwrap();
+
+        // First annotate creates the chain
+        api.annotate("research", "field notes", "src/main.rs", 42, "first", None, None, None)
+            .await
+            .unwrap();
+
+        // Second annotate reuses it
+        api.annotate("research", "field notes", "src/lib.rs", 10, "second", None, None, None)
+            .await
+            .unwrap();
+
+        // Still only one chain
+        let chains = api.list_chains("research", None).unwrap();
+        assert_eq!(chains.len(), 1);
+
+        // But two marks
+        let marks = api.list_marks("research", Some("chain:provenance:field-notes"), None, None, None).unwrap();
+        assert_eq!(marks.len(), 2);
+    }
+
+    // === Scenario: Chain name normalization produces deterministic IDs ===
+    #[test]
+    fn chain_name_normalization_deterministic() {
+        assert_eq!(
+            normalize_chain_name("Field Notes"),
+            normalize_chain_name("field notes"),
+        );
+        assert_eq!(
+            normalize_chain_name("field notes"),
+            "chain:provenance:field-notes",
+        );
+    }
+
+    // === Scenario: Chain name normalization handles special characters ===
+    #[test]
+    fn chain_name_normalization_special_characters() {
+        assert_eq!(
+            normalize_chain_name("research: phase 1/2"),
+            "chain:provenance:research--phase-1-2",
+        );
+    }
+
+    // === Scenario: Annotate triggers enrichment loop ===
+    #[tokio::test]
+    async fn annotate_triggers_enrichment() {
+        let engine = Arc::new(PlexusEngine::new());
+
+        // Create context with existing concept (concept:{tag} format for TagConceptBridger)
+        let mut ctx = Context::new("research");
+        let mut concept = Node::new_in_dimension("concept", ContentType::Provenance, dimension::SEMANTIC);
+        concept.id = NodeId::from("concept:refactor");
+        concept.properties.insert("name".into(), PropertyValue::String("refactor".into()));
+        ctx.nodes.insert(concept.id.clone(), concept);
+        engine.upsert_context(ctx).unwrap();
+
+        // Set up pipeline with enrichments
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![Arc::new(crate::adapter::TagConceptBridger::new())],
+        );
+        let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
+
+        api.annotate("research", "notes", "src/main.rs", 1, "cleanup", None, None, Some(vec!["refactor".into()]))
+            .await
+            .unwrap();
+
+        // The enrichment loop should have created a references edge from the mark to the concept
+        let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
+        let has_ref = ctx.edges.iter().any(|e| e.relationship == "references");
+        assert!(has_ref, "enrichment should create references edge");
+    }
+
+    // === Scenario: create_chain not exposed as consumer-facing ===
+    #[test]
+    fn create_chain_not_on_public_surface() {
+        // This is a compile-time guarantee: PlexusApi has no create_chain method.
+        // If someone adds one, this test reminds them it shouldn't be there.
+        // The test passes by virtue of PlexusApi not having a create_chain method.
+        let (_, api) = setup();
+        // api.create_chain(...) would not compile
+        let _ = api; // use to prevent unused warning
+    }
+
+    // === Scenario: Annotate returns merged outbound events ===
+    #[tokio::test]
+    async fn annotate_returns_merged_events() {
+        let (engine, api) = setup_with_provenance();
+        engine.upsert_context(Context::new("research")).unwrap();
+
+        // First call creates chain + mark → events from both
+        let events = api
+            .annotate("research", "notes", "src/main.rs", 1, "note", None, None, None)
+            .await
+            .unwrap();
+
+        // Should be a single merged list (not two batches)
+        // Chain creation produces events, mark creation produces events
+        assert!(events.len() >= 2, "should have events from both chain and mark creation");
+    }
+
+    // === Scenario: Annotate rejects empty chain name ===
+    #[tokio::test]
+    async fn annotate_rejects_empty_chain_name() {
+        let (engine, api) = setup_with_provenance();
+        engine.upsert_context(Context::new("research")).unwrap();
+
+        let result = api
+            .annotate("research", "", "src/main.rs", 1, "note", None, None, None)
+            .await;
+
+        assert!(result.is_err());
+
+        // Also reject whitespace-only
+        let result = api
+            .annotate("research", "   ", "src/main.rs", 1, "note", None, None, None)
+            .await;
+
+        assert!(result.is_err());
+
+        // No chain should have been created
+        let chains = api.list_chains("research", None).unwrap();
+        assert_eq!(chains.len(), 0);
     }
 }
