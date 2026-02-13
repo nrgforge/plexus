@@ -1,6 +1,6 @@
 # ADR-008: Project-Scoped Provenance
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-02-10
 

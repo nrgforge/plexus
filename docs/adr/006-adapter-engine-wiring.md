@@ -1,6 +1,6 @@
 # ADR-006: Adapter-to-Engine Wiring
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-02-10
 

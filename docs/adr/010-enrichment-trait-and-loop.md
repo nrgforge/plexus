@@ -1,6 +1,6 @@
 # ADR-010: Enrichment Trait and Enrichment Loop
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

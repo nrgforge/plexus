@@ -1,6 +1,6 @@
 # ADR-011: Bidirectional Adapter with Outbound Events
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

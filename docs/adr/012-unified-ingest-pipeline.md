@@ -1,6 +1,6 @@
 # ADR-012: Unified Ingest Pipeline
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

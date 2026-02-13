@@ -1,6 +1,6 @@
 # ADR-004: First Adapter Pair — Fragment and Co-Occurrence
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-02-08
 

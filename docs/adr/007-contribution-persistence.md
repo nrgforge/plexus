@@ -1,6 +1,6 @@
 # ADR-007: Contribution Persistence
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-02-10
 

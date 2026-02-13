@@ -1,6 +1,6 @@
 # ADR-005: Normalization Floor — Dynamic Epsilon in Scale Normalization
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-02-08
 
