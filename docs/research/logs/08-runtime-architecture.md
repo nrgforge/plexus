@@ -2,9 +2,9 @@
 
 ## Prior Research (First Adapter Pair)
 
-See `docs/research/semantic/essays/07-first-adapter-pair.md` for the previous research cycle. That work produced FragmentAdapter, CoOccurrenceAdapter, and the normalization floor (ADR-004, ADR-005). The adapter layer is built and tested (197 tests) but has no external surface.
+See `docs/../../essays/07-first-adapter-pair.md` for the previous research cycle. That work produced FragmentAdapter, CoOccurrenceAdapter, and the normalization floor (ADR-004, ADR-005). The adapter layer is built and tested (197 tests) but has no external surface.
 
-*Note: The previous research log was overwritten before we established the archive-before-new-cycle practice. The essay preserves the findings; the process notes are lost. Future cycles will archive `research-log.md` to `docs/research/semantic/logs/` before starting fresh.*
+*Note: The previous research log was overwritten before we established the archive-before-new-cycle practice. The essay preserves the findings; the process notes are lost. Future cycles will archive `research-log.md` to `docs/research/logs/` before starting fresh.*
 
 ---
 

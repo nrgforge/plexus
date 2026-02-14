@@ -6,7 +6,7 @@
 
 **Resolves:** ADR-001 Open Question 1 (edge reinforcement mechanics). Does **not** resolve the node property merge sub-question — that remains open.
 
-**Research:** [SPIKE-REINFORCEMENT.md](../research/semantic/SPIKE-REINFORCEMENT.md), [Essay 06](../research/semantic/essays/06-reinforcement-mechanics.md)
+**Research:** [SPIKE-REINFORCEMENT.md](../research/llm-extraction/SPIKE-REINFORCEMENT.md), [Essay 06](../essays/06-reinforcement-mechanics.md)
 
 **Scenarios:** [003-reinforcement-mechanics.md](../scenarios/003-reinforcement-mechanics.md)
 

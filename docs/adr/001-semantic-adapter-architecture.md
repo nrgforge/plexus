@@ -4,7 +4,7 @@
 
 **Date:** 2026-02-02
 
-**Design documents:** [semantic-adapters.md](../semantic-adapters.md) (overview), [semantic-adapters-design.md](../semantic-adapters-design.md) (system design)
+**Design documents:** [adapters.md](../design/adapters.md) (overview), [adapter-architecture.md](../design/adapter-architecture.md) (system design)
 
 ---
 

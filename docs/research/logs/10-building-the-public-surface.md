@@ -2,9 +2,9 @@
 
 ## Prior Research (Public Surface)
 
-See `docs/research/semantic/essays/09-public-surface.md` for the research and `docs/research/semantic/essays/10-building-the-public-surface.md` for the build results. That work implemented ADRs 010–012: enrichment trait and loop, bidirectional adapter, and unified ingest pipeline. All provenance write operations now route through the ingest pipeline. The MCP layer is a thin transport. 245 tests, zero failures.
+See `docs/../../essays/09-public-surface.md` for the research and `docs/../../essays/10-building-the-public-surface.md` for the build results. That work implemented ADRs 010–012: enrichment trait and loop, bidirectional adapter, and unified ingest pipeline. All provenance write operations now route through the ingest pipeline. The MCP layer is a thin transport. 245 tests, zero failures.
 
-*Archived research log: `docs/research/semantic/logs/09-public-surface.md`*
+*Archived research log: `docs/research/logs/09-public-surface.md`*
 
 ---
 

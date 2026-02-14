@@ -1,6 +1,6 @@
 # Semantic Adapters: System Design
 
-Technical design for the adapter layer. See [semantic-adapters.md](./semantic-adapters.md) for conceptual overview.
+Technical design for the adapter layer. See [adapters.md](./adapters.md) for conceptual overview.
 
 ---
 

@@ -6,7 +6,7 @@
 
 **Refines:** ADR-003 Decision 2 (scale normalization function)
 
-**Research:** [Essay 07](../research/semantic/essays/07-first-adapter-pair.md), [Research Log](../research-log.md)
+**Research:** [Essay 07](../essays/07-first-adapter-pair.md), [Research Log](../research/research-log.md)
 
 **Scenarios:** [004-first-adapter-pair.md](../scenarios/004-first-adapter-pair.md) — Normalization Floor section
 

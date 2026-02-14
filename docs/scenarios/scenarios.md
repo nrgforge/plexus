@@ -1,6 +1,6 @@
 # Behavior Scenarios
 
-Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified against the running software. Domain vocabulary from [domain-model.md](domain-model.md).
+Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified against the running software. Domain vocabulary from [domain-model.md](../domain-model.md).
 
 ---
 
