@@ -1,12 +1,11 @@
 //! MCP server for Plexus — provenance tracking via the Model Context Protocol.
 //!
-//! Tools: 13 total (12 provenance + 1 graph read).
+//! Tools: 14 total (13 provenance + 1 graph read).
 
 pub mod params;
 
 use params::*;
 use crate::api::PlexusApi;
-use crate::graph::Context;
 use crate::adapter::{
     CoOccurrenceEnrichment, IngestPipeline,
     ProvenanceAdapter, TagConceptBridger,
@@ -18,7 +17,7 @@ use rmcp::{
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,9 +31,6 @@ fn err_text(msg: String) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::error(vec![Content::text(msg)]))
 }
 
-/// The provenance context name used by the MCP server.
-const PROV_CTX: &str = "__provenance__";
-
 // ---------------------------------------------------------------------------
 // PlexusMcpServer
 // ---------------------------------------------------------------------------
@@ -42,6 +38,7 @@ const PROV_CTX: &str = "__provenance__";
 #[derive(Clone)]
 pub struct PlexusMcpServer {
     api: PlexusApi,
+    active_context: Arc<Mutex<Option<String>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -59,17 +56,40 @@ impl PlexusMcpServer {
 
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
-        // Ensure the provenance context exists
-        if api.context_list(Some(PROV_CTX)).unwrap_or_default().is_empty() {
-            engine
-                .upsert_context(Context::new(PROV_CTX))
-                .expect("failed to create provenance context");
-        }
-
         Self {
             api,
+            active_context: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
         }
+    }
+
+    // ── Session ─────────────────────────────────────────────────────────
+
+    fn context(&self) -> Result<String, McpError> {
+        self.active_context
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| McpError {
+                code: rmcp::model::ErrorCode::INVALID_REQUEST,
+                message: "no context set — call set_context first".into(),
+                data: None,
+            })
+    }
+
+    #[tool(description = "Set the active context for this session (auto-created if it doesn't exist). Must be called before using other tools.")]
+    fn set_context(
+        &self,
+        Parameters(p): Parameters<SetContextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        // Auto-create if the context doesn't exist
+        if self.api.context_list(Some(&p.name)).unwrap_or_default().is_empty() {
+            if let Err(e) = self.api.context_create(&p.name) {
+                return err_text(format!("failed to create context '{}': {}", p.name, e));
+            }
+        }
+        *self.active_context.lock().unwrap() = Some(p.name.clone());
+        ok_text(format!("active context set to '{}'", p.name))
     }
 
     // ── Chain tools ─────────────────────────────────────────────────────
@@ -79,7 +99,7 @@ impl PlexusMcpServer {
         &self,
         Parameters(p): Parameters<ListChainsParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.api.list_chains(PROV_CTX, p.status.as_deref()) {
+        match self.api.list_chains(&self.context()?, p.status.as_deref()) {
             Ok(chains) => ok_text(serde_json::to_string_pretty(&chains).unwrap()),
             Err(e) => err_text(e.to_string()),
         }
@@ -90,7 +110,7 @@ impl PlexusMcpServer {
         &self,
         Parameters(p): Parameters<ChainIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.api.get_chain(PROV_CTX, &p.chain_id) {
+        match self.api.get_chain(&self.context()?, &p.chain_id) {
             Ok((chain, marks)) => ok_text(
                 serde_json::to_string_pretty(&serde_json::json!({
                     "chain": chain,
@@ -107,7 +127,7 @@ impl PlexusMcpServer {
         &self,
         Parameters(p): Parameters<ChainIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.api.archive_chain(PROV_CTX, &p.chain_id) {
+        match self.api.archive_chain(&self.context()?, &p.chain_id) {
             Ok(()) => ok_text(format!("archived chain {}", p.chain_id)),
             Err(e) => err_text(e.to_string()),
         }
@@ -118,7 +138,7 @@ impl PlexusMcpServer {
         &self,
         Parameters(p): Parameters<ChainIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.api.delete_chain(PROV_CTX, &p.chain_id).await {
+        match self.api.delete_chain(&self.context()?, &p.chain_id).await {
             Ok(()) => ok_text(format!("deleted chain {} and its marks", p.chain_id)),
             Err(e) => err_text(e.to_string()),
         }
@@ -134,7 +154,7 @@ impl PlexusMcpServer {
         match self
             .api
             .annotate(
-                PROV_CTX,
+                &self.context()?,
                 &p.chain_name,
                 &p.file,
                 p.line,
@@ -165,7 +185,7 @@ impl PlexusMcpServer {
         Parameters(p): Parameters<UpdateMarkParams>,
     ) -> Result<CallToolResult, McpError> {
         match self.api.update_mark(
-            PROV_CTX,
+            &self.context()?,
             &p.mark_id,
             p.annotation.as_deref(),
             p.line,
@@ -183,7 +203,7 @@ impl PlexusMcpServer {
         &self,
         Parameters(p): Parameters<MarkIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.api.delete_mark(PROV_CTX, &p.mark_id).await {
+        match self.api.delete_mark(&self.context()?, &p.mark_id).await {
             Ok(()) => ok_text(format!("deleted mark {}", p.mark_id)),
             Err(e) => err_text(e.to_string()),
         }
@@ -195,7 +215,7 @@ impl PlexusMcpServer {
         Parameters(p): Parameters<ListMarksParams>,
     ) -> Result<CallToolResult, McpError> {
         match self.api.list_marks(
-            PROV_CTX,
+            &self.context()?,
             p.chain_id.as_deref(),
             p.file.as_deref(),
             p.r#type.as_deref(),
@@ -215,7 +235,7 @@ impl PlexusMcpServer {
     ) -> Result<CallToolResult, McpError> {
         match self
             .api
-            .link_marks(PROV_CTX, &p.source_id, &p.target_id)
+            .link_marks(&self.context()?, &p.source_id, &p.target_id)
             .await
         {
             Ok(()) => ok_text(format!("linked {} -> {}", p.source_id, p.target_id)),
@@ -230,7 +250,7 @@ impl PlexusMcpServer {
     ) -> Result<CallToolResult, McpError> {
         match self
             .api
-            .unlink_marks(PROV_CTX, &p.source_id, &p.target_id)
+            .unlink_marks(&self.context()?, &p.source_id, &p.target_id)
             .await
         {
             Ok(()) => ok_text(format!("unlinked {} -> {}", p.source_id, p.target_id)),
@@ -243,7 +263,7 @@ impl PlexusMcpServer {
         &self,
         Parameters(p): Parameters<MarkIdParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.api.get_links(PROV_CTX, &p.mark_id) {
+        match self.api.get_links(&self.context()?, &p.mark_id) {
             Ok((outgoing, incoming)) => ok_text(
                 serde_json::to_string_pretty(&serde_json::json!({
                     "outgoing": outgoing,
@@ -257,7 +277,7 @@ impl PlexusMcpServer {
 
     #[tool(description = "List all unique tags used across all marks")]
     fn list_tags(&self) -> Result<CallToolResult, McpError> {
-        match self.api.list_tags(PROV_CTX) {
+        match self.api.list_tags(&self.context()?) {
             Ok(tags) => ok_text(serde_json::to_string_pretty(&tags).unwrap()),
             Err(e) => err_text(e.to_string()),
         }
@@ -270,7 +290,7 @@ impl PlexusMcpServer {
         &self,
         Parameters(p): Parameters<EvidenceTrailParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.api.evidence_trail(PROV_CTX, &p.node_id) {
+        match self.api.evidence_trail(&self.context()?, &p.node_id) {
             Ok(result) => ok_text(serde_json::to_string_pretty(&result).unwrap()),
             Err(e) => err_text(e.to_string()),
         }
@@ -282,7 +302,7 @@ impl ServerHandler for PlexusMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Plexus MCP server — provenance tracking (chains, marks, links)"
+                "Plexus MCP server — provenance tracking (chains, marks, links). Call set_context before using other tools."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

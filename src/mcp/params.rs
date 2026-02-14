@@ -77,6 +77,14 @@ pub struct LinkMarksParams {
     pub target_id: String,
 }
 
+// ── Session params ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetContextParams {
+    #[schemars(description = "Name of the context to activate (auto-created if it doesn't exist)")]
+    pub name: String,
+}
+
 // ── Graph read params ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]

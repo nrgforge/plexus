@@ -18,6 +18,7 @@ use crate::query::{
 };
 
 /// Single entry point for all consumer-facing operations.
+#[derive(Clone)]
 pub struct PlexusApi {
     engine: Arc<PlexusEngine>,
     pipeline: Arc<IngestPipeline>,
@@ -203,7 +204,7 @@ impl PlexusApi {
         self.engine.find_path(&ctx_id, query)
     }
 
-    // --- Provenance mutations (non-ingest, routed directly to ProvenanceApi) ---
+    // --- Provenance mutations (non-ingest) ---
 
     /// Update a mark's metadata.
     pub fn update_mark(
@@ -225,12 +226,138 @@ impl PlexusApi {
         self.prov(context_id)?.archive_chain(chain_id)
     }
 
+    /// Delete a mark (cascades edges). Routes through ingest pipeline.
+    pub async fn delete_mark(
+        &self,
+        context_id: &str,
+        mark_id: &str,
+    ) -> Result<(), AdapterError> {
+        let ctx_id = self
+            .resolve(context_id)
+            .map_err(|e| AdapterError::Internal(e.to_string()))?;
+        let input = ProvenanceInput::DeleteMark {
+            mark_id: mark_id.to_string(),
+        };
+        self.pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await?;
+        Ok(())
+    }
+
+    /// Delete a chain and all its marks. Routes through ingest pipeline.
+    pub async fn delete_chain(
+        &self,
+        context_id: &str,
+        chain_id: &str,
+    ) -> Result<(), DeleteChainError> {
+        let ctx_id = self
+            .resolve(context_id)
+            .map_err(DeleteChainError::Plexus)?;
+
+        // Pre-resolve mark IDs belonging to this chain
+        let mark_ids = {
+            let ctx = self
+                .engine
+                .get_context(&ctx_id)
+                .ok_or_else(|| DeleteChainError::Plexus(PlexusError::ContextNotFound(ctx_id.clone())))?;
+            let chain_nid = crate::graph::NodeId::from(chain_id);
+            if ctx.get_node(&chain_nid).is_none() {
+                return Err(DeleteChainError::ChainNotFound(chain_id.to_string()));
+            }
+            ctx.edges()
+                .filter(|e| e.source == chain_nid && e.relationship == "contains")
+                .map(|e| e.target.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        let input = ProvenanceInput::DeleteChain {
+            chain_id: chain_id.to_string(),
+            mark_ids,
+        };
+        self.pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await
+            .map_err(DeleteChainError::Adapter)?;
+        Ok(())
+    }
+
+    /// Link two marks. Validates both endpoints exist. Routes through ingest pipeline.
+    pub async fn link_marks(
+        &self,
+        context_id: &str,
+        source_id: &str,
+        target_id: &str,
+    ) -> Result<(), LinkError> {
+        let ctx_id = self.resolve(context_id).map_err(LinkError::Plexus)?;
+        let ctx = self
+            .engine
+            .get_context(&ctx_id)
+            .ok_or_else(|| LinkError::Plexus(PlexusError::ContextNotFound(ctx_id.clone())))?;
+
+        let source_nid = crate::graph::NodeId::from(source_id);
+        let target_nid = crate::graph::NodeId::from(target_id);
+        if ctx.get_node(&source_nid).is_none() {
+            return Err(LinkError::MarkNotFound(source_id.to_string()));
+        }
+        if ctx.get_node(&target_nid).is_none() {
+            return Err(LinkError::MarkNotFound(target_id.to_string()));
+        }
+        drop(ctx);
+
+        let input = ProvenanceInput::LinkMarks {
+            source_id: source_id.to_string(),
+            target_id: target_id.to_string(),
+        };
+        self.pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await
+            .map_err(LinkError::Adapter)?;
+        Ok(())
+    }
+
+    /// Unlink two marks. Routes through ingest pipeline.
+    pub async fn unlink_marks(
+        &self,
+        context_id: &str,
+        source_id: &str,
+        target_id: &str,
+    ) -> Result<(), AdapterError> {
+        let ctx_id = self
+            .resolve(context_id)
+            .map_err(|e| AdapterError::Internal(e.to_string()))?;
+        let input = ProvenanceInput::UnlinkMarks {
+            source_id: source_id.to_string(),
+            target_id: target_id.to_string(),
+        };
+        self.pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await?;
+        Ok(())
+    }
+
     // --- Context management ---
 
-    /// Create or upsert a context.
+    /// Create a context. Returns error if name is already taken.
     pub fn context_create(&self, name: &str) -> PlexusResult<ContextId> {
+        if self.resolve(name).is_ok() {
+            return Err(PlexusError::Other(format!("context '{}' already exists", name)));
+        }
         let context = Context::new(name);
         self.engine.upsert_context(context)
+    }
+
+    /// Get detailed info about a context by name.
+    pub fn context_info(&self, name: &str) -> PlexusResult<ContextInfo> {
+        let ctx_id = self.resolve(name)?;
+        let ctx = self
+            .engine
+            .get_context(&ctx_id)
+            .ok_or_else(|| PlexusError::ContextNotFound(ctx_id.clone()))?;
+        Ok(ContextInfo {
+            name: ctx.name.clone(),
+            id: ctx_id,
+            sources: ctx.metadata.sources.clone(),
+        })
     }
 
     /// Delete a context.
@@ -254,8 +381,26 @@ impl PlexusApi {
         }
     }
 
-    /// Rename a context.
+    /// List all contexts with metadata.
+    pub fn context_list_info(&self) -> PlexusResult<Vec<ContextInfo>> {
+        let mut result = Vec::new();
+        for cid in self.engine.list_contexts() {
+            if let Some(ctx) = self.engine.get_context(&cid) {
+                result.push(ContextInfo {
+                    name: ctx.name.clone(),
+                    id: cid,
+                    sources: ctx.metadata.sources.clone(),
+                });
+            }
+        }
+        Ok(result)
+    }
+
+    /// Rename a context. Returns error if new name is already taken.
     pub fn context_rename(&self, old_name: &str, new_name: &str) -> PlexusResult<()> {
+        if self.resolve(new_name).is_ok() {
+            return Err(PlexusError::Other(format!("context '{}' already exists", new_name)));
+        }
         let ctx_id = self.resolve(old_name)?;
         self.engine.rename_context(&ctx_id, new_name)
     }
@@ -320,6 +465,60 @@ impl std::fmt::Display for AnnotateError {
 }
 
 impl std::error::Error for AnnotateError {}
+
+/// Error from `delete_chain`.
+#[derive(Debug)]
+pub enum DeleteChainError {
+    /// Chain not found.
+    ChainNotFound(String),
+    /// Underlying adapter error.
+    Adapter(AdapterError),
+    /// Underlying engine error.
+    Plexus(PlexusError),
+}
+
+impl std::fmt::Display for DeleteChainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ChainNotFound(id) => write!(f, "chain not found: {}", id),
+            Self::Adapter(e) => write!(f, "adapter error: {}", e),
+            Self::Plexus(e) => write!(f, "engine error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for DeleteChainError {}
+
+/// Error from `link_marks`.
+#[derive(Debug)]
+pub enum LinkError {
+    /// Mark not found.
+    MarkNotFound(String),
+    /// Underlying adapter error.
+    Adapter(AdapterError),
+    /// Underlying engine error.
+    Plexus(PlexusError),
+}
+
+impl std::fmt::Display for LinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MarkNotFound(id) => write!(f, "mark not found: {}", id),
+            Self::Adapter(e) => write!(f, "adapter error: {}", e),
+            Self::Plexus(e) => write!(f, "engine error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for LinkError {}
+
+/// Info about a context (for context_list metadata).
+#[derive(Debug, Clone)]
+pub struct ContextInfo {
+    pub name: String,
+    pub id: ContextId,
+    pub sources: Vec<Source>,
+}
 
 /// Normalize a chain name to a deterministic chain ID.
 ///

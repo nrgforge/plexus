@@ -27,6 +27,9 @@ pub enum PlexusError {
 
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
+
+    #[error("{0}")]
+    Other(String),
 }
 
 /// Result type for Plexus operations
