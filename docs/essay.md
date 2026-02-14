@@ -1,0 +1,211 @@
+# Where Knowledge Lives: Storage Architecture for a Knowledge Graph That Spans Modes, Hosts, and Trust Boundaries
+
+## The Problem Has Three Shapes
+
+ADR-002 was deferred with a single question: should Plexus's SQLite database live in the project working directory (discoverable but polluting) or somewhere centralized (clean but needing project identity)? That question assumed one deployment mode — Plexus as a local dev tool, one database per project directory.
+
+The question has grown. Plexus now faces three deployment modes with fundamentally different storage requirements:
+
+**As a dev tool** (MCP server for Claude Code), Plexus runs locally, one context per project. The immediate question is path management — where does `.plexus.db` go so it doesn't pollute the project directory but remains discoverable?
+
+**As an embedded library** (Sketchbin's local semantic engine), Plexus runs inside an application. The database is part of the application's data, not a dev tool artifact. The host application owns the storage path. Sketchbin's BYOS (bring-your-own-storage) architecture means SQLite for the graph, S3/R2 for media — and Plexus doesn't get to have opinions about where either lives.
+
+**As a federated engine** (shared contexts across users on different hosts), Plexus's data replicates. An artist collective, a research team, or a development group shares a Plexus context. Each member holds a local replica. Emissions propagate between hosts. The database isn't a single file anymore — it's a distributed data structure with consistency requirements.
+
+These three shapes demand a storage architecture that scales from "where does the file go?" through "how do multiple apps share it?" to "how does it replicate across the internet?" The architecture must serve all three without the simplest case paying for the complexity of the most ambitious one.
+
+## The Library Rule
+
+The clearest finding from the research is a negative one: **Plexus the library should never decide where to store data.**
+
+Every embeddable database library follows this pattern. sled takes a path. redb takes a path. SurrealDB takes a path. The Rust `directories` crate can compute XDG-compliant platform-specific paths, but the library doesn't call it — the host application does.
+
+The MCP server ecosystem confirms this from the transport side. Anthropic's MCP Memory Server tried to manage its own storage path through environment variables and broke — the NPX subprocess didn't receive the variable, data ended up in a temp directory, and updates destroyed it. Clawmarks stores `.clawmarks.json` in the project root, which works but pollutes the project directory. Anthropic's MCP SQLite server takes a path parameter and has no opinions. The tools that try to be clever about paths break. The tools that accept a path work.
+
+Obsidian provides the architectural precedent: vault data lives wherever the user places it, vault config lives in `.obsidian/` inside the vault, and global app config lives in the OS-standard application support directory. Obsidian doesn't decide where your vault lives. But it manages its own state centrally.
+
+The rule for Plexus: `GraphStore` takes a path (or connection). The transport/host layer decides what to pass. The MCP server picks the path based on XDG conventions and project identity. Sketchbin picks the path based on its own architecture. A future gRPC server picks the path from config.
+
+This aligns with invariant 38 (transports are thin shells) and invariant 40 (adapters, enrichments, and transports are independent dimensions). Storage location is an infrastructure concern. It belongs in the host layer, not the engine.
+
+### Where the MCP Server Should Put It
+
+For the immediate dev-tool case, the XDG Base Directory Specification provides the answer. A Plexus SQLite database is *data* — persistent, user-specific, not configuration — so it belongs in `$XDG_DATA_HOME` (default `~/.local/share/`). The Rust `directories` crate handles cross-platform mapping:
+
+| Platform | Path |
+|----------|------|
+| Linux | `~/.local/share/plexus/` |
+| macOS | `~/Library/Application Support/plexus/` |
+| Windows | `C:\Users\X\AppData\Roaming\plexus\data\` |
+
+Project identity within that directory can use path hashing (deterministic, breaks on rename) or an explicit project ID (survives renames, requires init). Path hashing is simpler and matches git's worktree pattern. The database path becomes `~/.local/share/plexus/{hash}/plexus.db`, where `{hash}` is a deterministic function of the project's absolute path.
+
+This removes `.plexus.db` from the project directory. The MCP server resolves the path at startup from the working directory.
+
+## Sharing Contexts Across Applications
+
+The path question was the easy part. The harder question: how do multiple applications share the same Plexus contexts?
+
+The user's scenario is concrete: a "network-research" context accessed by Carrel (paper annotations), Manza (code analysis), and Trellis (reflective writing fragments). The context isn't per-application — it's a curated lens across applications. Each tool contributes to the same semantic landscape through its own adapter, and the shared concept graph reveals connections none of them could discover alone.
+
+Two architectures can support this:
+
+### The Daemon Model
+
+A `plexus serve` process running a single PlexusEngine with one SQLite store. Multiple applications connect via IPC, HTTP, or gRPC. Ollama established this pattern — a local service on a fixed port, managed by launchd or systemd, with a REST API that any client can use.
+
+For Plexus: the daemon holds the single in-memory DashMap cache, runs the single enrichment loop, and manages persistence. The MCP server connects as one client. Sketchbin connects as another. Carrel, Trellis, and Manza all talk to the same daemon and see the same contexts.
+
+The advantages are significant: no stale cache problem (one cache, one process), no duplicate enrichment processing (one loop), automatic context sharing (all clients see all contexts). The separation is clean — the daemon owns data and intelligence, applications own UI and domain logic.
+
+The disadvantages are real: runtime dependency (applications fail if the daemon isn't running), deployment complexity (managing a background service), loss of simple embeddability (Sketchbin can't just `use plexus;` and call functions in-process), and IPC latency.
+
+### The Shared-DB Model
+
+All applications open the same SQLite file directly, each running their own PlexusEngine instance. SQLite's WAL mode supports concurrent reads and serialized writes on the same host. For Plexus's persist-per-emission model, Trellis and Carrel writing to the same file would serialize at the SQLite level. Reads proceed concurrently without blocking.
+
+This is simpler to deploy — no daemon, no service management. But it introduces the stale cache problem: Engine A writes, Engine B's in-memory DashMap doesn't see the change until reloaded. SQLite's `data_version` pragma can detect changes (the value increments on each write), enabling a cache invalidation strategy: check `data_version` before reads, reload if changed. This adds read latency but preserves the embedded model.
+
+The bigger issue is enrichment coordination. Two engines running enrichments independently could produce duplicate work, and their enrichment registrations might differ. Engine A has CoOccurrenceEnrichment registered; Engine B doesn't. The shared context would have inconsistent enrichment state depending on which engine processed each emission.
+
+### The Pragmatic Sequence
+
+Start with the shared-DB model — it works today with minimal changes. Add `data_version` polling for cache coherence. Accept that enrichment coordination is imperfect for now (in practice, if applications register the same enrichments, idempotency handles the duplication).
+
+Move to the daemon model when enrichment coordination or cache coherence becomes a real problem, not a theoretical one. The daemon model is strictly more capable but operationally heavier. The `GraphStore` trait doesn't need to change for either model — it already takes a path and provides load/save operations. The daemon would wrap a `GraphStore` in a service layer; the shared-DB model uses `GraphStore` directly.
+
+## Context Boundaries and Cross-Context Awareness
+
+Within a single Plexus instance (whether daemon or shared-DB), contexts are deeply isolated. Five architectural barriers enforce this: edges validate endpoints within a single context, the DashMap partitions by context ID, enrichments receive a single context snapshot, all engine operations are scoped to a context ID, and the adapter pipeline binds to a context on each ingest call.
+
+This isolation is a feature, not a limitation. Contexts are the unit of semantic coherence — a bounded subgraph where cross-dimensional edges connect and enrichments discover structure. Breaking this boundary would compromise the normalization scope, the enrichment termination guarantees, and the clean separation between what different lenses reveal about the same material.
+
+But users work across contexts. The same document can be a source in "network-research" and "distributed-ecologies-short-fiction." The same concept — "distributed-systems" — appears in both. Can the system surface this?
+
+Three options exist, with increasing invasiveness:
+
+**Shared-concept convergence** requires zero changes. Plexus uses deterministic concept IDs: `concept:{lowercase_tag}`. If the same tag appears in two contexts, the concept node has the same ID in both. A new query method on PlexusEngine — `shared_concepts(context_a, context_b)` — returns the intersection. This is a property of the ID scheme, surfaced at query time. It discovers exact tag matches but not semantic similarity.
+
+**Meta-contexts** are read-only views that union nodes and edges from multiple constituent contexts. When you query a meta-context, it traverses across all constituent contexts. No new data is stored — it's query-time composition. No enrichment can run on a virtual view (enrichments produce emissions, which need a target context), but read-only traversal works. This requires modest engineering — a virtual context type that delegates reads to its constituents.
+
+**Cross-context enrichment** would modify the enrichment trait to receive the engine instead of a single context, enabling enrichments to scan multiple contexts and propose connections. But where would cross-context edges live? They can't satisfy endpoint validation in either constituent context. This requires fundamental changes to the graph model — a separate RDD cycle, not a storage decision.
+
+The pragmatic sequence: implement shared-concept convergence first (it works today with a new query method), evaluate whether it's sufficient, and pursue meta-contexts only if the user needs richer cross-context intelligence.
+
+## Federation: When Contexts Cross Hosts
+
+The most ambitious storage question: how does a Plexus context replicate across users on different hosts and networks?
+
+The scenario comes from the Sketchbin semantic-discovery design: an artist collective creates a shared context. Each member's Sketchbin holds a local replica. When a member publishes a sketch, their adapter produces an emission against the shared context. That emission commits locally and propagates to other members. Receiving instances commit the emission to their local replica and run the enrichment loop.
+
+But the scenario extends beyond Sketchbin. Four distinct collaboration patterns emerged from the research:
+
+**Research teams** share a context across a project. Researchers contribute via Carrel (paper annotations), Manza (code analysis), and Trellis (reflective fragments). The shared context discovers where their reading and thinking intersects.
+
+**Artist collectives** share a context reflecting combined creative output. The semantic landscape maps the collective's creative territory — which members explore similar themes, where vocabularies diverge.
+
+**Development teams** maintain shared understanding of a codebase. Developers annotate code and document architecture decisions. The shared context reveals how subsystems connect.
+
+**Open discovery networks** share modular knowledge components — questions, claims, evidence — across institutions and tools. This is the Discourse Graph pattern, where Plexus could serve as automated infrastructure beneath manually-constructed research argument graphs.
+
+All four patterns share a structural property: **the shared context is the collaboration primitive.** Not a shared document (Obsidian), not a shared annotation layer (Hypothesis), not a shared reference library (Zotero). A shared *semantic landscape* that each participant enriches through their own tools and practices. Content stays local; understanding converges.
+
+This is a genuinely distinct position in the tool ecosystem. Existing collaboration tools share content or commentary. Plexus shares derived semantic structure — the concepts, relationships, and co-occurrence patterns that emerge from independent contributions.
+
+### Why the Data Model Is Naturally Suited for Replication
+
+Plexus's data model has strong natural alignment with CRDT (Conflict-free Replicated Data Type) semantics — the formal framework for eventually consistent distributed data:
+
+**Contributions are per-adapter LWW registers.** Each edge stores `HashMap<AdapterId, f32>` — independent last-writer-wins slots keyed by adapter ID. Two users contributing to the same edge produce contributions in separate slots. No conflict. This is structurally a LWW-Register Map, one of the best-understood CRDT patterns.
+
+**Concept nodes use deterministic IDs.** `concept:{lowercase_tag}` means Alice tagging "ambient" and Bob tagging "ambient" on different hosts produce the same node ID. On merge, the node upserts. This is an add-only set — nodes converge via identity, not coordination.
+
+**Emissions are self-contained.** The `Emission` struct — annotated nodes, annotated edges, removals — is a complete, validated bundle. It's the natural unit of replication.
+
+**Enrichments are idempotent.** After receiving a replicated emission, the local enrichment loop can re-run safely. It either produces enrichments it already has (no-op via upsert) or discovers new co-occurrences from the merged data.
+
+Where it's less clean: removals need tombstones (a deleted node could reappear when a replica that missed the delete replicates its add). Raw weight is derived state that needs recomputation after merge. Edge validation during async replication may encounter edges before their endpoint nodes arrive.
+
+### Emission-Level Replication, Not Row-Level
+
+Projects like cr-sqlite and Corrosion (Fly.io's Rust+SQLite+CRDT system) prove that row-level CRDT replication of SQLite databases works in production. Corrosion uses cr-sqlite with SWIM gossip over QUIC to replicate SQLite globally across thousands of nodes at Fly.io.
+
+But row-level replication is wrong for Plexus. It replicates everything — every row in every table. The federated Sketchbin scenario requires *selective* replication: share the concept graph without sharing the source content. A researcher's shared context should reveal what concepts they're exploring, not expose their unpublished paper annotations.
+
+Emission-level replication solves this. Each `sink.emit()` call produces a serializable emission. The replication layer intercepts the emission, filters it by policy, and ships it to peers. Three replication tiers emerged from the research:
+
+**Semantic-only** (lightest, most privacy-preserving): Concept nodes, `tagged_with` edges, `may_be_related` edges, provenance chains and marks, `references` edges. Fragment text content is excluded. Use case: shared discovery context for a collective. Members see what concepts others explore, not the content itself.
+
+**Metadata + semantic** (medium): Everything in semantic-only, plus fragment metadata (title, source type) but not full text. Use case: federated Sketchbin discovery. Enough to show "what this sketch is about" without hosting the content.
+
+**Full replication** (heaviest): Everything. Use case: backup, migration, open research contexts where sharing everything maximizes composability.
+
+The replication tier is a policy per shared context, not a global setting. A collective might share a semantic-only context for discovery and maintain private full contexts for individual work.
+
+### The Replication Protocol
+
+The emission travels from source to peers through a transport. Two options:
+
+**ActivityPub** is already Sketchbin's federation transport. It's extensible via JSON-LD, and a Plexus emission could be serialized as a custom activity type. The trust network (follow/accept) provides access control. But ActivityPub is designed for social activities, not database replication — no ordering guarantees, no exactly-once delivery, inbox-polling latency.
+
+**A purpose-built channel** alongside ActivityPub. Social interactions (follows, boosts, sketch previews) flow through standard ActivityPub. Emission replication flows through a Plexus-specific protocol optimized for convergence speed and ordering — potentially WebSocket, QUIC gossip (the Corrosion pattern), or a simple pull-based sync API.
+
+The pragmatic approach: use ActivityPub first (it's already there for Sketchbin), add a purpose-built channel when the ordering and latency requirements exceed what ActivityPub can provide.
+
+On the receiving end, the emission commits to the local replica through the existing engine pipeline: deserialize, validate (upsert handles convergent IDs, per-adapter contributions merge naturally), run the local enrichment loop. Only primary emissions replicate — enrichment-produced emissions are local, preventing feedback amplification across replicas.
+
+### What GraphStore Needs
+
+The current `GraphStore` trait has the right methods for local persistence. For federation, an extension trait — `ReplicatedStore` — would add:
+
+- **Emission journaling**: persist each emission with replication metadata (origin site, version vector) for sync and replay
+- **Pull-based sync**: "give me emissions since version N" for catching up after reconnection
+- **Remote emission merge**: apply a remote emission with conflict resolution and raw weight recomputation
+
+This extension wraps a base `GraphStore` — the base trait stays simple for single-instance use. The daemon model and the shared-DB model both work with the base trait. Federation adds the extension. The simplest case doesn't pay for the complexity of the most ambitious one.
+
+## Invariant Tensions
+
+One tension with existing invariants:
+
+**Invariant 38 (transports are thin shells)** says transports call `ingest()` and query endpoints without touching adapters, enrichments, or the engine. A replication transport has more responsibility — filtering emissions by tier, managing ordering, handling merge. This isn't "thin" in the same way an MCP tool handler is thin.
+
+The resolution: replication is not a transport in the invariant-38 sense. It's **infrastructure** — a layer between the engine and the storage backend, not between the consumer and the engine. The `ReplicatedStore` wraps `GraphStore`, not `PlexusEngine`. Consumers still interact through `ingest()` and query endpoints via their transport. The replication layer is invisible to them. Invariant 38 holds for consumer-facing transports; replication operates below that boundary.
+
+This distinction should be explicit in the domain model if federation is pursued. A new concept — *replication layer* — would sit between the engine and the store, handling emission journaling, sync, and merge. It's neither a transport (consumer-facing) nor a store (persistence), but a coordination layer between them.
+
+## The Architecture in Three Layers
+
+Bringing the research together, the storage architecture has three layers, each independently deployable:
+
+### Layer 1: Local Storage (Now)
+
+`GraphStore` takes a path. The MCP server resolves it via XDG conventions. Sketchbin passes it from its own config. Single SQLite file, single process.
+
+**Changes needed:** Move the MCP server's default path from `cwd/.plexus.db` to `~/.local/share/plexus/{project-hash}/plexus.db`. The `GraphStore` trait is unchanged.
+
+### Layer 2: Shared Access (Near-term)
+
+Multiple applications share a single SQLite file via the shared-DB model, or connect to a Plexus daemon. Contexts are shared across tools. Cross-context awareness via shared-concept convergence queries.
+
+**Changes needed:** `data_version` polling for cache coherence in the shared-DB model. A `plexus serve` daemon for the service model. A `shared_concepts()` query method on PlexusEngine. The `GraphStore` trait is unchanged.
+
+### Layer 3: Federation (Future)
+
+Emission-level replication across hosts. `ReplicatedStore` extension trait wrapping `GraphStore`. Replication tier policies per context. ActivityPub or purpose-built sync protocol.
+
+**Changes needed:** `ReplicatedStore` trait, emission serialization, version vectors, tombstones for removals, replication tier filtering, sync protocol. Significant engineering, but isolated from the core engine — consumers, adapters, and enrichments are unaffected.
+
+Each layer builds on the previous one without requiring it. Layer 1 works alone. Layer 2 adds sharing without requiring federation. Layer 3 adds federation without changing how local storage or shared access work. A user running Plexus as a solo dev tool uses Layer 1 only and never encounters the complexity of Layers 2 or 3.
+
+## What the Shared Context Changes
+
+The most important finding from this research isn't technical — it's conceptual. The shared context changes what Plexus is.
+
+As a local dev tool, Plexus is a knowledge graph for one person's project. Useful, but bounded. As a shared context across applications, Plexus becomes a semantic meeting point — a place where different tools and different practices contribute to a common understanding. As a federated context across users, Plexus becomes infrastructure for collaborative sensemaking — a system that discovers connections across independent contributions without requiring coordination or consensus.
+
+Existing collaboration tools share content (documents, references, files) or commentary (annotations, discussions). Plexus shares derived semantic structure — the concepts, relationships, and co-occurrence patterns that emerge from work done in whatever tools people already use. The shared context doesn't require anyone to change their workflow. It reveals what their independent workflows have in common.
+
+This is the storage question that matters. Not "where does the file go?" — that's a path resolution problem, solved by XDG conventions and the library rule. The storage question that matters is: **what does it mean for knowledge to live in a place that multiple people, tools, and hosts can contribute to and learn from?** The answer is the shared context — a semantic landscape that accumulates intelligence from independent sources and makes that intelligence traversable by anyone with access.
+
+The architecture must support this without imposing it. Layer 1 is a file. Layer 2 is a shared file. Layer 3 is a replicated data structure. Each is independently useful. Each builds toward the same destination: a place where knowledge lives, and where the connections between ideas become visible through the convergence of independent practice.
