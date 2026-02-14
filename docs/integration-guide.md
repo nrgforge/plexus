@@ -53,30 +53,13 @@ Your Application
 
 ---
 
-## Three Integration Patterns
+## Two Integration Patterns
 
-### Pattern 1: Provenance only (annotations via MCP)
+### Pattern 1: Tagged text fragments (via existing FragmentAdapter)
 
-**Use when:** Your application is an LLM host (Claude Code, IDE plugin) that annotates code or documents. You don't have domain-specific data to ingest — you're creating marks, chains, and links.
+**Use when:** Your application produces tagged text — journal entries, research notes, writing fragments, annotations, chat messages. Each piece has text content and a set of tags/labels. This is the minimum: every piece of content entering Plexus is at least a fragment.
 
-**What you get:** Provenance tracking with automatic tag-to-concept bridging. If a concept node for "refactor" exists in the context (from any adapter), tagging a mark with "refactor" creates a cross-dimensional `references` edge automatically.
-
-**How:**
-```
-set_context("my-project")
-annotate({ chain_name: "review-notes", file: "src/auth.rs", line: 42,
-           annotation: "security concern", tags: ["auth", "security"] })
-```
-
-**Adapter needed:** None. `ProvenanceAdapter` is built in and registered by default.
-
----
-
-### Pattern 2: Tagged text fragments (via existing FragmentAdapter)
-
-**Use when:** Your application produces tagged text — journal entries, research notes, writing fragments, chat messages. Each piece has text content and a set of tags/labels.
-
-**What you get:** Fragment nodes in the structure dimension, concept nodes in the semantic dimension, `tagged_with` edges connecting them. Co-occurrence enrichment proposes `may_be_related` edges between concepts that appear together across fragments. Contribution tracking accumulates evidence.
+**What you get:** Fragment nodes in the structure dimension, concept nodes in the semantic dimension, `tagged_with` edges connecting them. Provenance trails (chains and marks) recording where each fragment came from. Co-occurrence enrichment proposes `may_be_related` edges between concepts that appear together across fragments. Contribution tracking accumulates evidence.
 
 **How (Rust embedding):**
 ```rust
@@ -93,9 +76,11 @@ let events = api.ingest("research", "fragment", Box::new(input)).await?;
 
 **Adapter needed:** None. `FragmentAdapter` is built in.
 
+**Annotations are fragments.** When you annotate a file location — "security concern at src/auth.rs:42, tags: auth, security" — the annotation text IS a fragment. The tags produce concepts. The mark provides provenance (which chain, which file, which line). There is no "provenance only" path. Every annotation enters the semantic graph.
+
 ---
 
-### Pattern 3: Custom domain data (write a new adapter)
+### Pattern 2: Custom domain data (write a new adapter)
 
 **Use when:** Your data doesn't fit the fragment model. You need domain-specific extraction logic — your own node types, edge relationships, and semantic structure.
 
@@ -120,12 +105,12 @@ let events = api.ingest("research", "fragment", Box::new(input)).await?;
 Does my application produce data for Plexus?
 ├── No (read-only consumer) → No adapter. Use PlexusApi reads.
 └── Yes
-    ├── Is it provenance annotations (marks, chains, links)?
-    │   └── Yes → Use ProvenanceAdapter via annotate()
     └── Is it tagged text with no structural metadata beyond tags?
         ├── Yes → Use FragmentAdapter via ingest("fragment", ...)
         └── No → Write a new adapter
 ```
+
+Everything entering Plexus is at minimum a fragment — text with tags. Fragments carry semantic content (concepts from tags) and provenance (chains and marks recording origin). There is no path that creates provenance without semantic content.
 
 Signs you need a custom adapter:
 - Your data has **relational structure** beyond tags (citations, authorship, dependencies)
@@ -136,7 +121,6 @@ Signs you need a custom adapter:
 
 Signs you don't:
 - Your data is text with tags → `FragmentAdapter`
-- Your data is annotations on code/files → `ProvenanceAdapter` via `annotate()`
 - You only read the graph → no adapter at all
 
 ---
@@ -411,8 +395,8 @@ All transports call the same `PlexusApi` methods. The transport is a thin shell 
 | Application | Pattern | Adapter | Enrichments | Transport |
 |---|---|---|---|---|
 | **Trellis** | Tagged fragments | FragmentAdapter (built in) | TagConceptBridger, CoOccurrence | REST or gRPC |
-| **Carrel** | Custom (papers + annotations) | PaperAdapter (new) + ProvenanceAdapter | TagConceptBridger, CoOccurrence, CitationBridger (new) | Rust embedding |
+| **Carrel** | Custom (papers + annotations) | PaperAdapter (new) + FragmentAdapter | TagConceptBridger, CoOccurrence, CitationBridger (new) | Rust embedding |
 | **EDDI** | Custom (movement data) | MovementAdapter (new) | EffortShapeBridger (new) | Rust embedding |
 | **Manza** | Read-only | None | N/A | gRPC or WebSocket |
 | **Sketchbin** | Custom (creative artifacts) | SketchAdapter (new), FederationAdapter (new) | TagConceptBridger, CoOccurrence | REST + ActivityPub |
-| **Claude Code** | Provenance | ProvenanceAdapter (built in) | TagConceptBridger, CoOccurrence | MCP (current) |
+| **Claude Code** | Tagged fragments | FragmentAdapter (built in) | TagConceptBridger, CoOccurrence | MCP (current) |

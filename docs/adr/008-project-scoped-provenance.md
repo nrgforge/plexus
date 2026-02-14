@@ -24,7 +24,9 @@ Building cross-context edges would solve the same problem but require infrastruc
 
 The system is new enough that backward compatibility is not a constraint.
 
-> **Note (Essay 12):** Marks now enter contexts from two sources: (1) user-driven provenance via ProvenanceApi/ProvenanceAdapter (explicit research annotations), and (2) adapter-produced provenance alongside semantic output (automatic evidence trails from FragmentAdapter and other semantic adapters). Both produce identical provenance-dimension nodes in project contexts, and both participate in tag-to-concept bridging.
+> **Note (Essay 12):** Semantic adapters (FragmentAdapter and others) produce provenance alongside semantic output — chain and mark nodes in the provenance dimension as automatic evidence trails. Marks participate in tag-to-concept bridging.
+>
+> **Note (bidirectional dual obligation):** The dual obligation is bidirectional. There is no consumer-facing path that creates provenance without semantic content. An annotation's text IS a fragment — it carries semantic meaning. The `annotate` workflow produces both a fragment (semantic content) and a mark (provenance). ProvenanceAdapter handles the provenance-dimension mechanics internally but is never the sole adapter on a consumer-facing path.
 
 ---
 

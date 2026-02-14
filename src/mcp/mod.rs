@@ -7,7 +7,7 @@ pub mod params;
 use params::*;
 use crate::api::PlexusApi;
 use crate::adapter::{
-    CoOccurrenceEnrichment, IngestPipeline,
+    CoOccurrenceEnrichment, FragmentAdapter, IngestPipeline,
     ProvenanceAdapter, TagConceptBridger,
 };
 use crate::{OpenStore, PlexusEngine, SqliteStore};
@@ -46,6 +46,7 @@ pub struct PlexusMcpServer {
 impl PlexusMcpServer {
     pub fn new(engine: Arc<PlexusEngine>) -> Self {
         let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(FragmentAdapter::new("annotate")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             vec![

@@ -18,11 +18,13 @@ MCP tool design research (Essay 14) found that workflow-based design — exposin
 
 ## Decision
 
-### `annotate` replaces `create_chain` + `add_mark`
+### `annotate` replaces `create_chain` + `add_mark` **UPDATED: annotate produces semantic content**
+
+> **Updated.** The original design routed `annotate` through ProvenanceAdapter only — creating marks and chains without semantic content. This violated the bidirectional dual obligation (ADR-001 §5): all knowledge entering the graph requires both semantic content and provenance. An annotation's text IS a fragment; its tags produce concepts. The `annotate` workflow must produce semantic output (fragment node, concept nodes, `tagged_with` edges) alongside provenance output (mark, chain, `contains` edge). ProvenanceAdapter handles the provenance-dimension mechanics internally, but `annotate` is not a provenance-only operation. Implementation of the updated workflow (composing fragment ingest with provenance creation) is tracked as future work.
 
 The `annotate` operation accepts a chain name (not a chain ID), a file location, annotation text, and tags. If no chain with that name exists in the context, one is created automatically. The deterministic chain ID for user-named chains follows the existing scheme: `chain:provenance:{normalized_name}` where `normalized_name` is the chain name lowercased, with whitespace replaced by hyphens and characters that conflict with ID format separators (`:`, `/`) replaced by hyphens. Non-ASCII characters are preserved. Empty or whitespace-only names are rejected. This fits the `chain:{adapter_id}:{source}` pattern — the adapter is "provenance" (ProvenanceAdapter) and the source is the normalized name.
 
-`annotate` is a `PlexusApi`-level composite operation, not a single ingest call. The API layer: (1) resolves the chain name to a deterministic chain ID, (2) checks if the chain exists in the context, (3) if not, creates it via `ingest("provenance", CreateChain{...})`, then (4) creates the mark via `ingest("provenance", AddMark{...})`. This is two ingest calls in the chain-creation case, one in the common case where the chain already exists. The composition lives in `PlexusApi`, not in the adapter or transport.
+`annotate` is a `PlexusApi`-level composite operation. The API layer: (1) resolves the chain name to a deterministic chain ID, (2) checks if the chain exists in the context, (3) if not, creates it via `ingest("provenance", CreateChain{...})`, (4) ingests the annotation text as a fragment via `ingest("fragment", FragmentInput{...})`, and (5) creates the mark via `ingest("provenance", AddMark{...})`. The annotation text enters the semantic graph as a fragment; the mark provides the provenance layer on top.
 
 `create_chain` is removed as a standalone consumer-facing operation. Chains are created implicitly through `annotate` or through adapter-produced provenance (e.g., FragmentAdapter creating `chain:{adapter_id}:{source}`).
 
@@ -32,14 +34,14 @@ Transports present `ingest` with workflow-oriented names:
 
 | Transport tool | API call | Description |
 |---------------|----------|-------------|
-| `annotate` | `PlexusApi.annotate(...)` → 1-2 `ingest()` calls | Mark a location, auto-create chain |
+| `annotate` | `PlexusApi.annotate(...)` → 2-3 `ingest()` calls | Mark a location with semantic content, auto-create chain |
 | `ingest_fragment` | `ingest("fragment", FragmentInput{...})` | Send a tagged fragment |
 | `link_marks` | `ingest("provenance", LinkMarks{...})` | Connect two marks |
 | `unlink_marks` | `ingest("provenance", UnlinkMarks{...})` | Remove a mark connection |
 | `delete_mark` | `ingest("provenance", DeleteMark{...})` | Remove a mark |
 | `delete_chain` | `ingest("provenance", DeleteChain{...})` | Remove a chain and its marks |
 
-Five of six route through a single `ingest()` call. `annotate` is the exception — it's a `PlexusApi` composite that may issue two `ingest()` calls (chain creation + mark creation). All paths get dual obligation, enrichment, and outbound events.
+`annotate` is a `PlexusApi` composite: it creates a fragment (semantic content), a mark (provenance), and optionally a chain (if new). `ingest_fragment` is the direct fragment path. Link/unlink/delete are operations on existing graph structure. All paths get dual obligation, enrichment, and outbound events.
 
 ### Alternatives considered
 

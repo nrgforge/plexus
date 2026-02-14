@@ -18,7 +18,9 @@ With marks living in project contexts (ADR-008), marks and adapter-produced conc
 
 The dimension system supports cross-dimensional edges within a context. The connection between what a user annotates (marks) and what the adapter layer discovered (concepts) is the core value proposition of a knowledge graph with provenance. This connection should be automatic, not manual.
 
-> **Note (Essay 12):** Marks now come from two sources: user-created (via ProvenanceAdapter) and adapter-created (via FragmentAdapter's automatic provenance emission). Tag-to-concept bridging works identically for both — TagConceptBridger enrichment required zero modifications to handle adapter-created marks. This is the mechanism that makes every concept's origin graph-traversable.
+> **Note (Essay 12):** Semantic adapters (FragmentAdapter and others) produce marks as part of their dual obligation — automatic evidence trails alongside semantic output. Tag-to-concept bridging works identically for all marks regardless of origin — TagConceptBridger enrichment required zero modifications to handle adapter-created marks. This is the mechanism that makes every concept's origin graph-traversable.
+>
+> **Note (bidirectional dual obligation):** All consumer-facing paths produce both semantic content and provenance. The `annotate` workflow creates a fragment (semantic) alongside a mark (provenance). There is no path that creates marks without accompanying semantic content.
 
 Tags are the shared vocabulary between provenance and semantics — a tag string on a mark and a concept node ID express the same semantic idea. Tag format normalization provides the mapping: strip `#` prefix, prepend `concept:` to match deterministic concept IDs (ADR-004).
 

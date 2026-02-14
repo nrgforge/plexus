@@ -119,12 +119,14 @@
 
 ## Feature: Workflow-Oriented Write Surface (ADR-015)
 
-### Scenario: Annotate creates chain and mark in one call
+### Scenario: Annotate creates fragment, chain, and mark in one call
 **Given** a context "research" with no chains
-**When** `api.annotate("research", "field notes", "src/main.rs", 42, "interesting pattern", ...)` is called
-**Then** a chain `chain:provenance:field-notes` is created
-**And** a mark is created with annotation "interesting pattern" at src/main.rs:42
-**And** the mark is contained in the chain
+**When** `api.annotate("research", "field notes", "src/main.rs", 42, "interesting pattern", tags: ["patterns"])` is called
+**Then** a fragment node is created with text "interesting pattern" (semantic content)
+**And** concept `concept:patterns` is created (from tags)
+**And** a chain `chain:provenance:field-notes` is created
+**And** a mark is created at src/main.rs:42 contained in the chain
+**And** the annotation text enters the graph as both semantic content (fragment) and provenance (mark)
 
 ### Scenario: Annotate reuses an existing chain
 **Given** a context "research" where a chain "field notes" already exists
@@ -159,7 +161,8 @@
 **Given** a context "research" containing concept `concept:refactor`
 **And** a TagConceptBridger enrichment registered
 **When** `api.annotate("research", "notes", "src/main.rs", 1, "cleanup", tags: ["refactor"])` is called
-**Then** the enrichment loop runs
+**Then** a fragment is created with the annotation text and tags
+**And** the enrichment loop runs
 **And** a cross-dimensional `references` edge is created from the mark to `concept:refactor`
 
 ### Scenario: Annotate returns merged outbound events

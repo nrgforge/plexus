@@ -64,9 +64,11 @@ If the downcast fails (wrong type for the matched adapter), the adapter returns 
 
 - *Typed enum* (`AdapterData::FileContent { path, content }`, etc.) — Rejected: couples the framework to every domain's input shape. Adding a new domain means modifying the enum. The framework doesn't need to know what's inside.
 
-### 5. Dual-obligation provenance **UPDATED by Essay 12**
+### 5. Dual-obligation provenance **UPDATED by Essay 12, strengthened: bidirectional**
 
 > **Updated.** The original "two-layer provenance" design (adapters annotate, engine wraps) remains valid for operational metadata. But Essay 12 ("Provenance as Epistemological Infrastructure") established a stronger requirement: adapters must produce epistemological provenance — chain and mark nodes in the provenance dimension — alongside their semantic output. Only the adapter understands its source material well enough to produce meaningful provenance.
+>
+> **Strengthened.** The dual obligation is bidirectional. Semantic adapters must produce provenance, AND provenance operations must produce semantic content. There is no consumer-facing path that creates provenance without semantic content. An annotation's text IS a fragment — it carries semantic meaning. Provenance without semantic content is bookkeeping; semantic content without provenance is ungrounded. Both halves are required.
 
 Adapters have a dual obligation: **semantic contribution** (concepts, relationships) and **provenance contribution** (chains, marks, source evidence). Each adapter produces:
 

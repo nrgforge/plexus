@@ -91,10 +91,14 @@ Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified a
 
 ## Feature: Annotate workflow with auto-chain creation (ADR-015)
 
-### Scenario: Annotate creates chain and mark in one call
+### Scenario: Annotate creates fragment, chain, and mark in one call
 **Given** context "research" with no existing chain named "field notes"
 **When** `annotate(context_id: "research", chain_name: "field notes", file: "src/main.rs", line: 42, annotation: "interesting pattern", tags: ["#refactor"])` is called
-**Then** a chain node with ID `chain:provenance:field-notes` is created in the context, and a mark node is created in that chain with the specified file, line, annotation, and tags
+**Then** a fragment node is created with text "interesting pattern" and tags ["refactor"] (semantic content)
+**And** concept `concept:refactor` is created (from tags)
+**And** a chain node with ID `chain:provenance:field-notes` is created in the context
+**And** a mark node is created in that chain at src/main.rs:42 (provenance)
+**And** the annotation enters the graph as both semantic content and provenance
 
 ### Scenario: Annotate reuses existing chain
 **Given** context "research" with an existing chain named "field notes" (ID `chain:provenance:field-notes`)
@@ -114,7 +118,9 @@ Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified a
 ### Scenario: Annotate triggers enrichment loop
 **Given** context "research" with existing concept `concept:refactor`
 **When** `annotate(context_id: "research", chain_name: "notes", file: "src/main.rs", line: 1, annotation: "cleanup", tags: ["#refactor"])` is called
-**Then** the enrichment loop runs after the mark is created, and TagConceptBridger creates a `references` edge from the new mark to `concept:refactor`
+**Then** a fragment is created with the annotation text and tags
+**And** the enrichment loop runs after the fragment and mark are created
+**And** TagConceptBridger creates a `references` edge from the new mark to `concept:refactor`
 
 ### Scenario: create_chain is not exposed as a consumer-facing operation
 **Given** the PlexusApi public surface

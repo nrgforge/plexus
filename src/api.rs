@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::adapter::{AdapterError, IngestPipeline, OutboundEvent, ProvenanceInput};
+use crate::adapter::{AdapterError, FragmentInput, IngestPipeline, OutboundEvent, ProvenanceInput};
 use crate::graph::{
     Context, ContextId, NodeId, PlexusEngine, PlexusError, PlexusResult, Source,
 };
@@ -68,14 +68,34 @@ impl PlexusApi {
         let resolved = ctx_id.as_str().to_string();
         let mut all_events = Vec::new();
 
-        // Check if chain already exists in the context
+        // Step 1: Create fragment from annotation text (semantic content).
+        // The annotation text IS a fragment — bidirectional dual obligation.
+        let normalized_tags: Vec<String> = tags
+            .as_ref()
+            .map(|t| {
+                t.iter()
+                    .map(|s| s.strip_prefix('#').unwrap_or(s).to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let fragment_input = FragmentInput::new(annotation, normalized_tags)
+            .with_source(file);
+        let fragment_events = self
+            .pipeline
+            .ingest(&resolved, "fragment", Box::new(fragment_input))
+            .await
+            .map_err(AnnotateError::Adapter)?;
+        all_events.extend(fragment_events);
+
+        // Step 2: Check if chain already exists in the context
         let chain_exists = self
             .engine
             .get_context(&ctx_id)
             .map(|ctx| ctx.get_node(&NodeId::from(chain_id.as_str())).is_some())
             .unwrap_or(false);
 
-        // Create chain if it doesn't exist
+        // Step 2b: Create chain if it doesn't exist
         if !chain_exists {
             let input = ProvenanceInput::CreateChain {
                 chain_id: chain_id.clone(),
@@ -90,7 +110,7 @@ impl PlexusApi {
             all_events.extend(events);
         }
 
-        // Create the mark
+        // Step 3: Create the mark
         let mark_id = format!("mark:provenance:{}", uuid::Uuid::new_v4());
         let input = ProvenanceInput::AddMark {
             mark_id,
@@ -671,19 +691,20 @@ mod tests {
 
     // --- Annotate workflow (ADR-015) ---
 
-    use crate::adapter::ProvenanceAdapter;
+    use crate::adapter::{FragmentAdapter, ProvenanceAdapter};
 
     fn setup_with_provenance() -> (Arc<PlexusEngine>, PlexusApi) {
         let engine = Arc::new(PlexusEngine::new());
         let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(FragmentAdapter::new("annotate")));
         pipeline.register_adapter(Arc::new(ProvenanceAdapter::new()));
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
         (engine, api)
     }
 
-    // === Scenario: Annotate creates chain and mark in one call ===
+    // === Scenario: Annotate creates fragment, chain, and mark in one call ===
     #[tokio::test]
-    async fn annotate_creates_chain_and_mark() {
+    async fn annotate_creates_fragment_chain_and_mark() {
         let (engine, api) = setup_with_provenance();
         engine.upsert_context(Context::new("research")).unwrap();
 
@@ -692,15 +713,30 @@ mod tests {
             .await
             .unwrap();
 
-        // Should have outbound events from both chain and mark creation
+        // Should have outbound events from fragment, chain, and mark creation
         assert!(!events.is_empty());
 
-        // Verify chain exists
-        let chains = api.list_chains("research", None).unwrap();
-        assert_eq!(chains.len(), 1);
-        assert_eq!(chains[0].id, "chain:provenance:field-notes");
+        let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
 
-        // Verify mark exists in the chain
+        // Verify fragment node exists (semantic content)
+        let fragments: Vec<_> = ctx.nodes.values()
+            .filter(|n| n.node_type == "fragment")
+            .collect();
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(
+            fragments[0].properties.get("text"),
+            Some(&PropertyValue::String("interesting pattern".into()))
+        );
+
+        // Verify concept node exists (from tags)
+        assert!(ctx.get_node(&NodeId::from("concept:refactor")).is_some());
+
+        // Verify user's chain exists
+        let chains = api.list_chains("research", None).unwrap();
+        let user_chain = chains.iter().find(|c| c.id == "chain:provenance:field-notes");
+        assert!(user_chain.is_some(), "user's chain should exist");
+
+        // Verify user's mark exists in the chain
         let marks = api.list_marks("research", Some("chain:provenance:field-notes"), None, None, None).unwrap();
         assert_eq!(marks.len(), 1);
         assert_eq!(marks[0].annotation, "interesting pattern");
@@ -724,11 +760,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Still only one chain
+        // Still only one user chain (FragmentAdapter's internal chains are separate)
         let chains = api.list_chains("research", None).unwrap();
-        assert_eq!(chains.len(), 1);
+        let user_chains: Vec<_> = chains.iter()
+            .filter(|c| c.id.starts_with("chain:provenance:"))
+            .collect();
+        assert_eq!(user_chains.len(), 1);
 
-        // But two marks
+        // Two marks in the user's chain
         let marks = api.list_marks("research", Some("chain:provenance:field-notes"), None, None, None).unwrap();
         assert_eq!(marks.len(), 2);
     }
@@ -759,17 +798,11 @@ mod tests {
     #[tokio::test]
     async fn annotate_triggers_enrichment() {
         let engine = Arc::new(PlexusEngine::new());
+        engine.upsert_context(Context::new("research")).unwrap();
 
-        // Create context with existing concept (concept:{tag} format for TagConceptBridger)
-        let mut ctx = Context::new("research");
-        let mut concept = Node::new_in_dimension("concept", ContentType::Provenance, dimension::SEMANTIC);
-        concept.id = NodeId::from("concept:refactor");
-        concept.properties.insert("name".into(), PropertyValue::String("refactor".into()));
-        ctx.nodes.insert(concept.id.clone(), concept);
-        engine.upsert_context(ctx).unwrap();
-
-        // Set up pipeline with enrichments
+        // Set up pipeline with both adapters and enrichments
         let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(FragmentAdapter::new("annotate")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             vec![Arc::new(crate::adapter::TagConceptBridger::new())],
@@ -780,8 +813,11 @@ mod tests {
             .await
             .unwrap();
 
-        // The enrichment loop should have created a references edge from the mark to the concept
+        // FragmentAdapter creates concept:refactor from the tag.
+        // TagConceptBridger creates a references edge from the mark to the concept.
         let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
+        assert!(ctx.get_node(&NodeId::from("concept:refactor")).is_some(),
+            "concept should be created from tag");
         let has_ref = ctx.edges.iter().any(|e| e.relationship == "references");
         assert!(has_ref, "enrichment should create references edge");
     }
@@ -803,15 +839,15 @@ mod tests {
         let (engine, api) = setup_with_provenance();
         engine.upsert_context(Context::new("research")).unwrap();
 
-        // First call creates chain + mark → events from both
+        // First call creates fragment + chain + mark → events from all three
         let events = api
             .annotate("research", "notes", "src/main.rs", 1, "note", None, None, None)
             .await
             .unwrap();
 
-        // Should be a single merged list (not two batches)
-        // Chain creation produces events, mark creation produces events
-        assert!(events.len() >= 2, "should have events from both chain and mark creation");
+        // Should be a single merged list (not separate batches)
+        // Fragment, chain, and mark creation each produce events
+        assert!(events.len() >= 3, "should have events from fragment, chain, and mark creation");
     }
 
     // === Scenario: Annotate rejects empty chain name ===

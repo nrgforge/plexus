@@ -69,7 +69,7 @@ But the deeper insight is that **MCP is a transport, not the API**. Plexus's API
 One write endpoint: `ingest(context_id, input_kind, data)`. This already exists and works. Adapters registered for each `input_kind` handle transformation, provenance, enrichment, and outbound events.
 
 Transport layers present this with workflow-oriented names:
-- **`annotate`** — add a mark to a file location with tags, in a named chain. Auto-creates the chain if it doesn't exist. Wraps `ingest("provenance", AddMark{...})` with implicit chain creation. This collapses `create_chain` + `add_mark` into one operation for the common case.
+- **`annotate`** — mark a file location with tags in a named chain. Auto-creates the chain if it doesn't exist. **Updated:** `annotate` produces both semantic content (the annotation text as a fragment, tags as concepts) and provenance (mark in chain). The annotation text IS a fragment. There is no provenance-only path.
 - **`ingest_fragment`** — send a tagged text fragment. Wraps `ingest("fragment", FragmentInput{...})`.
 - **`link_marks` / `unlink_marks`** — structural annotation operations. Wrap `ingest("provenance", LinkMarks{...})`.
 - **`delete_mark` / `delete_chain`** — destructive operations. Wrap `ingest("provenance", DeleteMark{...})`.

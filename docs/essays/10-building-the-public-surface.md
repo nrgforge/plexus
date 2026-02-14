@@ -126,6 +126,8 @@ For validation with sample data, a REST endpoint or even a CLI tool (`plexus ing
 
 ### Carrel: The Provenance Path
 
+> **Superseded.** This section describes Carrel as a provenance-only consumer — marks, chains, and links without semantic content. This framing was wrong: there is no provenance-only path. Every annotation is at minimum a fragment. Carrel's annotations carry text and tags that are semantic content; provenance layers on top. Essay 14 correctly describes Carrel as "a full consumer of the multi-dimensional graph, not just the provenance surface." The description below is preserved for historical context.
+
 Carrel coordinates research across multiple agents and sources. Its primary interaction with Plexus is provenance — creating chains of reasoning, marking significant passages, linking evidence together. This is exactly what the MCP tools already do, and now they route through the adapter pipeline.
 
 What Carrel gains from the pipeline:
