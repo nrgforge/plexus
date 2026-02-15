@@ -7,12 +7,23 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 
+/// Per-context baseline: the set of node/edge IDs that were last loaded or saved.
+/// Used by incremental `save_context()` to determine which IDs to delete.
+type Baseline = (HashSet<String>, HashSet<String>); // (node_ids, edge_ids)
+
 /// SQLite-backed graph store
 ///
 /// Uses a single SQLite database file with tables for contexts, nodes, and edges.
 /// Thread-safe via internal mutex on the connection.
+///
+/// Tracks per-context "baselines" (ADR-017 §3) so that `save_context()` can
+/// perform incremental upserts: nodes/edges added by other engines since the
+/// last load are preserved, while nodes/edges explicitly removed by this
+/// engine are deleted.
 pub struct SqliteStore {
     conn: Mutex<Connection>,
+    /// Baselines keyed by context ID string.
+    baselines: Mutex<HashMap<String, Baseline>>,
 }
 
 impl SqliteStore {
@@ -295,6 +306,7 @@ impl OpenStore for SqliteStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
+            baselines: Mutex::new(HashMap::new()),
         })
     }
 
@@ -304,6 +316,7 @@ impl OpenStore for SqliteStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
+            baselines: Mutex::new(HashMap::new()),
         })
     }
 }
@@ -341,19 +354,18 @@ impl GraphStore for SqliteStore {
 
         let conn = self.conn.lock().unwrap();
 
-        // Delete existing nodes and edges for this context before saving new ones.
-        // This ensures that when we save an empty context (after clearing),
-        // the old nodes/edges don't linger in the database.
-        conn.execute(
-            "DELETE FROM edges WHERE context_id = ?1",
-            params![context.id.as_str()],
-        )?;
-        conn.execute(
-            "DELETE FROM nodes WHERE context_id = ?1",
-            params![context.id.as_str()],
-        )?;
+        // Incremental upsert (ADR-017 §3): upsert nodes/edges that are in
+        // the context, then delete only those that the context explicitly
+        // does NOT contain. This preserves nodes/edges written by other
+        // engines sharing the same database.
 
-        // Save all nodes (inline to avoid lock issues)
+        // --- Nodes: upsert all in-memory nodes ---
+        let context_node_ids: HashSet<String> = context
+            .nodes
+            .keys()
+            .map(|id| id.to_string())
+            .collect();
+
         for node in context.nodes.values() {
             let (id, node_type, content_type, dimension, properties, metadata) = Self::node_to_row(node)?;
             conn.execute(
@@ -371,7 +383,13 @@ impl GraphStore for SqliteStore {
             )?;
         }
 
-        // Save all edges
+        // --- Edges: upsert all in-memory edges ---
+        let context_edge_ids: HashSet<String> = context
+            .edges
+            .iter()
+            .map(|e| e.id.to_string())
+            .collect();
+
         for edge in &context.edges {
             let (id, source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions) =
                 Self::edge_to_row(edge)?;
@@ -394,6 +412,40 @@ impl GraphStore for SqliteStore {
                 params![id, context.id.as_str(), source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions],
             )?;
         }
+
+        // --- Delete nodes/edges that were in our baseline but are no longer
+        // in the context (i.e., explicitly removed by this engine). ---
+        // Nodes/edges added by other engines are NOT in our baseline, so
+        // they survive this save.
+        {
+            let baselines = self.baselines.lock().unwrap();
+            if let Some((baseline_nodes, baseline_edges)) = baselines.get(context.id.as_str()) {
+                // Delete edges first (foreign key safety)
+                for baseline_edge_id in baseline_edges {
+                    if !context_edge_ids.contains(baseline_edge_id) {
+                        conn.execute(
+                            "DELETE FROM edges WHERE context_id = ?1 AND id = ?2",
+                            params![context.id.as_str(), baseline_edge_id],
+                        )?;
+                    }
+                }
+                // Delete nodes
+                for baseline_node_id in baseline_nodes {
+                    if !context_node_ids.contains(baseline_node_id) {
+                        conn.execute(
+                            "DELETE FROM nodes WHERE context_id = ?1 AND id = ?2",
+                            params![context.id.as_str(), baseline_node_id],
+                        )?;
+                    }
+                }
+            }
+        }
+
+        // Update baseline to match current context state
+        self.baselines.lock().unwrap().insert(
+            context.id.as_str().to_string(),
+            (context_node_ids, context_edge_ids),
+        );
 
         Ok(())
     }
@@ -464,6 +516,14 @@ impl GraphStore for SqliteStore {
             let edge = Self::row_to_edge(id, source, target, source_dim, target_dim, rel, rw, created, props, contributions)?;
             edges.push(edge);
         }
+
+        // Record baseline for incremental save_context (ADR-017 §3)
+        let baseline_nodes: HashSet<String> = nodes.keys().map(|k| k.to_string()).collect();
+        let baseline_edges: HashSet<String> = edges.iter().map(|e| e.id.to_string()).collect();
+        self.baselines.lock().unwrap().insert(
+            id.as_str().to_string(),
+            (baseline_nodes, baseline_edges),
+        );
 
         Ok(Some(Context {
             id: id.clone(),
@@ -1314,5 +1374,139 @@ mod tests {
         assert_eq!(loaded.edges.len(), 1);
         assert_eq!(loaded.edges[0].contributions.get("fragment-manual"), Some(&1.0));
         assert_eq!(loaded.edges[0].contributions.get("co-occurrence"), Some(&0.75));
+    }
+
+    // ========================================================================
+    // ADR-017 §3: Incremental Upsert Tests
+    // ========================================================================
+
+    #[test]
+    fn test_incremental_save_preserves_nodes_from_another_engine() {
+        // Simulates two engines with stale caches sharing the same DB.
+        // The DELETE-all approach would lose frag:b when Engine A saves.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("shared.db");
+
+        let store_a = SqliteStore::open(&db_path).unwrap();
+        let store_b = SqliteStore::open(&db_path).unwrap();
+
+        // Both engines start with empty context
+        let ctx = Context::new("shared");
+        let ctx_id = ctx.id.clone();
+        store_a.save_context(&ctx).unwrap();
+
+        // Engine A loads, adds frag:a, saves
+        let mut ctx_a = store_a.load_context(&ctx_id).unwrap().unwrap();
+        ctx_a.add_node(create_test_node("frag:a", "fragment"));
+        store_a.save_context(&ctx_a).unwrap();
+
+        // Engine B loads (now has frag:a), adds frag:b, saves
+        let mut ctx_b = store_b.load_context(&ctx_id).unwrap().unwrap();
+        ctx_b.add_node(create_test_node("frag:b", "fragment"));
+        store_b.save_context(&ctx_b).unwrap();
+
+        // Engine A's cache is STALE — it only has frag:a, doesn't know about frag:b.
+        // Engine A adds frag:c and saves with its stale cache.
+        ctx_a.add_node(create_test_node("frag:c", "fragment"));
+        store_a.save_context(&ctx_a).unwrap();
+
+        // With incremental upserts, ALL three nodes must survive.
+        // With DELETE-all, frag:b would be lost.
+        let loaded = store_a.load_context(&ctx_id).unwrap().unwrap();
+        assert!(loaded.nodes.contains_key(&NodeId::from_string("frag:a")),
+            "frag:a must survive");
+        assert!(loaded.nodes.contains_key(&NodeId::from_string("frag:b")),
+            "frag:b must survive save_context from engine with stale cache");
+        assert!(loaded.nodes.contains_key(&NodeId::from_string("frag:c")),
+            "frag:c must be added by the stale engine");
+    }
+
+    #[test]
+    fn test_incremental_save_upserts_modified_nodes() {
+        let store = create_test_store();
+        let mut ctx = Context::new("project");
+        let ctx_id = ctx.id.clone();
+
+        let mut node = create_test_node("concept:travel", "concept");
+        node.properties.insert("source_count".to_string(), PropertyValue::Int(1));
+        ctx.add_node(node);
+        store.save_context(&ctx).unwrap();
+
+        // Update the node property
+        let node = ctx.nodes.get_mut(&NodeId::from_string("concept:travel")).unwrap();
+        node.properties.insert("source_count".to_string(), PropertyValue::Int(2));
+        store.save_context(&ctx).unwrap();
+
+        let loaded = store.load_context(&ctx_id).unwrap().unwrap();
+        let travel = loaded.nodes.get(&NodeId::from_string("concept:travel")).unwrap();
+        assert_eq!(travel.properties.get("source_count"), Some(&PropertyValue::Int(2)));
+        // No duplicates
+        assert_eq!(loaded.nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_incremental_save_preserves_edge_contributions() {
+        let store = create_test_store();
+        let mut ctx = Context::new("project");
+        let ctx_id = ctx.id.clone();
+
+        let frag = create_test_node("frag:1", "fragment");
+        let concept = create_test_node("concept:travel", "concept");
+        ctx.add_node(frag.clone());
+        ctx.add_node(concept.clone());
+
+        let mut edge = Edge::new(frag.id.clone(), concept.id.clone(), "tagged_with");
+        edge.contributions.insert("fragment:manual".to_string(), 1.0);
+        ctx.add_edge(edge);
+        store.save_context(&ctx).unwrap();
+
+        let loaded = store.load_context(&ctx_id).unwrap().unwrap();
+        assert_eq!(loaded.edges.len(), 1);
+        assert_eq!(loaded.edges[0].contributions.get("fragment:manual"), Some(&1.0));
+    }
+
+    #[test]
+    fn test_incremental_save_handles_node_removal() {
+        let store = create_test_store();
+        let mut ctx = Context::new("project");
+        let ctx_id = ctx.id.clone();
+
+        ctx.add_node(create_test_node("concept:a", "concept"));
+        ctx.add_node(create_test_node("concept:b", "concept"));
+        store.save_context(&ctx).unwrap();
+
+        // Remove concept:b from the in-memory context
+        ctx.nodes.remove(&NodeId::from_string("concept:b"));
+        store.save_context(&ctx).unwrap();
+
+        let loaded = store.load_context(&ctx_id).unwrap().unwrap();
+        assert!(loaded.nodes.contains_key(&NodeId::from_string("concept:a")));
+        assert!(!loaded.nodes.contains_key(&NodeId::from_string("concept:b")),
+            "concept:b must be removed from database after save_context");
+    }
+
+    #[test]
+    fn test_incremental_save_handles_edge_removal() {
+        let store = create_test_store();
+        let mut ctx = Context::new("project");
+        let ctx_id = ctx.id.clone();
+
+        let frag = create_test_node("frag:1", "fragment");
+        let concept = create_test_node("concept:travel", "concept");
+        ctx.add_node(frag.clone());
+        ctx.add_node(concept.clone());
+
+        let edge = Edge::new(frag.id.clone(), concept.id.clone(), "tagged_with");
+        ctx.add_edge(edge);
+        store.save_context(&ctx).unwrap();
+
+        // Remove the edge
+        ctx.edges.clear();
+        store.save_context(&ctx).unwrap();
+
+        let loaded = store.load_context(&ctx_id).unwrap().unwrap();
+        assert!(loaded.edges.is_empty(), "edge must be removed after save_context");
+        // Nodes should still exist
+        assert_eq!(loaded.nodes.len(), 2);
     }
 }
