@@ -316,7 +316,7 @@ impl ServerHandler for PlexusMcpServer {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub fn run_mcp_server(db_path: Option<PathBuf>) -> i32 {
+pub fn run_mcp_server(db_path: PathBuf) -> i32 {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -326,41 +326,20 @@ pub fn run_mcp_server(db_path: Option<PathBuf>) -> i32 {
     };
 
     rt.block_on(async {
-        let engine = match db_path {
-            Some(ref path) => {
-                let store = match SqliteStore::open(path) {
-                    Ok(s) => Arc::new(s),
-                    Err(e) => {
-                        eprintln!("failed to open database at {}: {}", path.display(), e);
-                        return 1;
-                    }
-                };
-                let eng = PlexusEngine::with_store(store);
-                if let Err(e) = eng.load_all() {
-                    eprintln!("failed to load contexts: {}", e);
+        let engine = {
+            let store = match SqliteStore::open(&db_path) {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    eprintln!("failed to open database at {}: {}", db_path.display(), e);
                     return 1;
                 }
-                eng
+            };
+            let eng = PlexusEngine::with_store(store);
+            if let Err(e) = eng.load_all() {
+                eprintln!("failed to load contexts: {}", e);
+                return 1;
             }
-            None => {
-                // Default: store in current directory
-                let path = std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join(".plexus.db");
-                let store = match SqliteStore::open(&path) {
-                    Ok(s) => Arc::new(s),
-                    Err(e) => {
-                        eprintln!("failed to open database at {}: {}", path.display(), e);
-                        return 1;
-                    }
-                };
-                let eng = PlexusEngine::with_store(store);
-                if let Err(e) = eng.load_all() {
-                    eprintln!("failed to load contexts: {}", e);
-                    return 1;
-                }
-                eng
-            }
+            eng
         };
 
         let server = PlexusMcpServer::new(Arc::new(engine));

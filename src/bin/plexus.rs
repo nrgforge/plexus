@@ -279,7 +279,8 @@ fn main() {
                 eprintln!("error: only 'stdio' transport is currently supported");
                 std::process::exit(1);
             }
-            let code = plexus::mcp::run_mcp_server(db);
+            let db_path = db.unwrap_or_else(default_db_path);
+            let code = plexus::mcp::run_mcp_server(db_path);
             std::process::exit(code);
         }
         Commands::Context { action, db } => {
