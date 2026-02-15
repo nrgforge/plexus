@@ -2,7 +2,7 @@
 
 Ubiquitous language for the Plexus knowledge graph. All ADRs, behavior scenarios, and code must use these terms consistently. If this glossary says "emission," the code says `emission`, not "output batch" or "result set."
 
-Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPER.md, SPIKE-OUTCOME.md, Essay 07 (first adapter pair), Essay 08 (runtime architecture), Essay 09 (public surface), Essay 12 (provenance as epistemological infrastructure), Essay 13 (two-consumer validation revisited).
+Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPER.md, SPIKE-OUTCOME.md, Essay 07 (first adapter pair), Essay 08 (runtime architecture), Essay 09 (public surface), Essay 12 (provenance as epistemological infrastructure), Essay 13 (two-consumer validation revisited), Essay 17 (storage architecture).
 
 ---
 
@@ -67,6 +67,11 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **Ingest** | The primary write endpoint on Plexus's public surface: `ingest(context_id, input_kind, data)`. Routes domain data to the matching adapter, runs the enrichment loop, transforms events through the adapter's outbound side, and returns outbound events. All writes go through ingest — there is no separate API for graph primitives. | submit, push, send |
 | **Integration** | A registered bundle of adapter + enrichments for a specific consumer. Example: `register_integration("trellis", adapter: FragmentAdapter, enrichments: [TagConceptBridger])`. Enrichments shared across integrations are deduplicated by `id()`. The consumer interacts with a high-level API that hides the internal decomposition. | registration, binding |
 | **Event cursor** | A sequence-based position for pull-based event delivery: "give me changes since sequence N." Requires event persistence with sequence numbering. Push delivery is layered on top of cursors, not instead. Design deferred. | offset, checkpoint (for events) |
+| **Replication layer** | Infrastructure that coordinates emission-level replication between Plexus instances across hosts. Two responsibilities at different stack levels: **outbound** (wraps GraphStore — journals persisted emissions, filters by replication tier, ships to peers) and **inbound** (goes through the engine — applies remote emissions via `ingest_replicated()`, runs validation and enrichment loop, skips outbound replication to prevent echo). Neither a transport (consumer-facing) nor a store (persistence), but a coordination layer that spans both. See Essay 17, invariant 38 resolution. | sync layer, federation layer |
+| **Replication tier** | A per-context policy controlling what data replicates to peers. Three levels: **semantic-only** (concept nodes, edges, provenance chains/marks — no fragment text), **metadata+semantic** (adds fragment metadata like title and source type, but not full text), **full** (everything). The tier is declared on the shared context, not set globally. Different contexts can replicate at different tiers. | replication scope, sync level |
+| **ReplicatedStore** | Extension trait wrapping a base `GraphStore` to add federation capabilities: emission journaling with replication metadata (origin site, version vector), pull-based sync ("emissions since version N"), and remote emission merge with conflict resolution and raw weight recomputation. The base GraphStore stays simple for single-instance use; ReplicatedStore adds federation without changing the core interface. | FederatedStore, SyncStore |
+| **Shared-concept convergence** | Query-time discovery of concept nodes that appear in multiple contexts within the same Plexus instance. Requires zero graph changes — deterministic concept IDs (invariant 19) mean the same tag produces the same node ID in every context. A `shared_concepts(context_a, context_b)` query returns the intersection. Discovers exact tag matches, not semantic similarity. | cross-context query (acceptable informally) |
+| **Meta-context** | A read-only virtual view that unions nodes and edges from multiple constituent contexts at query time. No data stored — pure composition. No enrichment can run on a meta-context (enrichments produce emissions, which require a target context). Useful for cross-context traversal without mutating any context. | virtual context, composite context |
 
 ## Actions
 
@@ -92,6 +97,9 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 | **ingest** | Transport | Engine (via router) | Push domain data through the public surface. The transport forwards `(context_id, input_kind, data)` to the router, which matches the adapter, runs the pipeline (process → enrichment loop → outbound transformation), and returns outbound events. |
 | **enrich** | Enrichment | Graph (via emission) | React to graph events and produce additional graph mutations. Called by the enrichment loop after each emission round with the accumulated events and a context snapshot. Returns `Some(Emission)` if there is work to do, `None` if quiescent. |
 | **transform events** | Adapter | Graph events | Translate raw graph events into domain-meaningful outbound events for the consumer. Called after the enrichment loop completes with all accumulated events from primary emission and all enrichment rounds. The adapter filters what its consumer cares about. |
+| **replicate** | Replication layer (outbound) | Emission | Filter a persisted primary emission by the context's replication tier and ship it to peers. Only primary (adapter-produced) emissions replicate; enrichment-produced emissions are excluded to prevent feedback amplification. |
+| **ingest_replicated** | Replication layer (inbound) | Engine | Apply a remote emission to the local replica through the engine pipeline: validate, commit, run the enrichment loop, but skip outbound replication to prevent echo. Maintains all invariants (endpoint validation, contribution tracking, enrichment loop) while preventing replication cycles. |
+| **journal** | ReplicatedStore | Emission | Persist an emission alongside replication metadata (origin site, version vector) for sync and replay. Enables pull-based catchup: "give me emissions since version N." |
 
 ## Relationships
 
@@ -152,6 +160,15 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 - Multiple external tools contribute **sources** to a shared **context** independently — overlap converges through **deterministic concept IDs** and **upsert**
 - A **source** update fans out to all **contexts** that include it — same pattern as **input router** fan-out, but across contexts instead of across adapters
 
+### Storage and replication
+- **GraphStore** takes a path (or connection) — the **transport**/host layer decides what to pass (the library rule)
+- **ReplicatedStore** wraps **GraphStore** — adding federation capabilities (journaling, sync, merge) without changing the base trait
+- **Replication layer** outbound wraps **GraphStore** — journals persisted emissions, filters by **replication tier**, ships to peers
+- **Replication layer** inbound goes through **PlexusEngine** — applies remote emissions via `ingest_replicated()`, runs validation and enrichment loop
+- **Replication tier** is a policy on a **context** — controls what data replicates (semantic-only, metadata+semantic, or full)
+- **Shared-concept convergence** operates across **contexts** within a single **PlexusEngine** — queries deterministic concept ID intersection
+- **Meta-context** unions multiple **contexts** at query time — read-only, no enrichment
+
 ## Invariants
 
 ### Emission rules (enforced by engine at commit time)
@@ -171,7 +188,7 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 10. A quiet graph stays stable — silence is not evidence against previous observations.
 11. Contributions use latest-value-replace: each adapter's slot stores the value from its most recent emission. Contributions can increase or decrease.
 12. Contributions can be any finite f32 value. Adapters and enrichments emit in whatever scale is natural to their domain (e.g., 0–20 for test counts, 0–500 for gesture repetitions, 0–127 for MIDI velocities, -1.0–1.0 for sentiment). The engine's scale normalization (initially divide-by-range) maps these to comparable ranges regardless of whether the native scale is signed or unsigned.
-13. Adapter and enrichment IDs must be stable across sessions. If reconfigured with a new ID, previous contributions become orphaned. Old contributions should be explicitly removed.
+13. Adapter and enrichment IDs must be stable across sessions. If reconfigured with a new ID, previous contributions become orphaned. Old contributions should be explicitly removed. **Amendment (Essay 17):** For federated contexts, adapter IDs must also be unique per user-instance, not just per adapter type. Example: `carrel:alice` and `carrel:bob`, not just `carrel`. If two users share the same adapter ID, their contributions collide in the same LWW slot, breaking the CRDT alignment that federation requires. The naming convention `{adapter_type}:{user_or_instance_id}` is a prerequisite for emission-level replication.
 
 ### Adapter rules
 14. The framework never inspects the opaque data payload. Adapters downcast internally.
@@ -209,6 +226,20 @@ Extracted from: ADR-001, semantic-adapters.md, semantic-adapters-design.md, PAPE
 38. Transports are thin shells. All transports call the same `ingest()` and query endpoints. Adding a transport doesn't touch adapters, enrichments, or the engine.
 39. Enrichments shared across integrations are deduplicated by `id()`. If two integrations register the same enrichment, it runs once per enrichment loop round.
 40. Adapters extend the domain side, enrichments extend the graph intelligence side, transports extend the protocol side. These three dimensions are independent — changes in one don't affect the others.
+
+### Storage rules (added by Essay 17)
+41. **The library rule:** `GraphStore` takes a path (or connection). The transport/host layer decides what to pass. Plexus the library never decides where to store data. The MCP server picks the path via XDG conventions; Sketchbin picks from its own config; a managed server picks from deployment config. Storage location is an infrastructure concern, not an engine concern.
+42. Only primary (adapter-produced) emissions replicate across federated instances. Enrichment-produced emissions are local to each replica. This prevents feedback amplification — without it, an enrichment's output replicating to a peer would trigger that peer's enrichment loop, which would replicate back, creating an infinite cycle.
+43. Replication tier is a per-context policy, not a global setting. A context declares whether it replicates semantic-only, metadata+semantic, or full. Different contexts on the same instance can use different tiers.
+44. The replication layer is not a transport. It is infrastructure that coordinates between the engine (inbound: `ingest_replicated()`) and the store (outbound: emission journaling). Consumer-facing transports remain thin shells per invariant 38. The replication layer is invisible to consumers.
+
+---
+
+## Amendment Log
+
+| # | Date | Invariant | Change | Propagation |
+|---|------|-----------|--------|-------------|
+| 1 | 2026-02-14 | 13 (adapter ID stability) | **Strengthened:** added federation requirement — adapter IDs must be unique per user-instance (`{type}:{user_id}`), not just per adapter type. Without this, per-adapter LWW contribution slots collide across users, breaking CRDT alignment. | ADR-003 references adapter IDs but does not address federation scoping. Any ADR resolving federation must adopt the `{type}:{instance}` convention. |
 
 ---
 
@@ -306,3 +337,16 @@ gRPC (via tonic) is the recommended app-to-app protocol based on industry survey
 
 **10. Emission removal variant.**
 Resolved: `Emission` now has both `removals: Vec<Removal>` (node removals) and `edge_removals: Vec<EdgeRemoval>` (edge removals). `ProvenanceAdapter` handles `DeleteMark`, `UnlinkMarks`, and `DeleteChain` through the adapter pipeline via these variants. MCP routes all three through `pipeline.ingest()`. The engine's `emit_inner` handles node removals with edge cascade and edge removals as targeted operations. `ProvenanceApi` retains direct methods for these operations but they are vestigial — unused by any transport.
+
+### Introduced by Essay 17 (Storage Architecture)
+
+**11. Enrichment coordination across federated replicas.**
+When replicas have different enrichment configurations (e.g., Alice has enrichments A, B, C; Bob has B, C, D), their derived structure diverges permanently. Enrichment output is local (invariant 42 — only primary emissions replicate), so replica A develops graph structure that replica B never sees and vice versa. Three philosophical approaches, each with different tradeoffs:
+
+- **Option A: Divergence is the feature.** Each user's enrichment configuration is their analytical lens. Shared primary data (fragments, tags, adapter-produced provenance) is common ground; the enrichment layer is personal. Analogous to Obsidian plugins — everyone sees the same notes, but different users have different derived views. Simplest to implement; no coordination needed. Risk: users in the same collaborative context may draw different conclusions from the same evidence because their graphs have different structure.
+
+- **Option B: Context-declared enrichments.** A shared context's metadata declares which enrichments are required. Joining a shared context registers those enrichments on your engine. The enrichment *configuration* replicates (as context metadata), not the enrichment *output*. Each replica still runs its own enrichment loop, but with the same inputs (same enrichments + same replicated primary data) they converge to the same derived structure. More coordination; preserves local execution. Risk: forces enrichment compatibility across heterogeneous instances.
+
+- **Option C: Canonical enrichment output replicates.** Some enrichments are designated as "canonical" for a shared context. Their output replicates as if it were primary data. Other enrichments remain local lenses. Hybrid: canonical enrichments provide shared derived structure; local enrichments add personal perspective on top. Most complex; requires distinguishing canonical from local enrichment output in the replication layer. Risk: canonical enrichment output triggering local enrichment loops on the receiving end (feedback potential — needs careful design).
+
+These are genuinely different philosophical choices about what "shared understanding" means in a collaborative knowledge graph. Option A says "shared data, private analysis." Option B says "shared analysis configuration." Option C says "shared canonical analysis, private extensions." The choice affects the replication layer design, the context metadata schema, and the enrichment loop's relationship to federation. Does not block single-instance implementation but must be resolved before federation design.
