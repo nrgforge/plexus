@@ -78,6 +78,9 @@ impl SqliteStore {
 
             -- Enable foreign keys
             PRAGMA foreign_keys = ON;
+
+            -- Enable WAL mode for concurrent reads during writes (ADR-017 §1)
+            PRAGMA journal_mode = WAL;
             "#,
         )?;
 
@@ -1233,6 +1236,59 @@ mod tests {
         let edges = store.get_edges_from(&ctx_id, &node_a.id).unwrap();
         assert_eq!(edges.len(), 1);
         assert!(edges[0].contributions.is_empty(), "edge without contributions should load with empty map");
+    }
+
+    // ========================================================================
+    // ADR-017 §1: WAL Mode Tests
+    // ========================================================================
+
+    #[test]
+    fn test_wal_mode_enabled_at_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test-wal.db");
+        let store = SqliteStore::open(&db_path).unwrap();
+
+        let journal_mode: String = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(journal_mode, "wal", "SqliteStore must enable WAL mode at connection time (ADR-017 §1)");
+    }
+
+    #[test]
+    fn test_concurrent_read_during_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test-concurrent.db");
+
+        // Open two stores on the same file
+        let store_a = SqliteStore::open(&db_path).unwrap();
+        let store_b = SqliteStore::open(&db_path).unwrap();
+
+        let ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+        store_a.save_context(&ctx).unwrap();
+
+        // Store A begins a write: add a node inside a transaction
+        {
+            let conn_a = store_a.conn.lock().unwrap();
+            conn_a.execute("BEGIN IMMEDIATE", []).unwrap();
+            conn_a
+                .execute(
+                    "INSERT INTO nodes (id, context_id, node_type, content_type, properties_json, metadata_json, dimension) VALUES (?1, ?2, 'concept', 'document', '{}', '{}', 'default')",
+                    params!["node:writing", ctx_id.to_string()],
+                )
+                .unwrap();
+            // Transaction still open — A is writing
+
+            // Store B should be able to read without blocking
+            let loaded = store_b.load_context(&ctx_id).unwrap();
+            assert!(loaded.is_some(), "concurrent read must succeed during write (WAL mode)");
+
+            conn_a.execute("COMMIT", []).unwrap();
+        }
     }
 
     #[test]
