@@ -1,21 +1,35 @@
-# Research Log: OQ10 — Emission Removal Variant
+# Research Log: Essay 18 — Phased Extraction Architecture
 
-## Question 1: Can Emission support edge and node removal variants so that unlink_marks and delete_chain route through the adapter pipeline?
+## Research Questions
 
-**Method:** Spike (codebase exploration)
+### Q1: Target graph shape — what does a fully-extracted file look like?
+Given a file that passes through all four phases (file info, metadata, heuristic, semantic), what nodes exist in what dimensions, what edges connect them, and how do contributions from different phases compose? Where does reinforcement happen vs. complementary evidence accumulation?
 
-**Findings:** OQ10 is already resolved. The implementation done during the ADR-012 build cycle added both removal types to `Emission`:
+### Q2: Declarative adapter primitives — what building blocks cover 80% of use cases?
+What's the minimal set of declarative primitives (create_node, create_edge, for_each, id_template, etc.) that can express FragmentAdapter and most custom adapters without Rust code? Can the existing FragmentAdapter be fully expressed declaratively?
 
-- `removals: Vec<Removal>` — node removals (with edge cascade in the engine)
-- `edge_removals: Vec<EdgeRemoval>` — targeted edge removals (source + target + relationship)
+### Q3: Phase execution model — how do non-blocking phases schedule and report?
+Phases 1-2 are blocking (caller gets results immediately). Phases 3-4 are background (progressive enrichment). What's the execution model? How does a background phase signal completion? How does the caller know the graph is "fully enriched"?
 
-`ProvenanceAdapter.process()` handles all three deletion operations:
-- `DeleteMark` → single node removal (engine cascades edges)
-- `UnlinkMarks` → targeted edge removal (`links_to` relationship)
-- `DeleteChain` → multiple node removals in one emission (marks + chain node)
+### Q4: Phase contribution interaction — how do heuristic and semantic evidence compose?
+If Phase 3 (heuristic: word count, structural similarity) and Phase 4 (semantic: LLM-extracted themes) both propose edges between the same concepts, how do their contributions interact? Same adapter ID (merge) or different (accumulate)? What does scale normalization do with heuristic vs. semantic confidence?
 
-MCP routes all three through `pipeline.ingest()`. The engine's `emit_inner` processes removals in phases 3 (edges) and 4 (nodes with cascade), firing appropriate `NodesRemoved` and `EdgesRemoved` events.
+### Q5: llm-orc integration architecture — use as-is, port, or hybrid?
+llm-orc is Python with a mature DAG model, script agents, and MCP surface. Plexus is Rust. Options: (a) invoke llm-orc as external process/MCP service, (b) port DAG concepts to Rust, (c) hybrid. What are the tradeoffs in latency, deployment complexity, and capability? Note: designing specific ensembles and choosing models is a SEPARATE research cycle — this question is about the structural integration.
 
-`ProvenanceApi` still has direct methods (`delete_chain`, `delete_mark`, `unlink_marks`) but they are unused by any transport — vestigial from pre-adapter era.
+### Q6: What do other systems do for progressive/phased extraction?
+Tika, Elasticsearch ingest pipelines, Apple Spotlight/mdimporter, Docparser, etc. What patterns exist for multi-phase file processing where later phases are more expensive?
 
-**Implications:** OQ10 is resolved. No design work needed. The domain model's open question has been updated to reflect this. The vestigial `ProvenanceApi` direct methods could be removed during the ADR-014 build (when `PlexusApi` becomes the single entry point), but they're not harmful.
+### Q7: Adapter spec format — how does a declarative adapter relate to the Adapter trait?
+Is the declarative spec interpreted by a generic "DeclarativeAdapter" that implements the Adapter trait? Or is it a separate concept? How does it compose with the existing pipeline?
+
+### Q8: Test corpora adequacy — do we have the right test data?
+The test-corpora submodule has 4 corpora (PKM webdev, PKM datascience, Arch Wiki, Shakespeare). Are these sufficient for testing phased extraction across all four phases? What's missing?
+
+---
+
+## Q1: Target graph shape after phased extraction
+
+**Method:** Design walkthrough — manually trace what each phase produces for a concrete file from the test corpora.
+
+(Research in progress)
