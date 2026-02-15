@@ -92,8 +92,8 @@ let events = api.ingest("research", "fragment", Box::new(input)).await?;
 |---|---|
 | **Carrel** (research desk) | Ingests Semantic Scholar papers with structured metadata (authors, citations, venues). Needs `cited_by` edges, author nodes, venue nodes — not just tags. |
 | **Sketchbin** (creative workshop) | Ingests creative artifacts (audio, code, visual) with modality-specific metadata. Needs `modality` dimension, creator provenance, federation trust edges. |
-| **Manza** (visualizer) | Doesn't ingest — it's read-only. No adapter needed. Uses `evidence_trail`, `find_nodes`, `traverse` queries. |
-| **EDDI** (movement analysis) | Ingests Laban movement encodings. Needs effort-shape nodes, movement quality edges, temporal dimension. Entirely different extraction logic. |
+| **Manza** (viewer/editor) | Edits files, then periodically syncs changes back to Plexus via an adapter. Also has a UI for creating and managing contexts. Uses `evidence_trail`, `find_nodes`, `traverse` for reads. |
+| **EDDI** (movement analysis) | Ingests movement encodings with domain-specific metadata. Needs movement quality nodes, temporal dimension, custom edge relationships. Entirely different extraction logic. |
 
 **How:** See [Writing an Adapter](#writing-an-adapter) below.
 
@@ -349,6 +349,7 @@ All reads go through `PlexusApi`. No adapter needed.
 | `find_nodes(ctx, query)` | Nodes matching type/content/dimension/property filters | "What concepts exist?" |
 | `traverse(ctx, query)` | BFS from a start node, single relationship filter | "What's near this node?" |
 | `find_path(ctx, query)` | Shortest path between two known nodes | "How are these connected?" |
+| `shared_concepts(ctx_a, ctx_b)` | Concept nodes shared between two contexts | "What do these contexts have in common?" |
 | `list_chains(ctx, status?)` | Annotation chains | "What research threads exist?" |
 | `get_chain(ctx, chain_id)` | Chain with all its marks | "Show me this thread" |
 | `list_marks(ctx, filters)` | Marks by chain/file/type/tag | "What did I annotate in this file?" |
@@ -388,6 +389,62 @@ For non-MCP applications, the options today:
 
 All transports call the same `PlexusApi` methods. The transport is a thin shell — no domain logic.
 
+### MCP Tools (14)
+
+The MCP server exposes 14 tools. Context management (create, delete, rename, sources) is handled by the CLI (`plexus context <subcommand>`), not MCP.
+
+| Tool | Description |
+|---|---|
+| `set_context` | Set active context for the session (auto-created if new) |
+| `annotate` | Add a mark to a file location, auto-creating chain and fragment |
+| `list_chains` | List chains, optionally filtered by status |
+| `get_chain` | Get a chain with all its marks |
+| `archive_chain` | Archive a chain |
+| `delete_chain` | Delete a chain and all its marks |
+| `update_mark` | Update an existing mark |
+| `delete_mark` | Delete a mark |
+| `list_marks` | List marks with optional filters (chain, file, type, tag) |
+| `list_tags` | List all unique tags |
+| `link_marks` | Create a link from one mark to another |
+| `unlink_marks` | Remove a link between marks |
+| `get_links` | Get all links to and from a mark |
+| `evidence_trail` | Query evidence supporting a concept |
+
+---
+
+## Storage
+
+### The Library Rule (ADR-016)
+
+`GraphStore` takes a path; the host decides what to pass. Plexus never decides where to store data — that's the caller's responsibility. This means:
+
+- The **MCP server** receives a `--db` flag from the CLI; if omitted, it defaults to the XDG data directory
+- A **Rust embedding** (e.g., Sketchbin) passes whatever path makes sense for its deployment
+- The `GraphStore` trait doesn't know about XDG, environment variables, or configuration — it just opens the path it's given
+
+Default MCP database location: `~/.local/share/plexus/plexus.db` (Linux) or `~/Library/Application Support/plexus/plexus.db` (macOS).
+
+### Concurrency and Shared Access (ADR-017)
+
+Multiple processes can share the same SQLite database safely:
+
+- **WAL mode** — enabled automatically at connection time. Allows concurrent reads during writes.
+- **Incremental upserts** — `save_context()` upserts nodes/edges and only deletes IDs that were in the engine's baseline but have since been removed. Nodes added by other processes are preserved.
+- **Cache coherence** — `PlexusEngine::reload_if_changed()` uses SQLite's `PRAGMA data_version` to detect external modifications and reload when needed.
+- **Cross-context queries** — `shared_concepts()` discovers concept nodes shared between contexts via deterministic ID intersection (`concept:{lowercase_tag}`).
+
+### For Library Embedders
+
+When embedding Plexus as a library:
+
+```rust
+let store = SqliteStore::open("/your/app/data/plexus.db").unwrap();
+let engine = PlexusEngine::with_store(Arc::new(store));
+engine.load_all().unwrap();
+```
+
+You choose the path. Plexus handles WAL, upserts, and coherence transparently. If another process (e.g., an MCP server) shares the same database file, both will see each other's changes via `reload_if_changed()`.
+
 ---
 
 ## Quick Reference: What Each Application Needs
@@ -396,7 +453,7 @@ All transports call the same `PlexusApi` methods. The transport is a thin shell 
 |---|---|---|---|---|
 | **Trellis** | Tagged fragments | FragmentAdapter (built in) | TagConceptBridger, CoOccurrence | REST or gRPC |
 | **Carrel** | Custom (papers + annotations) | PaperAdapter (new) + FragmentAdapter | TagConceptBridger, CoOccurrence, CitationBridger (new) | Rust embedding |
-| **EDDI** | Custom (movement data) | MovementAdapter (new) | EffortShapeBridger (new) | Rust embedding |
-| **Manza** | Read-only | None | N/A | gRPC or WebSocket |
+| **EDDI** | Custom (movement data) | MovementAdapter (new) | MovementBridger (new) | Rust embedding |
+| **Manza** | Viewer/editor + context management | FragmentAdapter (built in) or custom | TagConceptBridger, CoOccurrence | Rust embedding or gRPC |
 | **Sketchbin** | Custom (creative artifacts) | SketchAdapter (new), FederationAdapter (new) | TagConceptBridger, CoOccurrence | REST + ActivityPub |
 | **Claude Code** | Tagged fragments | FragmentAdapter (built in) | TagConceptBridger, CoOccurrence | MCP (current) |
