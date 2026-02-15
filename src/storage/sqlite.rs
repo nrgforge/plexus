@@ -917,6 +917,12 @@ impl GraphStore for SqliteStore {
 
         Ok(Subgraph { nodes, edges })
     }
+
+    fn data_version(&self) -> StorageResult<u64> {
+        let conn = self.conn.lock().unwrap();
+        let version: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        Ok(version as u64)
+    }
 }
 
 #[cfg(test)]
@@ -1508,5 +1514,46 @@ mod tests {
         assert!(loaded.edges.is_empty(), "edge must be removed after save_context");
         // Nodes should still exist
         assert_eq!(loaded.nodes.len(), 2);
+    }
+
+    // ========================================================================
+    // ADR-017 §2: Cache Coherence via data_version
+    // ========================================================================
+
+    #[test]
+    fn test_data_version_changes_after_external_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("coherence.db");
+
+        let store_a = SqliteStore::open(&db_path).unwrap();
+        let store_b = SqliteStore::open(&db_path).unwrap();
+
+        let ctx = Context::new("shared");
+        let ctx_id = ctx.id.clone();
+        store_a.save_context(&ctx).unwrap();
+
+        let v1 = store_a.data_version().unwrap();
+
+        // External write via store_b
+        let mut ctx_b = store_b.load_context(&ctx_id).unwrap().unwrap();
+        ctx_b.add_node(create_test_node("node:ext", "concept"));
+        store_b.save_context(&ctx_b).unwrap();
+
+        let v2 = store_a.data_version().unwrap();
+        assert_ne!(v1, v2, "data_version must change after external write");
+    }
+
+    #[test]
+    fn test_data_version_unchanged_without_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("no-change.db");
+
+        let store = SqliteStore::open(&db_path).unwrap();
+        let ctx = Context::new("test");
+        store.save_context(&ctx).unwrap();
+
+        let v1 = store.data_version().unwrap();
+        let v2 = store.data_version().unwrap();
+        assert_eq!(v1, v2, "data_version must be stable when no external writes occur");
     }
 }

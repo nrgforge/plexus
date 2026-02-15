@@ -153,6 +153,18 @@ pub trait GraphStore: Send + Sync {
         seeds: &[NodeId],
         max_depth: usize,
     ) -> StorageResult<Subgraph>;
+
+    // === Coherence ===
+
+    /// Return the database version counter for cache coherence (ADR-017 §2).
+    ///
+    /// For SQLite, this is `PRAGMA data_version` — a connection-local counter
+    /// that increases when another connection modifies the database.
+    /// Non-SQLite backends should return a monotonic version counter.
+    /// Returns 0 by default (no coherence tracking).
+    fn data_version(&self) -> StorageResult<u64> {
+        Ok(0)
+    }
 }
 
 /// Extension trait for opening stores from paths

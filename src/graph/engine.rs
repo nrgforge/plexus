@@ -7,7 +7,9 @@ use crate::query::{FindQuery, PathQuery, QueryResult, PathResult, TraversalResul
 use crate::storage::{GraphStore, StorageError};
 use chrono::Utc;
 use dashmap::DashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use thiserror::Error;
 
 /// Errors that can occur in Plexus operations
@@ -44,6 +46,8 @@ pub struct PlexusEngine {
     contexts: DashMap<ContextId, Context>,
     /// Optional persistent storage backend
     store: Option<Arc<dyn GraphStore>>,
+    /// Last observed data_version for cache coherence (ADR-017 §2)
+    last_data_version: AtomicU64,
 }
 
 impl std::fmt::Debug for PlexusEngine {
@@ -67,6 +71,7 @@ impl PlexusEngine {
         Self {
             contexts: DashMap::new(),
             store: None,
+            last_data_version: AtomicU64::new(0),
         }
     }
 
@@ -78,6 +83,7 @@ impl PlexusEngine {
         Self {
             contexts: DashMap::new(),
             store: Some(store),
+            last_data_version: AtomicU64::new(0),
         }
     }
 
@@ -98,6 +104,11 @@ impl PlexusEngine {
                 self.contexts.insert(id, context);
                 loaded += 1;
             }
+        }
+
+        // Record initial data_version for cache coherence (ADR-017 §2)
+        if let Ok(v) = store.data_version() {
+            self.last_data_version.store(v, std::sync::atomic::Ordering::Release);
         }
 
         Ok(loaded)
@@ -182,6 +193,38 @@ impl PlexusEngine {
         }
 
         Ok(result)
+    }
+
+    /// Check `data_version` and reload all contexts if the database
+    /// has been modified by another engine (ADR-017 §2).
+    ///
+    /// Returns `true` if a reload occurred, `false` if the cache was fresh.
+    pub fn reload_if_changed(&self) -> PlexusResult<bool> {
+        let Some(ref store) = self.store else {
+            return Ok(false);
+        };
+
+        let current = store.data_version()?;
+        let last = self.last_data_version.load(std::sync::atomic::Ordering::Acquire);
+
+        if current == last {
+            return Ok(false);
+        }
+
+        // Reload all contexts from storage
+        let context_ids = store.list_contexts()?;
+        for id in &context_ids {
+            if let Some(context) = store.load_context(id)? {
+                self.contexts.insert(id.clone(), context);
+            }
+        }
+
+        // Remove contexts that no longer exist in storage
+        let stored_ids: HashSet<ContextId> = context_ids.into_iter().collect();
+        self.contexts.retain(|id, _| stored_ids.contains(id));
+
+        self.last_data_version.store(current, std::sync::atomic::Ordering::Release);
+        Ok(true)
     }
 
     /// Persist a specific context to storage
@@ -602,5 +645,61 @@ mod tests {
 
         let ctx = engine.get_context(&ctx_id).unwrap();
         assert_eq!(ctx.edges.len(), 1);
+    }
+
+    // === Cache Coherence Tests (ADR-017 §2) ===
+
+    #[test]
+    fn test_reload_if_changed_detects_external_write() {
+        use crate::graph::{ContentType, Node};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("coherence.db");
+
+        let store_a: Arc<dyn crate::storage::GraphStore> = Arc::new(SqliteStore::open(&db_path).unwrap());
+        let store_b: Arc<dyn crate::storage::GraphStore> = Arc::new(SqliteStore::open(&db_path).unwrap());
+
+        let engine_a = PlexusEngine::with_store(store_a);
+        let engine_b = PlexusEngine::with_store(store_b);
+
+        // Engine A creates context with 3 nodes
+        let mut ctx = Context::new("shared");
+        let ctx_id = ctx.id.clone();
+        ctx.add_node(Node::new("concept", ContentType::Document));
+        ctx.add_node(Node::new("concept", ContentType::Document));
+        ctx.add_node(Node::new("concept", ContentType::Document));
+        engine_a.upsert_context(ctx).unwrap();
+        engine_a.load_all().unwrap(); // set initial data_version
+
+        // Engine B loads, sees 3 nodes
+        engine_b.load_all().unwrap();
+        assert_eq!(engine_b.get_context(&ctx_id).unwrap().node_count(), 3);
+
+        // Engine A adds 2 more nodes externally
+        engine_a.with_context_mut(&ctx_id, |ctx| {
+            ctx.add_node(Node::new("concept", ContentType::Document));
+            ctx.add_node(Node::new("concept", ContentType::Document));
+        }).unwrap();
+
+        // Engine B detects change and reloads
+        let reloaded = engine_b.reload_if_changed().unwrap();
+        assert!(reloaded, "should detect external changes");
+        assert_eq!(engine_b.get_context(&ctx_id).unwrap().node_count(), 5,
+            "must see 5 nodes after reload");
+    }
+
+    #[test]
+    fn test_reload_if_changed_noop_when_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("stable.db");
+
+        let store: Arc<dyn crate::storage::GraphStore> = Arc::new(SqliteStore::open(&db_path).unwrap());
+        let engine = PlexusEngine::with_store(store);
+
+        engine.upsert_context(Context::new("test")).unwrap();
+        engine.load_all().unwrap();
+
+        let reloaded = engine.reload_if_changed().unwrap();
+        assert!(!reloaded, "should not reload when no external writes occurred");
     }
 }
