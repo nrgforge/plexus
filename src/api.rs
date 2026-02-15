@@ -457,6 +457,44 @@ impl PlexusApi {
         Err(PlexusError::ContextNotFound(ContextId::from(name)))
     }
 
+    /// Discover concepts shared between two contexts via deterministic
+    /// ID intersection (ADR-017 §4).
+    ///
+    /// Returns concept node IDs that exist in both contexts.
+    pub fn shared_concepts(
+        &self,
+        context_a: &str,
+        context_b: &str,
+    ) -> PlexusResult<Vec<NodeId>> {
+        let id_a = self.resolve(context_a)?;
+        let id_b = self.resolve(context_b)?;
+
+        let ctx_a = self
+            .engine
+            .get_context(&id_a)
+            .ok_or_else(|| PlexusError::ContextNotFound(id_a))?;
+        let ctx_b = self
+            .engine
+            .get_context(&id_b)
+            .ok_or_else(|| PlexusError::ContextNotFound(id_b))?;
+
+        let concepts_a: std::collections::HashSet<&NodeId> = ctx_a
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.node_type == "concept")
+            .map(|(id, _)| id)
+            .collect();
+
+        let shared: Vec<NodeId> = ctx_b
+            .nodes
+            .iter()
+            .filter(|(id, n)| n.node_type == "concept" && concepts_a.contains(id))
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        Ok(shared)
+    }
+
     fn prov(&self, context_name: &str) -> PlexusResult<ProvenanceApi> {
         let cid = self.resolve(context_name)?;
         Ok(ProvenanceApi::new(&self.engine, cid))
@@ -848,6 +886,74 @@ mod tests {
         // Should be a single merged list (not separate batches)
         // Fragment, chain, and mark creation each produce events
         assert!(events.len() >= 3, "should have events from fragment, chain, and mark creation");
+    }
+
+    // === Scenario: Shared concepts via deterministic ID intersection (ADR-017 §4) ===
+
+    #[test]
+    fn shared_concepts_returns_intersection() {
+        let (engine, api) = setup();
+
+        // Context "research" with concepts: travel, distributed-systems, provence
+        let mut research = Context::new("research");
+        for name in ["travel", "distributed-systems", "provence"] {
+            let mut node = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+            node.id = NodeId::from(format!("concept:{}", name));
+            research.nodes.insert(node.id.clone(), node);
+        }
+        engine.upsert_context(research).unwrap();
+
+        // Context "fiction" with concepts: travel, identity, provence
+        let mut fiction = Context::new("fiction");
+        for name in ["travel", "identity", "provence"] {
+            let mut node = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+            node.id = NodeId::from(format!("concept:{}", name));
+            fiction.nodes.insert(node.id.clone(), node);
+        }
+        engine.upsert_context(fiction).unwrap();
+
+        let shared = api.shared_concepts("research", "fiction").unwrap();
+        let shared_strs: std::collections::HashSet<String> =
+            shared.iter().map(|id| id.to_string()).collect();
+
+        assert!(shared_strs.contains("concept:travel"));
+        assert!(shared_strs.contains("concept:provence"));
+        assert!(!shared_strs.contains("concept:distributed-systems"));
+        assert!(!shared_strs.contains("concept:identity"));
+        assert_eq!(shared.len(), 2);
+    }
+
+    #[test]
+    fn shared_concepts_returns_empty_when_no_overlap() {
+        let (engine, api) = setup();
+
+        let mut alpha = Context::new("alpha");
+        for name in ["a", "b"] {
+            let mut node = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+            node.id = NodeId::from(format!("concept:{}", name));
+            alpha.nodes.insert(node.id.clone(), node);
+        }
+        engine.upsert_context(alpha).unwrap();
+
+        let mut beta = Context::new("beta");
+        for name in ["c", "d"] {
+            let mut node = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+            node.id = NodeId::from(format!("concept:{}", name));
+            beta.nodes.insert(node.id.clone(), node);
+        }
+        engine.upsert_context(beta).unwrap();
+
+        let shared = api.shared_concepts("alpha", "beta").unwrap();
+        assert!(shared.is_empty());
+    }
+
+    #[test]
+    fn shared_concepts_errors_on_nonexistent_context() {
+        let (engine, api) = setup();
+        engine.upsert_context(Context::new("real")).unwrap();
+
+        let result = api.shared_concepts("real", "imaginary");
+        assert!(result.is_err());
     }
 
     // === Scenario: Annotate rejects empty chain name ===
