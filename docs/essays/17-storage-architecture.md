@@ -44,7 +44,9 @@ The Rust `directories` crate handles cross-platform mapping:
 
 Project identity within that directory can use path hashing (deterministic, breaks on rename) or an explicit project ID (survives renames, requires init). Path hashing is simpler and matches git's worktree pattern. The database path becomes `~/.local/share/plexus/{hash}/plexus.db`, where `{hash}` is a deterministic function of the project's absolute path.
 
-This removes `.plexus.db` from the project directory. The MCP server resolves the path at startup from the working directory.
+> **Superseded by ADR-016:** The per-project hash approach was rejected. A single centralized database at `~/.local/share/plexus/plexus.db` holds all contexts. Contexts — not project directories — are the organizational unit. Per-project databases actively prevent cross-project context sharing, which is the motivating scenario for ADR-017. The MCP server creates or selects contexts by name; the same context is accessible from any project directory.
+
+This removes `.plexus.db` from the project directory. The MCP server resolves the path at startup.
 
 ## Sharing Contexts Across Applications
 
@@ -234,7 +236,7 @@ Bringing the research together, the storage architecture has three layers, each 
 
 `GraphStore` takes a path. The MCP server resolves it via XDG conventions. Sketchbin passes it from its own config. Single SQLite file, single process.
 
-**Changes needed:** Move the MCP server's default path from `cwd/.plexus.db` to `~/.local/share/plexus/{project-hash}/plexus.db`. The `GraphStore` trait is unchanged.
+**Changes needed:** Move the MCP server's default path from `cwd/.plexus.db` to `~/.local/share/plexus/plexus.db` (see supersession note above — single centralized database, not per-project). The `GraphStore` trait is unchanged.
 
 ### Layer 2: Shared Access (Near-term)
 

@@ -1,6 +1,6 @@
 # ADR-002: Plexus Storage Location
 
-**Status:** Proposed (needs RDD workflow)
+**Status:** Superseded by ADR-016
 
 **Date:** 2026-02-05
 
