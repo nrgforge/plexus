@@ -82,6 +82,8 @@ This mode becomes especially relevant under an AGPL commercial license, where a 
 
 Start with the shared-DB model — it works today with minimal changes. Add `data_version` polling for cache coherence. Accept that enrichment coordination is imperfect for now (in practice, if applications register the same enrichments, idempotency handles the duplication).
 
+One prerequisite: the current `save_context()` implementation does a full replace (DELETE all rows, INSERT all rows). This is safe for single-engine use but destructive under concurrent multi-engine writes — Engine A's full replace would overwrite Engine B's recent commits. The shared-DB model requires changing persistence to incremental upserts (save individual nodes and edges) rather than full-context replacement. The individual `save_node()` and `save_edge()` methods already use upsert semantics; the change is to stop using the bulk-replace path for shared databases.
+
 Move to the daemon model when enrichment coordination or cache coherence becomes a real problem, not a theoretical one. The daemon model is strictly more capable but operationally heavier. The `GraphStore` trait doesn't need to change for either model — it already takes a path and provides load/save operations. The daemon would wrap a `GraphStore` in a service layer; the shared-DB model uses `GraphStore` directly.
 
 The managed server becomes relevant when the user base extends beyond a single machine — when contexts are shared across a team rather than across applications on one person's laptop.
@@ -132,9 +134,11 @@ The implications for federation are significant:
 
 **Adapters don't need to be identical across collaborators.** Alice uses Carrel for papers; Bob uses Manza for code. Both contribute to the same context through different adapters. The adapter ID on each contribution distinguishes the source. The graph doesn't require or expect that every collaborator runs the same tools — it only requires that each tool produces well-formed emissions.
 
-This means the graph is lightweight relative to the content it describes. A shared context for a research team might reference thousands of papers and hundreds of code files, but the graph itself stores only the extracted concepts, the relationships between them, and the provenance chains that record who found what. The graph replicates easily because it's small. The content stays where it is because it's large, private, and machine-specific.
+This means the graph is lightweight relative to the content it describes. A shared context for a research team might reference thousands of papers and hundreds of code files, but the graph itself stores only the extracted concepts, the relationships between them, and the provenance chains that record who found what. The content stays where it is because it's large, private, and machine-specific. The graph is smaller by comparison — though "small" is relative. A context with many fine-grained concepts, dense co-occurrence enrichment, and deep provenance chains could grow significantly. The ratio of graph size to content size depends on the granularity of concept extraction and the density of the enrichment layer. For most use cases the graph remains orders of magnitude smaller than the source material it describes, making it practical to replicate even when the content itself cannot move.
 
 ## Federation: When Contexts Cross Hosts
+
+The previous section discussed shared contexts in the same-host sense — multiple applications accessing the same database. This section uses "shared context" in a stronger sense: a context that replicates across users on different hosts, each holding a local replica that converges through emission propagation. Same concept, different boundary.
 
 The most ambitious storage question: how does a Plexus context replicate across users on different hosts and networks?
 
@@ -152,13 +156,13 @@ But the scenario extends beyond Sketchbin. Four distinct collaboration patterns 
 
 All four patterns share a structural property: **the shared context is the collaboration primitive.** Not a shared document (Obsidian), not a shared annotation layer (Hypothesis), not a shared reference library (Zotero). A shared *semantic landscape* that each participant enriches through their own tools and practices. Content stays local; understanding converges.
 
-This is a genuinely distinct position in the tool ecosystem. Existing collaboration tools share content or commentary. Plexus shares derived semantic structure — the concepts, relationships, and co-occurrence patterns that emerge from independent contributions.
+What makes this distinct is not the sharing of semantic structure per se — graph databases and knowledge platforms already do that. It's the combination: local-first storage, adapter-mediated extraction from heterogeneous tools, enrichment-driven discovery, and selective replication that shares understanding without sharing content. Existing collaboration tools share content or commentary. Plexus shares the derived semantic structure that emerges from independent contributions, without requiring participants to use the same tools or expose their source material.
 
 ### Why the Data Model Is Naturally Suited for Replication
 
 Plexus's data model has strong natural alignment with CRDT (Conflict-free Replicated Data Type) semantics — the formal framework for eventually consistent distributed data:
 
-**Contributions are per-adapter LWW registers.** Each edge stores `HashMap<AdapterId, f32>` — independent last-writer-wins slots keyed by adapter ID. Two users contributing to the same edge produce contributions in separate slots. No conflict. This is structurally a LWW-Register Map, one of the best-understood CRDT patterns.
+**Contributions are per-adapter LWW registers.** Each edge stores `HashMap<AdapterId, f32>` — independent last-writer-wins slots keyed by adapter ID. Two users contributing to the same edge produce contributions in separate slots. No conflict. This is structurally a LWW-Register Map, one of the best-understood CRDT patterns. This property depends on adapter IDs being unique per user-instance, not just per adapter type: Alice's Carrel adapter must have a different ID (e.g., `carrel:alice`) than Bob's (`carrel:bob`). If two users share the same adapter ID, their contributions would collide in the same LWW slot. Federation requires an adapter ID naming convention that includes user or instance identity — a prerequisite that the domain model should make explicit.
 
 **Concept nodes use deterministic IDs.** `concept:{lowercase_tag}` means Alice tagging "ambient" and Bob tagging "ambient" on different hosts produce the same node ID. On merge, the node upserts. This is an add-only set — nodes converge via identity, not coordination.
 
@@ -198,6 +202,8 @@ The pragmatic approach: use the simpler option first (single transport), add a p
 
 On the receiving end, the emission commits to the local replica through the existing engine pipeline: deserialize, validate (upsert handles convergent IDs, per-adapter contributions merge naturally), run the local enrichment loop. Only primary emissions replicate — enrichment-produced emissions are local, preventing feedback amplification across replicas.
 
+A consequence of local-only enrichment: replicas with different enrichment configurations will produce different enrichment-derived structure. If Alice registers `CoOccurrenceEnrichment` and Bob registers `CoOccurrenceEnrichment` + a hypothetical `ClusterEnrichment`, their replicas will have different `may_be_related` edges and different clustering structure. This divergence is permanent — enrichment emissions don't replicate, so the enrichment-derived layers never converge across replicas. Whether this is acceptable depends on the use case. For the creative collective pattern, each member having their own enrichment "lens" on shared primary data may be a feature — different enrichment configurations reveal different structure in the same material. For the research team pattern, where everyone should see the same co-occurrence graph, it argues for standardized enrichment registrations within a shared context. The storage architecture doesn't resolve this; it's an enrichment coordination question for the federation protocol.
+
 ### What GraphStore Needs
 
 The current `GraphStore` trait has the right methods for local persistence. For federation, an extension trait — `ReplicatedStore` — would add:
@@ -214,9 +220,11 @@ One tension with existing invariants:
 
 **Invariant 38 (transports are thin shells)** says transports call `ingest()` and query endpoints without touching adapters, enrichments, or the engine. A replication transport has more responsibility — filtering emissions by tier, managing ordering, handling merge. This isn't "thin" in the same way an MCP tool handler is thin.
 
-The resolution: replication is not a transport in the invariant-38 sense. It's **infrastructure** — a layer between the engine and the storage backend, not between the consumer and the engine. The `ReplicatedStore` wraps `GraphStore`, not `PlexusEngine`. Consumers still interact through `ingest()` and query endpoints via their transport. The replication layer is invisible to them. Invariant 38 holds for consumer-facing transports; replication operates below that boundary.
+The resolution: replication is not a transport in the invariant-38 sense. It's **infrastructure** — not between the consumer and the engine, but coordinating between the engine and the storage backend. Consumers still interact through `ingest()` and query endpoints via their transport. The replication layer is invisible to them. Invariant 38 holds for consumer-facing transports; replication operates below that boundary.
 
-This distinction should be explicit in the domain model if federation is pursued. A new concept — *replication layer* — would sit between the engine and the store, handling emission journaling, sync, and merge. It's neither a transport (consumer-facing) nor a store (persistence), but a coordination layer between them.
+The replication layer has two distinct responsibilities that sit at different levels of the stack. **Outbound** (journaling and shipping emissions to peers) wraps `GraphStore` — it intercepts persisted emissions, filters them by replication tier, and sends them to peers. This is purely a storage-level concern. **Inbound** (receiving and applying remote emissions) needs the engine, not just the store — remote emissions must go through validation, commit, and the enrichment loop to maintain invariant compliance. A dedicated `ingest_replicated(context_id, remote_emission)` path on the engine would handle this: validate, commit, run enrichments, but skip outbound replication (to prevent echo). The replication layer coordinates between these two levels without being either a transport or a store.
+
+This distinction should be explicit in the domain model if federation is pursued. A new concept — *replication layer* — would handle emission journaling (store-level) and remote emission ingestion (engine-level). It's neither a transport (consumer-facing) nor a store (persistence), but a coordination layer that spans both.
 
 ## The Architecture in Three Layers
 
@@ -248,9 +256,9 @@ The most important finding from this research isn't technical — it's conceptua
 
 As a local dev tool, Plexus is a knowledge graph for one person's project. Useful, but bounded. As a shared context across applications, Plexus becomes a semantic meeting point — a place where different tools and different practices contribute to a common understanding. As a federated context across users, Plexus becomes infrastructure for collaborative sensemaking — a system that discovers connections across independent contributions without requiring coordination or consensus.
 
-Existing collaboration tools share content (documents, references, files) or commentary (annotations, discussions). Plexus shares derived semantic structure — the concepts, relationships, and co-occurrence patterns that emerge from work done in whatever tools people already use. The shared context doesn't require anyone to change their workflow. It reveals what their independent workflows have in common.
+Existing collaboration tools share content (documents, references, files) or commentary (annotations, discussions). Plexus shares derived semantic structure — the concepts, relationships, and co-occurrence patterns that emerge from work done in whatever tools people already use. The local-first, adapter-mediated model is what makes this distinctive: the shared context doesn't require anyone to change their workflow or expose their source material. It reveals what their independent workflows have in common.
 
-The data that makes this possible is lightweight. The graph stores concepts, relationships, and provenance — not the source material itself. A shared context doesn't require participants to share their documents, their code, or their creative work. It requires them to share what their tools discovered in those materials. The semantic landscape replicates because it's small. The content stays local because it belongs to whoever created it.
+The data that makes this possible is lightweight relative to what it describes. The graph stores concepts, relationships, and provenance — not the source material itself. A shared context doesn't require participants to share their documents, their code, or their creative work. It requires them to share what their tools discovered in those materials. The semantic landscape is practical to replicate because it's compact compared to the content it represents. The content stays local because it belongs to whoever created it.
 
 This is the storage question that matters. Not "where does the file go?" — that's a path resolution problem, solved by XDG conventions and the library rule. The storage question that matters is: **what does it mean for knowledge to live in a place that multiple people, tools, and hosts can contribute to and learn from?** The answer is the shared context — a semantic landscape that accumulates intelligence from independent sources and makes that intelligence traversable by anyone with access.
 
