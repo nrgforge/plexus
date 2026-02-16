@@ -22,6 +22,7 @@ pub mod adapter;
 pub mod analysis;
 pub mod api;
 mod graph;
+pub mod llm_orc;
 pub mod mcp;
 pub mod provenance;
 pub mod query;

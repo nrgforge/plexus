@@ -18,6 +18,7 @@ mod integration_tests;
 mod provenance;
 pub mod provenance_adapter;
 mod router;
+pub mod semantic;
 mod sink;
 mod tag_bridger;
 mod traits;
