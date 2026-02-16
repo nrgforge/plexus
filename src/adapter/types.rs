@@ -7,7 +7,7 @@
 //! - Annotation: adapter-provided extraction metadata
 //! - Removal: a node ID to remove (edges cascade)
 
-use crate::graph::{Edge, Node, NodeId};
+use crate::graph::{Edge, Node, NodeId, PropertyValue};
 use std::collections::HashMap;
 
 /// Adapter-provided metadata about a single extraction.
@@ -140,9 +140,37 @@ impl EdgeRemoval {
     }
 }
 
+/// A property merge on an existing node (ADR-023).
+///
+/// Unlike full node upsert, this only adds or updates the specified properties
+/// without replacing the entire node. If the node doesn't exist, this is a no-op.
+#[derive(Debug, Clone)]
+pub struct PropertyUpdate {
+    pub node_id: NodeId,
+    pub properties: HashMap<String, PropertyValue>,
+}
+
+impl PropertyUpdate {
+    pub fn new(node_id: NodeId) -> Self {
+        Self {
+            node_id,
+            properties: HashMap::new(),
+        }
+    }
+
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: PropertyValue,
+    ) -> Self {
+        self.properties.insert(key.into(), value);
+        self
+    }
+}
+
 /// The data payload of a single `sink.emit()` call.
 ///
-/// A bundle of annotated nodes, annotated edges, and removals.
+/// A bundle of annotated nodes, annotated edges, removals, and property updates.
 /// Each emission is validated and committed atomically by the engine.
 /// Valid items commit; invalid items are rejected individually.
 #[derive(Debug, Clone)]
@@ -151,6 +179,7 @@ pub struct Emission {
     pub edges: Vec<AnnotatedEdge>,
     pub removals: Vec<Removal>,
     pub edge_removals: Vec<EdgeRemoval>,
+    pub property_updates: Vec<PropertyUpdate>,
 }
 
 impl Emission {
@@ -160,6 +189,7 @@ impl Emission {
             edges: Vec::new(),
             removals: Vec::new(),
             edge_removals: Vec::new(),
+            property_updates: Vec::new(),
         }
     }
 
@@ -183,11 +213,17 @@ impl Emission {
         self
     }
 
+    pub fn with_property_update(mut self, update: PropertyUpdate) -> Self {
+        self.property_updates.push(update);
+        self
+    }
+
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
             && self.edges.is_empty()
             && self.removals.is_empty()
             && self.edge_removals.is_empty()
+            && self.property_updates.is_empty()
     }
 }
 

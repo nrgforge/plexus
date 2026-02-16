@@ -456,7 +456,10 @@ impl Adapter for ExtractionCoordinator {
 
                             let status3_str = match &result3 {
                                 Ok(()) => "complete".to_string(),
-                                Err(e) => format!("failed: {}", e),
+                                Err(AdapterError::Skipped(ref reason)) => {
+                                    format!("skipped: {}", reason)
+                                }
+                                Err(ref e) => format!("failed: {}", e),
                             };
                             update_extraction_status(
                                 &ctx,
@@ -465,7 +468,11 @@ impl Adapter for ExtractionCoordinator {
                                 &status3_str,
                             );
 
-                            return result3;
+                            // Skipped is not a failure — return Ok
+                            return match result3 {
+                                Err(AdapterError::Skipped(_)) => Ok(()),
+                                other => other,
+                            };
                         }
                     }
 
@@ -854,6 +861,40 @@ mod tests {
         }
     }
 
+    /// An adapter that returns Skipped (for graceful degradation tests).
+    struct SkippingAdapter {
+        adapter_id: String,
+        input_kind: String,
+    }
+
+    impl SkippingAdapter {
+        fn new(adapter_id: &str, input_kind: &str) -> Self {
+            Self {
+                adapter_id: adapter_id.to_string(),
+                input_kind: input_kind.to_string(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Adapter for SkippingAdapter {
+        fn id(&self) -> &str {
+            &self.adapter_id
+        }
+
+        fn input_kind(&self) -> &str {
+            &self.input_kind
+        }
+
+        async fn process(
+            &self,
+            _input: &AdapterInput,
+            _sink: &dyn AdapterSink,
+        ) -> Result<(), AdapterError> {
+            Err(AdapterError::Skipped("llm-orc not running".to_string()))
+        }
+    }
+
     /// A Phase 3 adapter that verifies Phase 2 output exists (proves sequential execution).
     struct SequenceVerifyingAdapter {
         adapter_id: String,
@@ -1158,6 +1199,93 @@ mod tests {
         assert!(
             phase3_status.starts_with("failed:"),
             "Phase 3 status should be 'failed: ...', got '{}'",
+            phase3_status
+        );
+    }
+
+    // --- Scenario: Phase 3 graceful degradation (ADR-021) ---
+
+    #[tokio::test]
+    async fn phase3_graceful_degradation_when_unavailable() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone(), "extract-coordinator");
+
+        let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
+
+        // Phase 2: succeeds normally
+        let phase2 = Arc::new(EmittingAdapter::new(
+            "extract-analysis-text",
+            "extract-analysis-text",
+            "concept:phase2-result",
+        ));
+        coordinator.register_phase2("text/", phase2);
+
+        // Phase 3: skipped (llm-orc not running)
+        let phase3 = Arc::new(SkippingAdapter::new(
+            "extract-semantic",
+            "extract-semantic",
+        ));
+        coordinator.register_phase3(phase3);
+
+        let dir = create_temp_file(
+            "graceful.md",
+            "---\ntags: [graceful]\n---\n\n# Graceful degradation test",
+        );
+        let file_path = dir.path().join("graceful.md");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput {
+                file_path: file_path_str.clone(),
+            },
+            "test",
+        );
+
+        coordinator.process(&input, &sink).await.unwrap();
+
+        // Background task should return Ok — skipped is not an error
+        let results = coordinator.wait_for_background().await;
+        assert!(
+            results.iter().all(|r| r.is_ok()),
+            "Skipped Phase 3 should not surface as an error"
+        );
+
+        let snapshot = ctx.lock().unwrap();
+
+        // Phases 1-2 completed normally
+        let file_id = NodeId::from_string(format!("file:{}", file_path_str));
+        assert!(snapshot.get_node(&file_id).is_some(), "Phase 1 file node exists");
+        assert!(
+            snapshot
+                .get_node(&NodeId::from_string("concept:phase2-result"))
+                .is_some(),
+            "Phase 2 output exists"
+        );
+
+        // Phase 3 status is "skipped", not "failed"
+        let status_id =
+            NodeId::from_string(format!("extraction-status:{}", file_path_str));
+        let status = snapshot.get_node(&status_id).expect("status should exist");
+        assert_eq!(
+            status.properties.get("phase1"),
+            Some(&PropertyValue::String("complete".to_string()))
+        );
+        assert_eq!(
+            status.properties.get("phase2"),
+            Some(&PropertyValue::String("complete".to_string()))
+        );
+        let phase3_status = status
+            .properties
+            .get("phase3")
+            .and_then(|pv| match pv {
+                PropertyValue::String(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            phase3_status.starts_with("skipped:"),
+            "Phase 3 status should be 'skipped: ...', got '{}'",
             phase3_status
         );
     }

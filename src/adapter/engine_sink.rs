@@ -200,6 +200,22 @@ impl EngineSink {
             ctx.recompute_raw_weights();
         }
 
+        // Phase 2.5: Property updates (merge, not replace) — ADR-023
+        let mut updated_node_ids: Vec<NodeId> = Vec::new();
+        for update in emission.property_updates {
+            if let Some(node) = ctx.get_node_mut(&update.node_id) {
+                for (key, value) in update.properties {
+                    node.properties.insert(key, value);
+                }
+                result.nodes_committed += 1;
+                updated_node_ids.push(update.node_id);
+            }
+            // No-op if node doesn't exist (not a rejection — node may come later)
+        }
+        if !updated_node_ids.is_empty() {
+            committed_node_ids.extend(updated_node_ids);
+        }
+
         // Phase 3: Process edge removals (targeted)
         let mut explicitly_removed_edge_ids: Vec<EdgeId> = Vec::new();
         for edge_removal in emission.edge_removals {

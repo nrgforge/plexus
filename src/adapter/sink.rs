@@ -108,6 +108,8 @@ pub enum AdapterError {
     ContextNotFound(String),
     #[error("adapter error: {0}")]
     Internal(String),
+    #[error("skipped: {0}")]
+    Skipped(String),
 }
 
 /// The interface through which adapters push graph mutations into the engine.
