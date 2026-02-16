@@ -1,6 +1,6 @@
 # ADR-022: Parameterized Enrichments
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
 

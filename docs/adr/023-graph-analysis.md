@@ -1,6 +1,6 @@
 # ADR-023: Graph Analysis as External Batch Computation
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
 
@@ -51,6 +51,15 @@ ensemble:
 ```
 
 Independent algorithms (pagerank, community-detection) run in parallel. Python's NetworkX handles computation. The DAG structure is llm-orc's existing capability.
+
+### Data Contracts
+
+The graph analysis boundary uses structured JSON with formal schemas:
+
+- **Graph export** (`docs/schemas/graph-export.schema.json`): `export_graph_for_analysis()` serializes context nodes (id, type, dimension, label) and edges (source, target, relationship, weight) as JSON. This is the input to llm-orc's graph analysis ensemble scripts.
+- **Analysis result** (`docs/schemas/analysis-result.schema.json`): Each script agent returns JSON with an `updates` array of `{node_id, properties}` objects. `parse_analysis_response()` deserializes these into `GraphAnalysisInput` for ingestion.
+
+Both schemas use JSON Schema draft-07 for validation.
 
 ### Trigger model
 

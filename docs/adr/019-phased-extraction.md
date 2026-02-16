@@ -1,6 +1,6 @@
 # ADR-019: Phased Extraction as Regular Adapter Emissions
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
 

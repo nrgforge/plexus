@@ -1,6 +1,6 @@
 # ADR-021: Phase 3 Integration via llm-orc Service
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
 
@@ -39,6 +39,15 @@ When llm-orc is not running, Phases 1–2 complete normally and Phase 3 is skipp
 Documents too large for a single LLM context (e.g., a 6,000-line Shakespeare play) use Phase 2's structural boundaries (acts, scenes, sections) for intelligent chunking rather than naive text splitting. llm-orc's `fan_out: true` runs parallel semantic extraction per chunk. A synthesis agent merges chunk-level concepts into file-level themes.
 
 Each chunk emission persists independently. If extraction fails on chunk 7 of 12, chunks 1–6 are already in the graph. Progressive and resilient.
+
+### Data Contracts
+
+The Phase 2→3 boundary uses structured JSON with formal schemas:
+
+- **Phase 2 output** (`docs/schemas/phase2-output.schema.json`): `SemanticAdapter::build_input()` serializes file path, section boundaries, existing concepts, and file metadata as JSON. This is the input to llm-orc's semantic extraction ensemble.
+- **Phase 3 result** (`docs/schemas/phase3-result.schema.json`): `SemanticAdapter::parse_response()` expects JSON with `concepts` (label + confidence) and `relationships` (source, target, relationship type, weight). This is the output from llm-orc's final synthesis agent.
+
+Both schemas use JSON Schema draft-07 for validation.
 
 ## Consequences
 

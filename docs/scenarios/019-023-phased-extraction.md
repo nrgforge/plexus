@@ -241,11 +241,11 @@ ADRs: 019 (phased extraction), 020 (declarative adapter specs), 021 (Phase 3 llm
 
 ## Conformance Debt
 
-Structural cleanup required before or during feature work:
+All items resolved. Evidence listed per row.
 
-| ADR | Violation | Type | Location | Resolution |
-|-----|-----------|------|----------|------------|
-| ADR-022 | CoOccurrenceEnrichment hardcodes `"tagged_with"` and `"may_be_related"` | wrong-structure | `src/adapter/cooccurrence.rs` lines 55, 98 | Refactor to accept relationship parameters; default to current values for backward compatibility |
-| ADR-022 | TagConceptBridger hardcodes `"references"` | wrong-structure | `src/adapter/tag_bridger.rs` line 111 | Refactor to accept relationship parameter; default to `"references"` |
-| ADR-022 | CoOccurrenceEnrichment `id()` returns static `"co-occurrence"` | wrong-structure | `src/adapter/cooccurrence.rs` line 29 | Generate ID from parameters: `co_occurrence:{source}:{output}` |
-| ADR-022 | Enrichment assumes fragment source nodes (not structure-aware) | wrong-structure | `src/adapter/cooccurrence.rs` | Remove content-type filtering on source nodes; fire for any node with configured relationship edges |
+| ADR | Violation | Type | Location | Resolution | Status |
+|-----|-----------|------|----------|------------|--------|
+| ADR-022 | CoOccurrenceEnrichment hardcodes `"tagged_with"` and `"may_be_related"` | wrong-structure | `src/adapter/cooccurrence.rs` | Refactored: `with_relationships()` constructor accepts parameters; `new()` defaults to original values | **Resolved** — tests: `accepts_relationship_parameters`, `default_backward_compatible` in `cooccurrence.rs` |
+| ADR-022 | TagConceptBridger hardcodes `"references"` | wrong-structure | `src/adapter/tag_bridger.rs` | Refactored: `with_relationship()` constructor accepts parameter; `new()` defaults to `"references"` | **Resolved** — tests: `accepts_relationship_parameter` in `tag_bridger.rs` |
+| ADR-022 | CoOccurrenceEnrichment `id()` returns static `"co-occurrence"` | wrong-structure | `src/adapter/cooccurrence.rs` | ID generated from parameters: `co_occurrence:{source}:{output}` | **Resolved** — test: `parameterized_id_from_relationships` in `cooccurrence.rs` |
+| ADR-022 | Enrichment assumes fragment source nodes (not structure-aware) | wrong-structure | `src/adapter/cooccurrence.rs` | Fires based on relationship structure, not node content type (Invariant 50) | **Resolved** — test: `structure_aware_fires_for_any_source_node_type` in `cooccurrence.rs` |

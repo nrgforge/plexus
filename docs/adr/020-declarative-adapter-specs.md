@@ -1,6 +1,6 @@
 # ADR-020: Declarative Adapter Specs and Two-Layer Extraction
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
 
