@@ -9,6 +9,7 @@ pub mod declarative;
 mod engine_sink;
 mod enrichment;
 mod events;
+pub mod extraction;
 pub mod fragment;
 mod ingest;
 #[cfg(test)]
@@ -34,6 +35,7 @@ pub use types::{
 };
 pub use cooccurrence::CoOccurrenceEnrichment;
 pub use declarative::DeclarativeAdapter;
+pub use extraction::ExtractionCoordinator;
 pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};

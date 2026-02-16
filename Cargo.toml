@@ -27,6 +27,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 async-trait = "0.1"
 tokio = { version = "1.0", features = ["full"] }
 pulldown-cmark = "0.10"
+serde_yaml = "0.9"
 
 # MCP server
 rmcp = { version = "0.14", features = ["server", "transport-io"] }
