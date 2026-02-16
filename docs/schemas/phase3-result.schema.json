@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://plexus.dev/schemas/phase3-result.schema.json",
+  "title": "Phase 3 Result",
+  "description": "Structured result from Phase 3 (semantic extraction via llm-orc). Parsed by SemanticAdapter::parse_response().",
+  "type": "object",
+  "properties": {
+    "concepts": {
+      "type": "array",
+      "description": "Concepts extracted by LLM semantic analysis.",
+      "items": {
+        "type": "object",
+        "required": ["label"],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Concept label. Normalized to lowercase for deterministic concept IDs."
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "description": "LLM's confidence in this concept extraction (0.0-1.0)."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "description": "Relationships between extracted concepts.",
+      "items": {
+        "type": "object",
+        "required": ["source", "target"],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source concept label."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target concept label."
+          },
+          "relationship": {
+            "type": "string",
+            "default": "related_to",
+            "description": "Named relationship type (e.g., 'is_a', 'part_of', 'consequence_of')."
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "default": 1.0,
+            "description": "Relationship strength (contribution value)."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

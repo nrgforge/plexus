@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://plexus.dev/schemas/phase2-output.schema.json",
+  "title": "Phase 2 Output",
+  "description": "Structured output from Phase 2 (heuristic analysis) passed to Phase 3 (semantic extraction via llm-orc). Produced by SemanticAdapter::build_input().",
+  "type": "object",
+  "required": ["file_path"],
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "Absolute or project-relative path to the source file."
+    },
+    "mime_type": {
+      "type": "string",
+      "description": "MIME type from Phase 1 registration (e.g., 'text/markdown', 'audio/mpeg')."
+    },
+    "sections": {
+      "type": "array",
+      "description": "Structural boundaries identified by Phase 2. Used by llm-orc for intelligent chunking (ADR-021).",
+      "items": {
+        "type": "object",
+        "required": ["label", "start_line", "end_line"],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Human-readable section label (e.g., 'Act I', '## Introduction')."
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "First line of the section (1-indexed)."
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Last line of the section (1-indexed, inclusive)."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "existing_concepts": {
+      "type": "array",
+      "description": "Concept labels already discovered by Phases 1-2. Helps Phase 3 avoid redundant extraction and anchor new concepts to existing ones.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "description": "File-level statistics from Phase 2 analysis.",
+      "properties": {
+        "word_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
