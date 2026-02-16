@@ -270,6 +270,45 @@ mod tests {
         assert_eq!(emission.edges.len(), 1);
     }
 
+    // --- Scenario: TagConceptBridger accepts relationship parameter ---
+
+    #[test]
+    fn accepts_relationship_parameter() {
+        let references_bridger = TagConceptBridger::new();
+        let categorized_bridger = TagConceptBridger::with_relationship("categorized_by");
+
+        let mark_id = NodeId::from_string("mark-1");
+
+        let mut ctx = Context::new("test");
+        ctx.add_node(concept_node("travel"));
+        ctx.add_node(mark_node("mark-1", &["travel"]));
+
+        let events = vec![GraphEvent::NodesAdded {
+            node_ids: vec![mark_id.clone()],
+            adapter_id: "test".to_string(),
+            context_id: "test".to_string(),
+        }];
+
+        // First bridger: creates "references" edge
+        let emission1 = references_bridger.enrich(&events, &ctx).expect("should emit");
+        assert_eq!(emission1.edges.len(), 1);
+        assert_eq!(emission1.edges[0].edge.relationship, "references");
+        assert_eq!(emission1.edges[0].edge.source, mark_id);
+        assert_eq!(emission1.edges[0].edge.target, NodeId::from_string("concept:travel"));
+
+        // Second bridger: creates "categorized_by" edge
+        let emission2 = categorized_bridger.enrich(&events, &ctx).expect("should emit");
+        assert_eq!(emission2.edges.len(), 1);
+        assert_eq!(emission2.edges[0].edge.relationship, "categorized_by");
+        assert_eq!(emission2.edges[0].edge.source, mark_id);
+        assert_eq!(emission2.edges[0].edge.target, NodeId::from_string("concept:travel"));
+
+        // Distinct IDs
+        assert_eq!(references_bridger.id(), "tag_bridger:references");
+        assert_eq!(categorized_bridger.id(), "tag_bridger:categorized_by");
+        assert_ne!(references_bridger.id(), categorized_bridger.id());
+    }
+
     #[test]
     fn no_bridge_when_concept_missing() {
         let bridger = TagConceptBridger::new();
