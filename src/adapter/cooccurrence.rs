@@ -345,6 +345,24 @@ mod tests {
         assert!(enrichment.enrich(&[nodes_added_event(vec!["n1"])], &ctx).is_none());
     }
 
+    // --- Scenario: Default CoOccurrenceEnrichment backward compatible ---
+
+    #[tokio::test]
+    async fn default_backward_compatible() {
+        // CoOccurrenceEnrichment with no explicit configuration
+        let enrichment = CoOccurrenceEnrichment::new();
+
+        let ctx = build_context(vec![
+            ("F1", vec!["travel", "avignon"]),
+        ]).await;
+
+        let emission = enrichment.enrich(&[edges_added_event()], &ctx).expect("should emit");
+
+        // Emits may_be_related (existing behavior unchanged)
+        assert!(emission.edges.iter().all(|ae| ae.edge.relationship == "may_be_related"));
+        assert_eq!(emission.edges.len(), 2);
+    }
+
     // --- Scenario: CoOccurrenceEnrichment accepts relationship parameters ---
 
     /// Helper: build a context with source nodes connected to concept nodes
