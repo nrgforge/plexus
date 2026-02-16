@@ -1,7 +1,11 @@
-//! CoOccurrenceEnrichment — concept co-occurrence detection (ADR-010)
+//! CoOccurrenceEnrichment — concept co-occurrence detection (ADR-010, ADR-022)
 //!
-//! Detects concepts that share fragments (via `tagged_with` edges) and emits
-//! `may_be_related` symmetric edge pairs. Co-occurrence score is `count / max_count`.
+//! Detects concepts that share source nodes (via a configured relationship)
+//! and emits symmetric edge pairs with a configured output relationship.
+//! Co-occurrence score is `count / max_count`.
+//!
+//! Default: `tagged_with` → `may_be_related` (backward compatible).
+//! Parameterized: any source/output relationship pair (ADR-022).
 //!
 //! Idempotent: checks for existing edges before emitting, so the enrichment
 //! loop reaches quiescence.
@@ -12,16 +16,33 @@ use crate::adapter::types::{AnnotatedEdge, Emission};
 use crate::graph::{dimension, ContentType, Context, Edge, NodeId};
 use std::collections::{HashMap, HashSet};
 
-/// Enrichment that detects concept co-occurrence via shared fragments.
+/// Enrichment that detects concept co-occurrence via shared source nodes.
 ///
-/// Scans the context for concepts sharing fragments (via `tagged_with` edges)
-/// and emits symmetric `may_be_related` edge pairs. Idempotent: checks for
-/// existing edges before emitting, so the enrichment loop reaches quiescence.
-pub struct CoOccurrenceEnrichment;
+/// Scans the context for concepts sharing source nodes (via a configured
+/// relationship) and emits symmetric edge pairs with a configured output
+/// relationship. Idempotent: checks for existing edges before emitting,
+/// so the enrichment loop reaches quiescence.
+///
+/// Default configuration: `tagged_with` → `may_be_related` (backward compatible).
+/// Parameterized instances use different relationships (ADR-022).
+pub struct CoOccurrenceEnrichment {
+    source_relationship: String,
+    output_relationship: String,
+}
 
 impl CoOccurrenceEnrichment {
     pub fn new() -> Self {
-        Self
+        Self {
+            source_relationship: "tagged_with".to_string(),
+            output_relationship: "may_be_related".to_string(),
+        }
+    }
+
+    pub fn with_relationships(source_relationship: &str, output_relationship: &str) -> Self {
+        Self {
+            source_relationship: source_relationship.to_string(),
+            output_relationship: output_relationship.to_string(),
+        }
     }
 }
 
@@ -36,7 +57,7 @@ impl Enrichment for CoOccurrenceEnrichment {
             return None;
         }
 
-        let pairs = detect_cooccurrence_pairs(context);
+        let pairs = detect_cooccurrence_pairs(context, &self.source_relationship);
         if pairs.is_empty() {
             return None;
         }
@@ -48,22 +69,22 @@ impl Enrichment for CoOccurrenceEnrichment {
             let score = *count as f32 / max_count;
 
             // Idempotent: skip edges that already exist
-            if !may_be_related_exists(context, a, b) {
+            if !output_edge_exists(context, a, b, &self.output_relationship) {
                 let mut edge = Edge::new_in_dimension(
                     a.clone(),
                     b.clone(),
-                    "may_be_related",
+                    &self.output_relationship,
                     dimension::SEMANTIC,
                 );
                 edge.raw_weight = score;
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
             }
 
-            if !may_be_related_exists(context, b, a) {
+            if !output_edge_exists(context, b, a, &self.output_relationship) {
                 let mut edge = Edge::new_in_dimension(
                     b.clone(),
                     a.clone(),
-                    "may_be_related",
+                    &self.output_relationship,
                     dimension::SEMANTIC,
                 );
                 edge.raw_weight = score;
@@ -89,18 +110,18 @@ fn has_structural_events(events: &[GraphEvent]) -> bool {
     })
 }
 
-/// Build a reverse index (fragment → concepts) and count shared fragments
-/// for each concept pair. Returns canonical pairs with counts.
-fn detect_cooccurrence_pairs(context: &Context) -> HashMap<(NodeId, NodeId), usize> {
-    let mut fragment_to_concepts: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
+/// Build a reverse index (source → targets) and count shared sources
+/// for each target pair. Returns canonical pairs with counts.
+fn detect_cooccurrence_pairs(context: &Context, source_relationship: &str) -> HashMap<(NodeId, NodeId), usize> {
+    let mut source_to_targets: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
 
     for edge in context.edges() {
-        if edge.relationship != "tagged_with" {
+        if edge.relationship != source_relationship {
             continue;
         }
         if let Some(target_node) = context.get_node(&edge.target) {
             if target_node.content_type == ContentType::Concept {
-                fragment_to_concepts
+                source_to_targets
                     .entry(edge.source.clone())
                     .or_default()
                     .insert(edge.target.clone());
@@ -110,7 +131,7 @@ fn detect_cooccurrence_pairs(context: &Context) -> HashMap<(NodeId, NodeId), usi
 
     let mut pair_counts: HashMap<(NodeId, NodeId), usize> = HashMap::new();
 
-    for concepts in fragment_to_concepts.values() {
+    for concepts in source_to_targets.values() {
         let concepts_vec: Vec<_> = concepts.iter().collect();
         for i in 0..concepts_vec.len() {
             for j in (i + 1)..concepts_vec.len() {
@@ -127,10 +148,10 @@ fn detect_cooccurrence_pairs(context: &Context) -> HashMap<(NodeId, NodeId), usi
     pair_counts
 }
 
-/// Check if a `may_be_related` edge from source to target already exists.
-fn may_be_related_exists(context: &Context, source: &NodeId, target: &NodeId) -> bool {
+/// Check if an output edge from source to target already exists.
+fn output_edge_exists(context: &Context, source: &NodeId, target: &NodeId, relationship: &str) -> bool {
     context.edges().any(|e| {
-        e.source == *source && e.target == *target && e.relationship == "may_be_related"
+        e.source == *source && e.target == *target && e.relationship == relationship
     })
 }
 
