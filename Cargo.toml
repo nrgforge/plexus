@@ -30,7 +30,7 @@ pulldown-cmark = "0.10"
 serde_yaml = "0.9"
 
 # MCP server
-rmcp = { version = "0.14", features = ["server", "transport-io"] }
+rmcp = { version = "0.14", features = ["server", "client", "transport-io", "transport-child-process"] }
 schemars = { version = "1.0", features = ["chrono04"] }
 getrandom = "0.2"
 

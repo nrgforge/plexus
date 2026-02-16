@@ -10,8 +10,14 @@
 //! - On-demand graph analysis (ADR-023)
 
 use async_trait::async_trait;
+use rmcp::model::{CallToolRequestParams, Content};
+use rmcp::service::Peer;
+use rmcp::{RoleClient, ServiceExt};
+use rmcp::transport::TokioChildProcess;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
+use tokio::sync::Mutex;
 
 /// Result of invoking an llm-orc ensemble.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +172,159 @@ impl LlmOrcClient for MockClient {
     }
 }
 
+/// Production client — spawns `llm-orc m serve --transport stdio` and
+/// communicates via MCP JSON-RPC over stdin/stdout.
+///
+/// The subprocess is spawned lazily on first use and kept alive for the
+/// lifetime of the client. The MCP connection is guarded by a mutex so
+/// multiple concurrent callers are serialized (llm-orc processes one
+/// request at a time anyway).
+pub struct SubprocessClient {
+    /// The llm-orc command (default: "llm-orc")
+    command: String,
+    /// Project directory to set via `set_project` on first connect
+    project_dir: Option<String>,
+    /// Lazily-initialized MCP peer connection
+    peer: Mutex<Option<Peer<RoleClient>>>,
+}
+
+impl SubprocessClient {
+    /// Create a new subprocess client using the default `llm-orc` command.
+    pub fn new() -> Self {
+        Self {
+            command: "llm-orc".to_string(),
+            project_dir: None,
+            peer: Mutex::new(None),
+        }
+    }
+
+    /// Set a custom command path (e.g., for a virtualenv).
+    pub fn with_command(mut self, command: impl Into<String>) -> Self {
+        self.command = command.into();
+        self
+    }
+
+    /// Set a project directory — `set_project` will be called on first connect.
+    pub fn with_project_dir(mut self, dir: impl Into<String>) -> Self {
+        self.project_dir = Some(dir.into());
+        self
+    }
+
+    /// Establish the MCP connection (spawn subprocess + handshake).
+    async fn connect(&self) -> Result<Peer<RoleClient>, LlmOrcError> {
+        let mut cmd = tokio::process::Command::new(&self.command);
+        cmd.arg("m").arg("serve").arg("--transport").arg("stdio");
+
+        let transport = TokioChildProcess::new(cmd)
+            .map_err(|e| LlmOrcError::Unavailable(format!("failed to spawn llm-orc: {}", e)))?;
+
+        // () implements ClientHandler with sensible defaults (no-op handlers)
+        let service = ()
+            .serve(transport)
+            .await
+            .map_err(|e| LlmOrcError::Unavailable(format!("MCP handshake failed: {}", e)))?;
+
+        let peer = service.peer().clone();
+
+        // Set project directory if configured
+        if let Some(ref dir) = self.project_dir {
+            let mut args = serde_json::Map::new();
+            args.insert("path".to_string(), serde_json::Value::String(dir.clone()));
+            let _ = peer
+                .call_tool(CallToolRequestParams {
+                    meta: None,
+                    name: Cow::Borrowed("set_project"),
+                    arguments: Some(args),
+                    task: None,
+                })
+                .await;
+        }
+
+        Ok(peer)
+    }
+
+    /// Get or create the MCP peer connection.
+    async fn get_peer(&self) -> Result<Peer<RoleClient>, LlmOrcError> {
+        let mut guard = self.peer.lock().await;
+        if let Some(ref peer) = *guard {
+            return Ok(peer.clone());
+        }
+        let peer = self.connect().await?;
+        *guard = Some(peer.clone());
+        Ok(peer)
+    }
+
+    /// Call a tool on the llm-orc MCP server.
+    async fn call_tool(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<String, LlmOrcError> {
+        let peer = self.get_peer().await?;
+
+        let result = peer
+            .call_tool(CallToolRequestParams {
+                meta: None,
+                name: Cow::Owned(tool_name.to_string()),
+                arguments: Some(arguments),
+                task: None,
+            })
+            .await
+            .map_err(|e| LlmOrcError::InvocationFailed(format!("MCP call_tool failed: {}", e)))?;
+
+        if result.is_error == Some(true) {
+            let text = extract_text_content(&result.content);
+            return Err(LlmOrcError::InvocationFailed(text));
+        }
+
+        Ok(extract_text_content(&result.content))
+    }
+}
+
+/// Extract text from MCP Content items (concatenate all text items).
+fn extract_text_content(content: &[Content]) -> String {
+    content
+        .iter()
+        .filter_map(|c| c.as_text().map(|tc| tc.text.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[async_trait]
+impl LlmOrcClient for SubprocessClient {
+    async fn is_available(&self) -> bool {
+        // Try to connect and list tools — if it works, llm-orc is available
+        match self.get_peer().await {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    async fn invoke(
+        &self,
+        ensemble_name: &str,
+        input_data: &str,
+    ) -> Result<InvokeResponse, LlmOrcError> {
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "ensemble_name".to_string(),
+            serde_json::Value::String(ensemble_name.to_string()),
+        );
+        args.insert(
+            "input_data".to_string(),
+            serde_json::Value::String(input_data.to_string()),
+        );
+
+        let response_text = self.call_tool("invoke", args).await?;
+
+        // llm-orc returns the InvokeResponse as JSON text in the MCP content
+        let response: InvokeResponse = serde_json::from_str(&response_text)
+            .map_err(|e| LlmOrcError::ParseError(format!("failed to parse invoke response: {}", e)))?;
+
+        Ok(response)
+    }
+}
+
 /// Helper to construct an InvokeResponse for testing.
 pub fn mock_response(agents: Vec<(&str, &str)>) -> InvokeResponse {
     let mut results = HashMap::new();
@@ -224,5 +383,19 @@ mod tests {
 
         let err = client.invoke("nonexistent", "input").await.unwrap_err();
         assert!(matches!(err, LlmOrcError::EnsembleNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn subprocess_client_reports_unavailable_when_binary_missing() {
+        // Use a nonexistent command to ensure graceful handling
+        let client = SubprocessClient::new().with_command("__nonexistent_llm_orc_binary__");
+        assert!(!client.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn subprocess_client_invoke_fails_when_binary_missing() {
+        let client = SubprocessClient::new().with_command("__nonexistent_llm_orc_binary__");
+        let err = client.invoke("test", "input").await.unwrap_err();
+        assert!(matches!(err, LlmOrcError::Unavailable(_)));
     }
 }
