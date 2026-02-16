@@ -1895,7 +1895,7 @@ mod tests {
         // Verify contribution tracking
         for edge in &may_be_related {
             assert!(
-                edge.contributions.contains_key("co-occurrence"),
+                edge.contributions.contains_key("co_occurrence:tagged_with:may_be_related"),
                 "edge should have co-occurrence contribution"
             );
         }

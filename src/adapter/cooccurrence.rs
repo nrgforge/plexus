@@ -28,6 +28,7 @@ use std::collections::{HashMap, HashSet};
 pub struct CoOccurrenceEnrichment {
     source_relationship: String,
     output_relationship: String,
+    id: String,
 }
 
 impl CoOccurrenceEnrichment {
@@ -35,11 +36,13 @@ impl CoOccurrenceEnrichment {
         Self {
             source_relationship: "tagged_with".to_string(),
             output_relationship: "may_be_related".to_string(),
+            id: "co_occurrence:tagged_with:may_be_related".to_string(),
         }
     }
 
     pub fn with_relationships(source_relationship: &str, output_relationship: &str) -> Self {
         Self {
+            id: format!("co_occurrence:{}:{}", source_relationship, output_relationship),
             source_relationship: source_relationship.to_string(),
             output_relationship: output_relationship.to_string(),
         }
@@ -48,7 +51,7 @@ impl CoOccurrenceEnrichment {
 
 impl Enrichment for CoOccurrenceEnrichment {
     fn id(&self) -> &str {
-        "co-occurrence"
+        &self.id
     }
 
     fn enrich(&self, events: &[GraphEvent], context: &Context) -> Option<Emission> {
@@ -438,5 +441,39 @@ mod tests {
         // Verify contribution is normalized score
         let score = emission.edges[0].edge.raw_weight;
         assert_eq!(score, 1.0, "2 shared / 2 max = 1.0");
+    }
+
+    // --- Scenario: Parameterized enrichment has unique stable ID ---
+
+    #[test]
+    fn parameterized_id_from_relationships() {
+        let exhibits = CoOccurrenceEnrichment::with_relationships("exhibits", "co_exhibited");
+        assert_eq!(exhibits.id(), "co_occurrence:exhibits:co_exhibited");
+
+        let tagged = CoOccurrenceEnrichment::with_relationships("tagged_with", "may_be_related");
+        assert_eq!(tagged.id(), "co_occurrence:tagged_with:may_be_related");
+
+        // Default matches the tagged_with parameterization
+        let default = CoOccurrenceEnrichment::new();
+        assert_eq!(default.id(), "co_occurrence:tagged_with:may_be_related");
+
+        // Different params → different IDs
+        assert_ne!(exhibits.id(), tagged.id());
+    }
+
+    #[test]
+    fn distinct_instances_not_deduplicated_in_registry() {
+        use crate::adapter::enrichment::EnrichmentRegistry;
+        use std::sync::Arc;
+
+        let exhibits = Arc::new(
+            CoOccurrenceEnrichment::with_relationships("exhibits", "co_exhibited"),
+        ) as Arc<dyn Enrichment>;
+        let tagged = Arc::new(
+            CoOccurrenceEnrichment::with_relationships("tagged_with", "may_be_related"),
+        ) as Arc<dyn Enrichment>;
+
+        let registry = EnrichmentRegistry::new(vec![exhibits, tagged]);
+        assert_eq!(registry.enrichments().len(), 2, "distinct params → distinct instances");
     }
 }
