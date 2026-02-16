@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://plexus.dev/schemas/graph-export.schema.json",
+  "title": "Graph Export",
+  "description": "Context graph exported for llm-orc analysis ensembles. Produced by export_graph_for_analysis() in src/adapter/graph_analysis.rs.",
+  "type": "object",
+  "required": ["nodes", "edges", "node_count", "edge_count"],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "description": "All nodes in the context.",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "dimension", "label"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Node ID (e.g., 'concept:travel', 'file:/docs/example.md')."
+          },
+          "type": {
+            "type": "string",
+            "description": "Node type (e.g., 'concept', 'fragment', 'file', 'mark')."
+          },
+          "dimension": {
+            "type": "string",
+            "description": "Graph dimension (e.g., 'semantic', 'structure', 'provenance')."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable label from the node's 'label' property. Empty string if not set."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "edges": {
+      "type": "array",
+      "description": "All edges in the context.",
+      "items": {
+        "type": "object",
+        "required": ["source", "target", "relationship", "weight"],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source node ID."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target node ID."
+          },
+          "relationship": {
+            "type": "string",
+            "description": "Edge relationship type (e.g., 'tagged_with', 'may_be_related')."
+          },
+          "weight": {
+            "type": "number",
+            "description": "Raw weight of the edge."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "node_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of nodes (convenience field, equals nodes array length)."
+    },
+    "edge_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of edges (convenience field, equals edges array length)."
+    }
+  },
+  "additionalProperties": false
+}
