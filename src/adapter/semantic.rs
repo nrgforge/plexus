@@ -80,8 +80,9 @@ impl SemanticAdapter {
 
     /// Build the input payload for llm-orc from the extraction context.
     ///
+    /// Produces structured JSON conforming to `docs/schemas/phase2-output.schema.json`.
     /// Reads Phase 2 output from the shared context and serializes
-    /// relevant information (file path, extracted terms, sections) as text.
+    /// relevant information (file path, extracted terms, sections).
     /// When sections are present, includes them so llm-orc can chunk along
     /// structural boundaries (ADR-021 Scenario 3).
     fn build_input(
@@ -89,16 +90,22 @@ impl SemanticAdapter {
         input: &SemanticInput,
         context: Option<&Context>,
     ) -> String {
-        let mut parts = vec![format!("file: {}", input.file_path)];
+        let mut payload = serde_json::json!({
+            "file_path": input.file_path,
+        });
 
         // Include section boundaries from Phase 2
         if !input.sections.is_empty() {
-            let section_strs: Vec<String> = input
+            let sections: Vec<serde_json::Value> = input
                 .sections
                 .iter()
-                .map(|s| format!("{}:{}-{}", s.label, s.start_line, s.end_line))
+                .map(|s| serde_json::json!({
+                    "label": s.label,
+                    "start_line": s.start_line,
+                    "end_line": s.end_line,
+                }))
                 .collect();
-            parts.push(format!("sections: {}", section_strs.join(", ")));
+            payload["sections"] = serde_json::Value::Array(sections);
         }
 
         if let Some(ctx) = context {
@@ -115,7 +122,7 @@ impl SemanticAdapter {
                 .collect();
 
             if !concepts.is_empty() {
-                parts.push(format!("existing concepts: {}", concepts.join(", ")));
+                payload["existing_concepts"] = serde_json::json!(concepts);
             }
 
             // Include file metadata if available
@@ -124,12 +131,12 @@ impl SemanticAdapter {
                 if let Some(PropertyValue::String(mime)) =
                     file_node.properties.get("mime_type")
                 {
-                    parts.push(format!("mime_type: {}", mime));
+                    payload["mime_type"] = serde_json::Value::String(mime.clone());
                 }
             }
         }
 
-        parts.join("\n")
+        serde_json::to_string(&payload).expect("Phase 2 output serialization should not fail")
     }
 
     /// Parse llm-orc response into an emission of concept nodes and edges.
@@ -542,12 +549,22 @@ mod tests {
         );
 
         let payload = adapter.build_input(&input, None);
+        let parsed: serde_json::Value = serde_json::from_str(&payload)
+            .expect("build_input should produce valid JSON");
 
-        assert!(payload.contains("file: /docs/hamlet.txt"));
-        assert!(payload.contains("sections:"));
-        assert!(payload.contains("Act I:1-500"));
-        assert!(payload.contains("Act II:501-1000"));
-        assert!(payload.contains("Act III:1001-1500"));
+        assert_eq!(parsed["file_path"], "/docs/hamlet.txt");
+
+        let sections = parsed["sections"].as_array().expect("sections should be array");
+        assert_eq!(sections.len(), 3);
+        assert_eq!(sections[0]["label"], "Act I");
+        assert_eq!(sections[0]["start_line"], 1);
+        assert_eq!(sections[0]["end_line"], 500);
+        assert_eq!(sections[1]["label"], "Act II");
+        assert_eq!(sections[1]["start_line"], 501);
+        assert_eq!(sections[1]["end_line"], 1000);
+        assert_eq!(sections[2]["label"], "Act III");
+        assert_eq!(sections[2]["start_line"], 1001);
+        assert_eq!(sections[2]["end_line"], 1500);
     }
 
     #[tokio::test]
