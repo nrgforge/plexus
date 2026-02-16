@@ -97,7 +97,7 @@ adapter:
             source: "{artifact.id}"
             target: "concept:{tag | lowercase}"
             relationship: "tagged_with"
-            weight: 1.0
+            contribution: 1.0
 
     - create_provenance:
         chain_id: "chain:{adapter_id}:{input.source}"

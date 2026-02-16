@@ -59,11 +59,13 @@ Tags are expected to be single words or short normalized phrases. Compound tags 
 ### 3. ~~CoOccurrenceAdapter: reflexive adapter for concept co-occurrence~~ **UPDATED: CoOccurrenceEnrichment (Essay 09)**
 
 > **Status:** Updated. The CoOccurrenceAdapter has migrated from a reflexive adapter to an **enrichment** — a reactive component that runs in the enrichment loop after each emission. The algorithm is unchanged; the trigger model changed from schedule-based to event-driven. The enrichment receives graph events and a context snapshot, self-selects based on whether relevant changes occurred (new `tagged_with` edges or concept nodes), and terminates via idempotency.
+>
+> **Note (Essay 18, Invariant 50):** The fragment-specific language below describes the initial implementation. ADR-022 and Invariant 50 generalize CoOccurrenceEnrichment to be structure-aware: it fires for any pair of nodes connected via the configured relationship (not just fragment source nodes) and supports parameterized relationship types.
 
 The CoOccurrenceEnrichment:
 
-1. Builds a reverse index from `tagged_with` edges: fragment → concepts.
-2. Counts shared fragments for each concept pair.
+1. Builds a reverse index from `tagged_with` edges: source node → concepts.
+2. Counts shared source nodes for each concept pair.
 3. Computes co-occurrence scores: `count / max_count`.
 4. Emits `may_be_related` symmetric edge pairs between co-occurring concepts, with the co-occurrence score as the contribution value.
 
