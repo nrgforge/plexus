@@ -1,8 +1,9 @@
-//! CoOccurrenceEnrichment — concept co-occurrence detection (ADR-010, ADR-022)
+//! CoOccurrenceEnrichment — co-occurrence detection (ADR-010, ADR-022)
 //!
-//! Detects concepts that share source nodes (via a configured relationship)
+//! Detects nodes that share source nodes (via a configured relationship)
 //! and emits symmetric edge pairs with a configured output relationship.
-//! Co-occurrence score is `count / max_count`.
+//! Structure-aware: fires based on relationship, not node content type
+//! (Invariant 50). Co-occurrence score is `count / max_count`.
 //!
 //! Default: `tagged_with` → `may_be_related` (backward compatible).
 //! Parameterized: any source/output relationship pair (ADR-022).
@@ -16,12 +17,13 @@ use crate::adapter::types::{AnnotatedEdge, Emission};
 use crate::graph::{dimension, ContentType, Context, Edge, NodeId};
 use std::collections::{HashMap, HashSet};
 
-/// Enrichment that detects concept co-occurrence via shared source nodes.
+/// Enrichment that detects co-occurrence via shared source nodes.
 ///
-/// Scans the context for concepts sharing source nodes (via a configured
+/// Scans the context for nodes sharing source nodes (via a configured
 /// relationship) and emits symmetric edge pairs with a configured output
-/// relationship. Idempotent: checks for existing edges before emitting,
-/// so the enrichment loop reaches quiescence.
+/// relationship. Structure-aware: fires based on relationship, not node
+/// content type (Invariant 50). Idempotent: checks for existing edges
+/// before emitting, so the enrichment loop reaches quiescence.
 ///
 /// Default configuration: `tagged_with` → `may_be_related` (backward compatible).
 /// Parameterized instances use different relationships (ADR-022).
@@ -122,14 +124,11 @@ fn detect_cooccurrence_pairs(context: &Context, source_relationship: &str) -> Ha
         if edge.relationship != source_relationship {
             continue;
         }
-        if let Some(target_node) = context.get_node(&edge.target) {
-            if target_node.content_type == ContentType::Concept {
-                source_to_targets
-                    .entry(edge.source.clone())
-                    .or_default()
-                    .insert(edge.target.clone());
-            }
-        }
+        // Structure-aware: fire based on relationship, not node content type (Invariant 50)
+        source_to_targets
+            .entry(edge.source.clone())
+            .or_default()
+            .insert(edge.target.clone());
     }
 
     let mut pair_counts: HashMap<(NodeId, NodeId), usize> = HashMap::new();
@@ -459,6 +458,100 @@ mod tests {
 
         // Different params → different IDs
         assert_ne!(exhibits.id(), tagged.id());
+    }
+
+    // --- Scenario: Structure-aware enrichment fires for any source node type ---
+
+    #[test]
+    fn structure_aware_fires_for_any_source_node_type() {
+        let enrichment = CoOccurrenceEnrichment::new();
+
+        let mut ctx = Context::new("test");
+
+        // Fragment source node (ContentType::Document)
+        let mut fragment = Node::new("fragment", ContentType::Document);
+        fragment.id = NodeId::from_string("fragment-1");
+        ctx.add_node(fragment);
+
+        // Artifact source node (ContentType::Code — different type)
+        let mut artifact = Node::new("artifact", ContentType::Code);
+        artifact.id = NodeId::from_string("artifact-1");
+        ctx.add_node(artifact);
+
+        // Target nodes — deliberately use ContentType::Document (NOT Concept)
+        // to verify the enrichment fires based on relationship structure,
+        // not target node content type (Invariant 50).
+        for tag in &["alpha", "bravo", "charlie"] {
+            let mut target = Node::new("section", ContentType::Document);
+            target.id = NodeId::from_string(&format!("section:{}", tag));
+            target.dimension = dimension::SEMANTIC.to_string();
+            ctx.add_node(target);
+        }
+
+        // Fragment tagged_with A and B
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("fragment-1"),
+            NodeId::from_string("section:alpha"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("fragment-1"),
+            NodeId::from_string("section:bravo"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+
+        // Artifact tagged_with B and C
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("artifact-1"),
+            NodeId::from_string("section:bravo"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("artifact-1"),
+            NodeId::from_string("section:charlie"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+
+        let emission = enrichment
+            .enrich(&[edges_added_event()], &ctx)
+            .expect("should emit co-occurrence edges");
+
+        let alpha = NodeId::from_string("section:alpha");
+        let bravo = NodeId::from_string("section:bravo");
+        let charlie = NodeId::from_string("section:charlie");
+
+        // A↔B co-occur via fragment-1
+        let has_ab = emission.edges.iter().any(|ae| {
+            ae.edge.source == alpha && ae.edge.target == bravo
+                && ae.edge.relationship == "may_be_related"
+        });
+        let has_ba = emission.edges.iter().any(|ae| {
+            ae.edge.source == bravo && ae.edge.target == alpha
+                && ae.edge.relationship == "may_be_related"
+        });
+
+        // B↔C co-occur via artifact-1
+        let has_bc = emission.edges.iter().any(|ae| {
+            ae.edge.source == bravo && ae.edge.target == charlie
+                && ae.edge.relationship == "may_be_related"
+        });
+        let has_cb = emission.edges.iter().any(|ae| {
+            ae.edge.source == charlie && ae.edge.target == bravo
+                && ae.edge.relationship == "may_be_related"
+        });
+
+        assert!(has_ab, "alpha→bravo via fragment source");
+        assert!(has_ba, "bravo→alpha via fragment source");
+        assert!(has_bc, "bravo→charlie via artifact source");
+        assert!(has_cb, "charlie→bravo via artifact source");
+
+        // A↔B via fragment, B↔C via artifact. No source has both A and C.
+        // 2 pairs × 2 symmetric = 4 edges
+        assert_eq!(emission.edges.len(), 4, "2 co-occurring pairs × 2 symmetric edges");
     }
 
     #[test]
