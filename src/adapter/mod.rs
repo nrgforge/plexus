@@ -5,6 +5,7 @@
 
 mod cancel;
 pub mod cooccurrence;
+pub mod declarative;
 mod engine_sink;
 mod enrichment;
 mod events;
@@ -32,6 +33,7 @@ pub use types::{
     Annotation, AnnotatedEdge, AnnotatedNode, EdgeRemoval, Emission, OutboundEvent, Removal,
 };
 pub use cooccurrence::CoOccurrenceEnrichment;
+pub use declarative::DeclarativeAdapter;
 pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
