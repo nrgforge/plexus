@@ -11,6 +11,7 @@ mod enrichment;
 mod events;
 pub mod extraction;
 pub mod fragment;
+pub mod graph_analysis;
 mod ingest;
 #[cfg(test)]
 mod integration_tests;
@@ -37,6 +38,7 @@ pub use types::{
 pub use cooccurrence::CoOccurrenceEnrichment;
 pub use declarative::DeclarativeAdapter;
 pub use extraction::ExtractionCoordinator;
+pub use graph_analysis::GraphAnalysisAdapter;
 pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
