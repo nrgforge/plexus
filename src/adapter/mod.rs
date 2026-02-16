@@ -39,7 +39,7 @@ pub use types::{
 pub use cooccurrence::CoOccurrenceEnrichment;
 pub use declarative::DeclarativeAdapter;
 pub use extraction::ExtractionCoordinator;
-pub use graph_analysis::GraphAnalysisAdapter;
+pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};
 pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};

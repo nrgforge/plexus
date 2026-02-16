@@ -6,8 +6,13 @@
 
 use clap::{Parser, Subcommand};
 use plexus::{Context, ContextId, OpenStore, PlexusEngine, Source, SqliteStore};
+use plexus::adapter::{
+    Adapter, GraphAnalysisAdapter, run_analysis,
+    AdapterInput, EngineSink, FrameworkContext,
+};
+use plexus::llm_orc::SubprocessClient;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Parser)]
 #[command(
@@ -27,6 +32,17 @@ enum Commands {
         /// Transport type (currently only stdio)
         #[arg(long, default_value = "stdio")]
         transport: String,
+        /// Path to SQLite database file
+        #[arg(long)]
+        db: Option<PathBuf>,
+    },
+    /// Run graph analysis on a context via llm-orc
+    Analyze {
+        /// Name of the context to analyze
+        name: String,
+        /// llm-orc ensemble name for graph analysis
+        #[arg(long, default_value = "graph-analysis")]
+        ensemble: String,
         /// Path to SQLite database file
         #[arg(long)]
         db: Option<PathBuf>,
@@ -271,6 +287,80 @@ fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &PathBuf) 
     }
 }
 
+async fn cmd_analyze(engine: &PlexusEngine, context_name: &str, ensemble: &str) -> i32 {
+    let ctx_id = match find_context_by_name(engine, context_name) {
+        Some(id) => id,
+        None => {
+            eprintln!("Error: context '{}' not found", context_name);
+            return 1;
+        }
+    };
+
+    let ctx = match engine.get_context(&ctx_id) {
+        Some(c) => c,
+        None => {
+            eprintln!("Error: context '{}' not found", context_name);
+            return 1;
+        }
+    };
+
+    println!(
+        "Analyzing context '{}' ({} nodes, {} edges)...",
+        context_name,
+        ctx.node_count(),
+        ctx.edge_count()
+    );
+
+    let client = SubprocessClient::new();
+
+    let results = match run_analysis(&client, ensemble, &ctx).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+
+    if results.is_empty() {
+        println!("No analysis results returned.");
+        return 0;
+    }
+
+    // Apply each algorithm's results via its adapter
+    let shared_ctx = Arc::new(Mutex::new(ctx.clone()));
+    let mut total_updates = 0;
+
+    for (algo_name, input) in &results {
+        let adapter = GraphAnalysisAdapter::new(algo_name.as_str());
+        let sink = EngineSink::new(shared_ctx.clone()).with_framework_context(FrameworkContext {
+            adapter_id: adapter.id().to_string(),
+            context_id: ctx_id.to_string(),
+            input_summary: Some(format!("analysis:{}", algo_name)),
+        });
+
+        let adapter_input = AdapterInput::new(adapter.input_kind(), input.clone(), &ctx_id.to_string());
+        match adapter.process(&adapter_input, &sink).await {
+            Ok(()) => {
+                println!("  {} — {} node updates", algo_name, input.results.len());
+                total_updates += input.results.len();
+            }
+            Err(e) => {
+                eprintln!("  {} — failed: {}", algo_name, e);
+            }
+        }
+    }
+
+    // Save the updated context back to the engine
+    let updated_ctx = shared_ctx.lock().unwrap().clone();
+    if let Err(e) = engine.upsert_context(updated_ctx) {
+        eprintln!("Error saving context: {}", e);
+        return 1;
+    }
+
+    println!("Done. {} property updates applied.", total_updates);
+    0
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
@@ -281,6 +371,19 @@ fn main() {
             }
             let db_path = db.unwrap_or_else(default_db_path);
             let code = plexus::mcp::run_mcp_server(db_path);
+            std::process::exit(code);
+        }
+        Commands::Analyze { name, ensemble, db } => {
+            let engine = match open_engine(db) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let code = tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(cmd_analyze(&engine, &name, &ensemble));
             std::process::exit(code);
         }
         Commands::Context { action, db } => {
