@@ -1,0 +1,191 @@
+# llm-orc Integration Test Drive Log
+
+**Date:** 2026-02-16
+**Context:** ADRs 019-023 (Phased Extraction) closed out. First end-to-end test of the Plexus → llm-orc graph analysis pipeline via MCP.
+
+---
+
+## Goal
+
+Verify that the graph analysis pipeline works end-to-end: Plexus exports a context graph → llm-orc runs PageRank + community detection scripts → results come back as property updates ready for `GraphAnalysisAdapter` ingestion.
+
+Both the Plexus MCP server and llm-orc MCP server are available in the same Claude Code session, so we can orchestrate the full loop manually.
+
+---
+
+## What Worked
+
+1. **Ensemble creation and validation.** Created `plexus-graph-analysis` ensemble with two parallel script agents (pagerank, community detection). Validated via `validate_ensemble`.
+
+2. **Script execution.** Both Python scripts (`run_pagerank.py`, `run_communities.py`) run correctly when invoked directly via stdin.
+
+3. **End-to-end invocation.** `invoke` on the ensemble with a 5-node, 8-edge graph returned correct results:
+   - **PageRank**: all nodes scored 0.2 (correct for symmetric bidirectional graph — equal authority)
+   - **Community detection**: found two clusters — `{travel, avignon, provence}` and `{jazz, improv}` — exactly the expected geography/music split
+
+4. **analysis-result schema compliance.** Both scripts output `{"updates": [{"node_id": "...", "properties": {...}}]}`, matching `docs/schemas/analysis-result.schema.json`.
+
+---
+
+## Issues Encountered
+
+### Issue 1: Agent `type: script` required but not documented
+
+**Symptom:** Validation error: "Agent has no model_profile configured"
+
+**Cause:** The ensemble YAML initially had agents without `type: script`. Without this field, llm-orc assumes the agent is an LLM agent and requires a `model_profile`.
+
+**Fix:** Added `type: script` to each agent in the ensemble YAML.
+
+**Lesson:** Script agents must explicitly declare `type: script`. The `create_ensemble` MCP tool doesn't infer this from the presence of a `script` field.
+
+### Issue 2: Script path resolution depends on MCP server cwd
+
+**Symptom:** "Script not found" errors when using relative paths like `scripts/specialized/plexus/run_pagerank.py`.
+
+**Cause:** The llm-orc MCP server resolves script paths relative to its own working directory, which may differ from the `.llm-orc/` project directory. When the MCP server is spawned by Claude Code for the Plexus project, its cwd is the Plexus project root, not the llm-orc project root.
+
+**Fix (temporary):** Used absolute paths in the ensemble YAML. This works for local development but isn't portable.
+
+**Fix (proper):** Keep scripts and ensembles in the consuming project's `.llm-orc/` directory. The llm-orc MCP server resolves paths relative to the `set_project` directory. See [Local .llm-orc Directory](#local-llm-orc-directory) below.
+
+### Issue 3: llm-orc wraps script input in an envelope
+
+**Symptom:** Scripts received `{"input": "<json string>", "parameters": {...}, "context": {}}` instead of raw graph JSON. Scripts looked for `config["nodes"]` at the top level and found nothing → empty results.
+
+**Cause:** llm-orc has two input wrapping formats:
+
+1. **ScriptAgentInput format:** `{"agent_name": "...", "input_data": "<json string>", "context": {}, "dependencies": {}}`
+2. **Legacy wrapper format:** `{"input": "<json string or dict>", "parameters": {...}, "context": {}}`
+
+The `invoke` MCP tool uses the legacy format for script agents. The actual graph data is nested inside the `"input"` field, and ensemble-level `parameters` are in the `"parameters"` field.
+
+**Fix:** Added `unwrap_input()` helper to both scripts that handles all three formats (ScriptAgentInput, legacy wrapper, and direct invocation). Returns `(data_dict, parameters_dict)` tuple.
+
+**Lesson:** Any script intended for llm-orc execution must handle input envelope unwrapping. This should be documented or extracted into a shared utility.
+
+### Issue 4: Large JSON payloads may fail silently
+
+**Symptom:** A 5-node graph with extra `type` and `properties` fields on each node returned empty results, while the same graph with minimal node structure (`{"id": "..."}` only) worked.
+
+**Cause:** Likely a JSON escaping or size issue in the MCP transport layer when the `input_data` string parameter is large. The exact threshold wasn't determined.
+
+**Workaround:** Keep node objects minimal in graph exports — `id` is the only required field for the analysis scripts. Additional properties can be included but may hit transport limits for large graphs.
+
+**Status:** Not fully diagnosed. May be a double-escaping issue rather than a size issue. Needs further investigation with stderr logging.
+
+---
+
+## Local .llm-orc Directory
+
+Plexus now has its own `.llm-orc/` directory with:
+
+```
+.llm-orc/
+├── ensembles/
+│   ├── plexus-graph-analysis.yaml    ← NEW: PageRank + community detection
+│   ├── plexus-semantic.yaml          ← existing: LLM semantic extraction
+│   ├── plexus-semantic-v2.yaml       ← existing
+│   └── ... (other existing ensembles)
+├── scripts/
+│   ├── chunker.sh                    ← existing
+│   └── specialized/
+│       └── plexus/
+│           ├── run_pagerank.py       ← NEW
+│           └── run_communities.py    ← NEW
+├── profiles/
+│   ├── ollama-gemma3-1b.yaml
+│   └── ollama-llama3.yaml
+└── artifacts/                        ← execution artifacts from test runs
+```
+
+The ensemble uses relative paths (`scripts/specialized/plexus/run_pagerank.py`) so it's portable — as long as `set_project` points to the Plexus project root.
+
+The canonical copies also exist in `llm-orchestra-library/scripts/specialized/plexus/` (the llm-orc library submodule) for reuse by other projects.
+
+---
+
+## Script Input Contract
+
+All Plexus scripts for llm-orc must handle the envelope unwrapping pattern:
+
+```python
+def unwrap_input(raw_json):
+    """Unwrap llm-orc envelope to get actual data and parameters.
+
+    Handles three formats:
+    1. ScriptAgentInput: {"agent_name": "...", "input_data": "<json>", ...}
+    2. Legacy wrapper:   {"input": "<json or dict>", "parameters": {...}, ...}
+    3. Direct:           {"nodes": [...], "edges": [...], ...}
+
+    Returns (data_dict, parameters_dict).
+    """
+    envelope = json.loads(raw_json) if raw_json.strip() else {}
+
+    # Format 1: ScriptAgentInput
+    input_data = envelope.get("input_data", "")
+    if isinstance(input_data, str) and input_data.strip():
+        try:
+            return json.loads(input_data), envelope.get("parameters", {}) or {}
+        except json.JSONDecodeError:
+            pass
+
+    # Format 2: Legacy wrapper
+    if "input" in envelope and "parameters" in envelope:
+        inner = envelope["input"]
+        params = envelope.get("parameters", {}) or {}
+        if isinstance(inner, str) and inner.strip():
+            try:
+                return json.loads(inner), params
+            except json.JSONDecodeError:
+                return envelope, params
+        if isinstance(inner, dict):
+            return inner, params
+
+    # Format 3: Direct
+    return envelope, {}
+```
+
+---
+
+## Data Flow (Verified)
+
+```
+Plexus Context
+  │
+  ▼
+export_graph_for_analysis()  →  graph-export JSON
+  │                              (docs/schemas/graph-export.schema.json)
+  ▼
+llm-orc invoke("plexus-graph-analysis", graph_json)
+  │
+  ├──► run_pagerank.py    →  {"updates": [{"node_id": "...", "properties": {"pagerank_score": 0.2}}]}
+  │
+  └──► run_communities.py →  {"updates": [{"node_id": "...", "properties": {"community": 0}}]}
+  │
+  ▼
+Merge results (analysis-result JSON)
+  │                         (docs/schemas/analysis-result.schema.json)
+  ▼
+parse_analysis_response()  →  Vec<(NodeId, PropertyMap)>
+  │
+  ▼
+GraphAnalysisAdapter.process()  →  property update emissions
+  │
+  ▼
+Context (nodes now have pagerank_score, community properties)
+```
+
+Steps verified end-to-end through MCP: export → invoke → parse. The `GraphAnalysisAdapter` ingestion step exists in code (`src/adapter/graph_analysis.rs`) but wasn't exercised in this test drive — that requires the full Plexus → llm-orc → Plexus round-trip via `plexus analyze` CLI or a programmatic call.
+
+---
+
+## Next Steps
+
+1. **Exercise `plexus analyze` CLI** — the full round-trip: Plexus exports graph, spawns llm-orc subprocess, receives results, ingests via `GraphAnalysisAdapter`. This is already wired in code but untested with real data.
+
+2. **Investigate large payload issue** — determine whether the empty-result failure with `concept:`-prefixed node IDs is a size limit, escaping bug, or something else in the MCP transport.
+
+3. **Extract `unwrap_input` to shared utility** — if more Plexus scripts are added, the envelope handling should be a reusable module rather than copy-pasted.
+
+4. **Test semantic extraction ensemble** — the `plexus-semantic-extraction` ensemble (chunker + LLM concept extractor + synthesizer) requires an Ollama model. Test when local LLM is available.

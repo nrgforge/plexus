@@ -1,0 +1,20 @@
+name: plexus-graph-analysis
+description: >
+  Run PageRank and community detection on a Plexus context graph.
+  Input: graph-export JSON (docs/schemas/graph-export.schema.json).
+  Output: per-algorithm property updates (docs/schemas/analysis-result.schema.json).
+
+agents:
+  - name: pagerank
+    type: script
+    script: scripts/specialized/plexus/run_pagerank.py
+    parameters:
+      damping: 0.85
+      max_iterations: 100
+      tolerance: 1.0e-06
+
+  - name: community
+    type: script
+    script: scripts/specialized/plexus/run_communities.py
+    parameters:
+      resolution: 1
