@@ -1,8 +1,11 @@
-//! TagConceptBridger enrichment (ADR-009 + ADR-010)
+//! TagConceptBridger enrichment (ADR-009, ADR-010, ADR-022)
 //!
 //! Bridges marks and concepts bidirectionally via tag matching:
-//! - New mark with tags → references edges to matching concepts
-//! - New concept → references edges from existing marks with matching tags
+//! - New mark with tags → bridge edges to matching concepts
+//! - New concept → bridge edges from existing marks with matching tags
+//!
+//! Default relationship: `references` (backward compatible).
+//! Parameterized instances use a different relationship (ADR-022).
 //!
 //! Idempotent: checks for existing edges before emitting.
 
@@ -12,20 +15,35 @@ use super::types::Emission;
 use crate::graph::{dimension, Context, Edge, NodeId, PropertyValue};
 use std::collections::HashSet;
 
-/// Enrichment that creates cross-dimensional `references` edges
-/// between marks (provenance) and concepts (semantic) when their
-/// tags match.
-pub struct TagConceptBridger;
+/// Enrichment that creates cross-dimensional edges between marks
+/// (provenance) and concepts (semantic) when their tags match.
+///
+/// Default relationship: `references` (backward compatible).
+/// Parameterized instances use a different relationship (ADR-022).
+pub struct TagConceptBridger {
+    relationship: String,
+    id: String,
+}
 
 impl TagConceptBridger {
     pub fn new() -> Self {
-        Self
+        Self {
+            relationship: "references".to_string(),
+            id: "tag_bridger:references".to_string(),
+        }
+    }
+
+    pub fn with_relationship(relationship: &str) -> Self {
+        Self {
+            id: format!("tag_bridger:{}", relationship),
+            relationship: relationship.to_string(),
+        }
     }
 }
 
 impl Enrichment for TagConceptBridger {
     fn id(&self) -> &str {
-        "tag-bridger"
+        &self.id
     }
 
     fn enrich(&self, events: &[GraphEvent], context: &Context) -> Option<Emission> {
@@ -42,10 +60,10 @@ impl Enrichment for TagConceptBridger {
                             let concept_tag = &node_id.to_string()["concept:".len()..];
                             for mark in context.nodes().filter(|n| n.dimension == dimension::PROVENANCE) {
                                 if mark_has_tag(&mark, concept_tag)
-                                    && !references_edge_exists(context, &mark.id, node_id)
+                                    && !bridge_edge_exists(context, &mark.id, node_id, &self.relationship)
                                 {
                                     emission = emission.with_edge(
-                                        make_references_edge(&mark.id, node_id),
+                                        make_bridge_edge(&mark.id, node_id, &self.relationship),
                                     );
                                 }
                             }
@@ -59,10 +77,10 @@ impl Enrichment for TagConceptBridger {
                                 let concept_id =
                                     NodeId::from_string(format!("concept:{}", tag));
                                 if context.get_node(&concept_id).is_some()
-                                    && !references_edge_exists(context, node_id, &concept_id)
+                                    && !bridge_edge_exists(context, node_id, &concept_id, &self.relationship)
                                 {
                                     emission = emission.with_edge(
-                                        make_references_edge(node_id, &concept_id),
+                                        make_bridge_edge(node_id, &concept_id, &self.relationship),
                                     );
                                 }
                             }
@@ -105,21 +123,21 @@ fn extract_normalized_tags(node: &crate::graph::Node) -> impl Iterator<Item = St
         })
 }
 
-/// Check if a `references` edge from source to target already exists.
-fn references_edge_exists(context: &Context, source: &NodeId, target: &NodeId) -> bool {
+/// Check if a bridge edge from source to target with the given relationship already exists.
+fn bridge_edge_exists(context: &Context, source: &NodeId, target: &NodeId, relationship: &str) -> bool {
     context.edges().any(|e| {
-        e.source == *source && e.target == *target && e.relationship == "references"
+        e.source == *source && e.target == *target && e.relationship == relationship
     })
 }
 
-/// Create a cross-dimensional `references` edge from mark (provenance) to concept (semantic).
-fn make_references_edge(mark_id: &NodeId, concept_id: &NodeId) -> crate::adapter::types::AnnotatedEdge {
+/// Create a cross-dimensional bridge edge from mark (provenance) to concept (semantic).
+fn make_bridge_edge(mark_id: &NodeId, concept_id: &NodeId, relationship: &str) -> crate::adapter::types::AnnotatedEdge {
     let mut edge = Edge::new_cross_dimensional(
         mark_id.clone(),
         dimension::PROVENANCE,
         concept_id.clone(),
         dimension::SEMANTIC,
-        "references",
+        relationship,
     );
     edge.raw_weight = 1.0;
     crate::adapter::types::AnnotatedEdge::new(edge)
