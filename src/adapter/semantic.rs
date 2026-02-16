@@ -20,8 +20,47 @@ use crate::llm_orc::{LlmOrcClient, LlmOrcError};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// Input for the semantic adapter (same as extraction coordinator).
-pub use crate::adapter::extraction::ExtractFileInput;
+/// Input for the semantic adapter.
+///
+/// Extends the basic file path with optional section boundaries from Phase 2.
+/// When sections are present, llm-orc can chunk the document along structural
+/// boundaries for parallel fan-out (ADR-021 Scenario 3).
+#[derive(Debug, Clone)]
+pub struct SemanticInput {
+    pub file_path: String,
+    /// Section boundaries identified by Phase 2 (heuristic analysis).
+    /// Each entry is (label, start_line, end_line). Empty = process whole file.
+    pub sections: Vec<SectionBoundary>,
+}
+
+/// A structural boundary identified by Phase 2 analysis.
+#[derive(Debug, Clone)]
+pub struct SectionBoundary {
+    pub label: String,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+impl SemanticInput {
+    /// Create input for a single file with no section boundaries.
+    pub fn for_file(file_path: impl Into<String>) -> Self {
+        Self {
+            file_path: file_path.into(),
+            sections: Vec::new(),
+        }
+    }
+
+    /// Create input with section boundaries from Phase 2.
+    pub fn with_sections(
+        file_path: impl Into<String>,
+        sections: Vec<SectionBoundary>,
+    ) -> Self {
+        Self {
+            file_path: file_path.into(),
+            sections,
+        }
+    }
+}
 
 /// Phase 3 semantic adapter — delegates to llm-orc for concept extraction.
 pub struct SemanticAdapter {
@@ -43,8 +82,24 @@ impl SemanticAdapter {
     ///
     /// Reads Phase 2 output from the shared context and serializes
     /// relevant information (file path, extracted terms, sections) as text.
-    fn build_input(&self, file_path: &str, context: Option<&Context>) -> String {
-        let mut parts = vec![format!("file: {}", file_path)];
+    /// When sections are present, includes them so llm-orc can chunk along
+    /// structural boundaries (ADR-021 Scenario 3).
+    fn build_input(
+        &self,
+        input: &SemanticInput,
+        context: Option<&Context>,
+    ) -> String {
+        let mut parts = vec![format!("file: {}", input.file_path)];
+
+        // Include section boundaries from Phase 2
+        if !input.sections.is_empty() {
+            let section_strs: Vec<String> = input
+                .sections
+                .iter()
+                .map(|s| format!("{}:{}-{}", s.label, s.start_line, s.end_line))
+                .collect();
+            parts.push(format!("sections: {}", section_strs.join(", ")));
+        }
 
         if let Some(ctx) = context {
             // Collect existing concepts (from Phase 1 frontmatter + Phase 2 analysis)
@@ -64,7 +119,7 @@ impl SemanticAdapter {
             }
 
             // Include file metadata if available
-            let file_node_id = NodeId::from_string(format!("file:{}", file_path));
+            let file_node_id = NodeId::from_string(format!("file:{}", input.file_path));
             if let Some(file_node) = ctx.get_node(&file_node_id) {
                 if let Some(PropertyValue::String(mime)) =
                     file_node.properties.get("mime_type")
@@ -201,11 +256,11 @@ impl Adapter for SemanticAdapter {
         input: &AdapterInput,
         sink: &dyn AdapterSink,
     ) -> Result<(), AdapterError> {
-        let file_input = input
-            .downcast_data::<ExtractFileInput>()
+        let semantic_input = input
+            .downcast_data::<SemanticInput>()
             .ok_or(AdapterError::InvalidInput)?;
 
-        let file_path = &file_input.file_path;
+        let file_path = &semantic_input.file_path;
 
         // Check availability — graceful degradation (Invariant 47)
         if !self.client.is_available().await {
@@ -214,8 +269,8 @@ impl Adapter for SemanticAdapter {
             ));
         }
 
-        // Build input from Phase 2 context
-        let input_text = self.build_input(file_path, None);
+        // Build input from Phase 2 context, including section boundaries
+        let input_text = self.build_input(semantic_input, None);
 
         // Invoke llm-orc ensemble
         let response = self
@@ -332,9 +387,7 @@ mod tests {
 
         let input = AdapterInput::new(
             "extract-semantic",
-            ExtractFileInput {
-                file_path: "/docs/example.md".to_string(),
-            },
+            SemanticInput::for_file("/docs/example.md"),
             "test",
         );
 
@@ -395,9 +448,7 @@ mod tests {
 
         let input = AdapterInput::new(
             "extract-semantic",
-            ExtractFileInput {
-                file_path: "/docs/example.md".to_string(),
-            },
+            SemanticInput::for_file("/docs/example.md"),
             "test",
         );
 
@@ -442,9 +493,7 @@ mod tests {
 
         let input = AdapterInput::new(
             "extract-semantic",
-            ExtractFileInput {
-                file_path: "/docs/empty.md".to_string(),
-            },
+            SemanticInput::for_file("/docs/empty.md"),
             "test",
         );
 
@@ -462,5 +511,160 @@ mod tests {
         let adapter = SemanticAdapter::new(client, "any-ensemble");
         assert_eq!(adapter.id(), "extract-semantic");
         assert_eq!(adapter.input_kind(), "extract-semantic");
+    }
+
+    // --- Scenario: Long document chunking via Phase 2 boundaries (ADR-021) ---
+
+    #[test]
+    fn build_input_includes_section_boundaries() {
+        let client = Arc::new(MockClient::unavailable());
+        let adapter = SemanticAdapter::new(client, "semantic-extraction");
+
+        let input = SemanticInput::with_sections(
+            "/docs/hamlet.txt",
+            vec![
+                SectionBoundary {
+                    label: "Act I".to_string(),
+                    start_line: 1,
+                    end_line: 500,
+                },
+                SectionBoundary {
+                    label: "Act II".to_string(),
+                    start_line: 501,
+                    end_line: 1000,
+                },
+                SectionBoundary {
+                    label: "Act III".to_string(),
+                    start_line: 1001,
+                    end_line: 1500,
+                },
+            ],
+        );
+
+        let payload = adapter.build_input(&input, None);
+
+        assert!(payload.contains("file: /docs/hamlet.txt"));
+        assert!(payload.contains("sections:"));
+        assert!(payload.contains("Act I:1-500"));
+        assert!(payload.contains("Act II:501-1000"));
+        assert!(payload.contains("Act III:1001-1500"));
+    }
+
+    #[tokio::test]
+    async fn chunked_document_produces_per_section_concepts() {
+        // Mock llm-orc returns concepts that span multiple sections
+        let llm_response = r#"{
+            "concepts": [
+                { "label": "revenge", "confidence": 0.95 },
+                { "label": "madness", "confidence": 0.88 },
+                { "label": "mortality", "confidence": 0.91 }
+            ],
+            "relationships": [
+                {
+                    "source": "madness",
+                    "target": "revenge",
+                    "relationship": "consequence_of",
+                    "weight": 0.7
+                }
+            ]
+        }"#;
+
+        let mock_client = Arc::new(
+            MockClient::available().with_response(
+                "semantic-extraction",
+                crate::llm_orc::InvokeResponse {
+                    results: {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert(
+                            "concept-extractor".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(llm_response.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m
+                    },
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        );
+
+        let adapter = SemanticAdapter::new(mock_client, "semantic-extraction");
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+
+        // Pre-populate with file node (from Phase 1)
+        {
+            let mut c = ctx.lock().unwrap();
+            let mut file_node = Node::new_in_dimension(
+                "file",
+                ContentType::Document,
+                dimension::STRUCTURE,
+            );
+            file_node.id = NodeId::from_string("file:/docs/hamlet.txt");
+            c.add_node(file_node);
+        }
+
+        let sink = test_sink(ctx.clone());
+
+        // Input with section boundaries (simulating Phase 2 output)
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::with_sections(
+                "/docs/hamlet.txt",
+                vec![
+                    SectionBoundary {
+                        label: "Act I".to_string(),
+                        start_line: 1,
+                        end_line: 500,
+                    },
+                    SectionBoundary {
+                        label: "Act II".to_string(),
+                        start_line: 501,
+                        end_line: 1000,
+                    },
+                ],
+            ),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        // Concepts extracted (llm-orc handled the fan-out internally)
+        assert!(
+            snapshot
+                .get_node(&NodeId::from_string("concept:revenge"))
+                .is_some(),
+            "revenge concept extracted"
+        );
+        assert!(
+            snapshot
+                .get_node(&NodeId::from_string("concept:madness"))
+                .is_some(),
+            "madness concept extracted"
+        );
+        assert!(
+            snapshot
+                .get_node(&NodeId::from_string("concept:mortality"))
+                .is_some(),
+            "mortality concept extracted"
+        );
+
+        // Relationship between concepts
+        let rel_edges: Vec<_> = snapshot
+            .edges()
+            .filter(|e| e.relationship == "consequence_of")
+            .collect();
+        assert_eq!(rel_edges.len(), 1);
+
+        // tagged_with edges from file to concepts
+        let tagged_edges: Vec<_> = snapshot
+            .edges()
+            .filter(|e| e.relationship == "tagged_with")
+            .collect();
+        assert_eq!(tagged_edges.len(), 3, "three tagged_with edges");
     }
 }
