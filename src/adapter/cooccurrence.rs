@@ -554,6 +554,110 @@ mod tests {
         assert_eq!(emission.edges.len(), 4, "2 co-occurring pairs × 2 symmetric edges");
     }
 
+    // --- OQ-12: Enrichment quiescence with heterogeneous sources ---
+
+    #[test]
+    fn quiescence_with_heterogeneous_sources() {
+        // OQ-12: Verify that CoOccurrenceEnrichment reaches quiescence
+        // when source nodes come from heterogeneous adapters (Document + Code).
+        //
+        // Build a context with two source types, both connected to shared
+        // concepts via tagged_with. Run the enrichment loop (not just one
+        // enrich() call) and assert quiescence in exactly 2 rounds:
+        // round 1 = productive, round 2 = quiescent.
+
+        let enrichment = CoOccurrenceEnrichment::new();
+        let mut ctx = Context::new("test");
+
+        // Document source node (e.g., from FragmentAdapter)
+        let mut doc = Node::new("fragment", ContentType::Document);
+        doc.id = NodeId::from_string("doc-1");
+        ctx.add_node(doc);
+
+        // Code source node (e.g., from a code analysis adapter)
+        let mut code = Node::new("source-file", ContentType::Code);
+        code.id = NodeId::from_string("code-1");
+        ctx.add_node(code);
+
+        // Shared concept nodes in semantic dimension
+        for tag in &["concurrency", "async", "performance"] {
+            let mut concept = Node::new("concept", ContentType::Concept);
+            concept.id = NodeId::from_string(&format!("concept:{}", tag));
+            concept.dimension = dimension::SEMANTIC.to_string();
+            ctx.add_node(concept);
+        }
+
+        // Document tagged_with concurrency + async
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("doc-1"),
+            NodeId::from_string("concept:concurrency"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("doc-1"),
+            NodeId::from_string("concept:async"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+
+        // Code tagged_with async + performance
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("code-1"),
+            NodeId::from_string("concept:async"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+        ctx.add_edge(Edge::new_in_dimension(
+            NodeId::from_string("code-1"),
+            NodeId::from_string("concept:performance"),
+            "tagged_with",
+            dimension::SEMANTIC,
+        ));
+
+        // --- Round 1: productive ---
+        let events_r1 = vec![edges_added_event()];
+        let emission_r1 = enrichment
+            .enrich(&events_r1, &ctx)
+            .expect("round 1 should produce co-occurrence edges");
+
+        // Expected pairs:
+        //   concurrency↔async (via doc-1)
+        //   async↔performance (via code-1)
+        // Each pair produces 2 symmetric edges = 4 edges total
+        assert_eq!(
+            emission_r1.edges.len(),
+            4,
+            "2 co-occurring pairs × 2 symmetric edges"
+        );
+
+        // Commit round 1 emissions to context
+        for ae in &emission_r1.edges {
+            ctx.add_edge(ae.edge.clone());
+        }
+
+        // --- Round 2: quiescent ---
+        let events_r2 = vec![GraphEvent::EdgesAdded {
+            edge_ids: emission_r1
+                .edges
+                .iter()
+                .map(|ae| crate::graph::EdgeId::from_string(&format!(
+                    "{}->{}",
+                    ae.edge.source.as_str(),
+                    ae.edge.target.as_str()
+                )))
+                .collect(),
+            adapter_id: "co_occurrence:tagged_with:may_be_related".to_string(),
+            context_id: "test".to_string(),
+        }];
+
+        let emission_r2 = enrichment.enrich(&events_r2, &ctx);
+        assert!(
+            emission_r2.is_none(),
+            "round 2 should be quiescent — all edges already exist"
+        );
+    }
+
     #[test]
     fn distinct_instances_not_deduplicated_in_registry() {
         use crate::adapter::enrichment::EnrichmentRegistry;
