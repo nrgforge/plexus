@@ -162,7 +162,7 @@ mod tests {
     use crate::adapter::fragment::{FragmentAdapter, FragmentInput};
     use crate::adapter::provenance::FrameworkContext;
     use crate::adapter::traits::{Adapter, AdapterInput};
-    use crate::graph::EdgeId;
+    use crate::graph::{EdgeId, Node};
     use std::sync::{Arc, Mutex};
 
     /// Helper: create a graph with fragments and tags via the FragmentAdapter.
@@ -343,5 +343,82 @@ mod tests {
         let ctx = Context::new("test");
         let enrichment = CoOccurrenceEnrichment::new();
         assert!(enrichment.enrich(&[nodes_added_event(vec!["n1"])], &ctx).is_none());
+    }
+
+    // --- Scenario: CoOccurrenceEnrichment accepts relationship parameters ---
+
+    /// Helper: build a context with source nodes connected to concept nodes
+    /// via a custom relationship (e.g., "exhibits").
+    fn build_custom_relationship_context(
+        relationship: &str,
+        sources_to_concepts: Vec<(&str, Vec<&str>)>,
+    ) -> Context {
+        let mut ctx = Context::new("test");
+
+        for (source_id, concept_tags) in sources_to_concepts {
+            // Create source node
+            let mut source = Node::new("source", ContentType::Document);
+            source.id = NodeId::from_string(source_id);
+            ctx.add_node(source);
+
+            for tag in concept_tags {
+                // Create concept node
+                let concept_id = format!("concept:{}", tag);
+                if ctx.get_node(&NodeId::from_string(&concept_id)).is_none() {
+                    let mut concept = Node::new("concept", ContentType::Concept);
+                    concept.id = NodeId::from_string(&concept_id);
+                    concept.dimension = dimension::SEMANTIC.to_string();
+                    ctx.add_node(concept);
+                }
+
+                // Create edge with custom relationship
+                let edge = Edge::new_in_dimension(
+                    NodeId::from_string(source_id),
+                    NodeId::from_string(&concept_id),
+                    relationship,
+                    dimension::SEMANTIC,
+                );
+                ctx.add_edge(edge);
+            }
+        }
+
+        ctx
+    }
+
+    #[test]
+    fn accepts_relationship_parameters() {
+        let enrichment = CoOccurrenceEnrichment::with_relationships("exhibits", "co_exhibited");
+
+        // Two source nodes share "exhibits" edges to the same concepts
+        let ctx = build_custom_relationship_context("exhibits", vec![
+            ("gesture-1", vec!["flow", "glide"]),
+            ("gesture-2", vec!["flow", "glide"]),
+        ]);
+
+        let emission = enrichment.enrich(&[edges_added_event()], &ctx).expect("should emit");
+
+        // Symmetric pair: flow↔glide
+        assert_eq!(emission.edges.len(), 2);
+
+        let flow_id = NodeId::from_string("concept:flow");
+        let glide_id = NodeId::from_string("concept:glide");
+
+        let has_fg = emission.edges.iter().any(|ae| {
+            ae.edge.source == flow_id
+                && ae.edge.target == glide_id
+                && ae.edge.relationship == "co_exhibited"
+        });
+        let has_gf = emission.edges.iter().any(|ae| {
+            ae.edge.source == glide_id
+                && ae.edge.target == flow_id
+                && ae.edge.relationship == "co_exhibited"
+        });
+
+        assert!(has_fg, "flow→glide with co_exhibited");
+        assert!(has_gf, "glide→flow with co_exhibited");
+
+        // Verify contribution is normalized score
+        let score = emission.edges[0].edge.raw_weight;
+        assert_eq!(score, 1.0, "2 shared / 2 max = 1.0");
     }
 }
