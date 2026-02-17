@@ -611,4 +611,123 @@ mod tests {
             Some(&PropertyValue::Int(7)),
         );
     }
+
+    // --- Live integration test: real SubprocessClient → llm-orc → scripts ---
+    //
+    // Run with: cargo test live_graph_analysis -- --ignored
+    // Requires: llm-orc installed, .llm-orc/ensembles/graph-analysis.yaml present
+
+    #[tokio::test]
+    #[ignore = "requires llm-orc installed and graph-analysis ensemble configured"]
+    async fn live_graph_analysis_round_trip() {
+        use crate::llm_orc::SubprocessClient;
+
+        // Build a context with two concept clusters
+        let mut ctx = Context::new("live-test");
+
+        // Geography cluster
+        ctx.add_node(concept("concept:travel"));
+        ctx.add_node(concept("concept:avignon"));
+        ctx.add_node(concept("concept:provence"));
+
+        // Music cluster
+        ctx.add_node(concept("concept:jazz"));
+        ctx.add_node(concept("concept:improv"));
+
+        // Geography edges (bidirectional)
+        for (src, tgt) in [
+            ("concept:travel", "concept:avignon"),
+            ("concept:avignon", "concept:travel"),
+            ("concept:travel", "concept:provence"),
+            ("concept:provence", "concept:travel"),
+            ("concept:avignon", "concept:provence"),
+            ("concept:provence", "concept:avignon"),
+        ] {
+            ctx.add_edge(Edge::new(
+                NodeId::from_string(src),
+                NodeId::from_string(tgt),
+                "related_to",
+            ));
+        }
+
+        // Music edges (bidirectional)
+        for (src, tgt) in [
+            ("concept:jazz", "concept:improv"),
+            ("concept:improv", "concept:jazz"),
+        ] {
+            ctx.add_edge(Edge::new(
+                NodeId::from_string(src),
+                NodeId::from_string(tgt),
+                "related_to",
+            ));
+        }
+
+        assert_eq!(ctx.node_count(), 5);
+        assert_eq!(ctx.edge_count(), 8);
+
+        // Use real SubprocessClient pointing at project root
+        let project_dir = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let client = SubprocessClient::new().with_project_dir(project_dir);
+
+        // Run analysis — spawns llm-orc, invokes graph-analysis ensemble
+        let results = run_analysis(&client, "graph-analysis", &ctx)
+            .await
+            .expect("llm-orc should return results");
+
+        // Both algorithms should return results
+        assert!(
+            results.len() >= 2,
+            "expected pagerank + community, got {} results: {:?}",
+            results.len(),
+            results.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+        );
+
+        // Apply results via adapters
+        let shared_ctx = Arc::new(Mutex::new(ctx));
+        for (algo_name, input) in &results {
+            let adapter = GraphAnalysisAdapter::new(algo_name.as_str());
+            let sink = make_sink(shared_ctx.clone(), adapter.id());
+            let adapter_input = AdapterInput::new(adapter.input_kind(), input.clone(), "test");
+            adapter.process(&adapter_input, &sink).await.unwrap();
+        }
+
+        // Verify properties were set
+        let snapshot = shared_ctx.lock().unwrap();
+
+        let travel = snapshot
+            .get_node(&NodeId::from_string("concept:travel"))
+            .expect("travel node");
+        assert!(
+            travel.properties.contains_key("pagerank_score"),
+            "travel should have pagerank_score, got: {:?}",
+            travel.properties.keys().collect::<Vec<_>>()
+        );
+
+        let jazz = snapshot
+            .get_node(&NodeId::from_string("concept:jazz"))
+            .expect("jazz node");
+        assert!(
+            jazz.properties.contains_key("pagerank_score"),
+            "jazz should have pagerank_score"
+        );
+
+        // Community detection should separate clusters
+        if let (Some(PropertyValue::Float(travel_comm)), Some(PropertyValue::Float(jazz_comm))) = (
+            travel.properties.get("community"),
+            jazz.properties.get("community"),
+        ) {
+            assert_ne!(
+                travel_comm, jazz_comm,
+                "travel and jazz should be in different communities"
+            );
+        }
+
+        eprintln!(
+            "Live test passed: {} algorithms, {} nodes updated",
+            results.len(),
+            results.iter().map(|(_, r)| r.results.len()).sum::<usize>()
+        );
+    }
 }

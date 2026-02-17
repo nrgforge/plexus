@@ -1,4 +1,4 @@
-name: plexus-graph-analysis
+name: graph-analysis
 description: >
   Run PageRank and community detection on a Plexus context graph.
   Input: graph-export JSON (docs/schemas/graph-export.schema.json).

@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 use rmcp::model::{CallToolRequestParams, Content};
-use rmcp::service::Peer;
+use rmcp::service::{Peer, RunningService};
 use rmcp::{RoleClient, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use serde::{Deserialize, Serialize};
@@ -186,6 +186,9 @@ pub struct SubprocessClient {
     project_dir: Option<String>,
     /// Lazily-initialized MCP peer connection
     peer: Mutex<Option<Peer<RoleClient>>>,
+    /// Keeps the MCP service alive — dropping this kills the subprocess
+    #[allow(dead_code)]
+    service: Mutex<Option<RunningService<RoleClient, ()>>>,
 }
 
 impl SubprocessClient {
@@ -195,6 +198,7 @@ impl SubprocessClient {
             command: "llm-orc".to_string(),
             project_dir: None,
             peer: Mutex::new(None),
+            service: Mutex::new(None),
         }
     }
 
@@ -211,7 +215,7 @@ impl SubprocessClient {
     }
 
     /// Establish the MCP connection (spawn subprocess + handshake).
-    async fn connect(&self) -> Result<Peer<RoleClient>, LlmOrcError> {
+    async fn connect(&self) -> Result<(Peer<RoleClient>, RunningService<RoleClient, ()>), LlmOrcError> {
         let mut cmd = tokio::process::Command::new(&self.command);
         cmd.arg("m").arg("serve").arg("--transport").arg("stdio");
 
@@ -240,7 +244,7 @@ impl SubprocessClient {
                 .await;
         }
 
-        Ok(peer)
+        Ok((peer, service))
     }
 
     /// Get or create the MCP peer connection.
@@ -249,8 +253,10 @@ impl SubprocessClient {
         if let Some(ref peer) = *guard {
             return Ok(peer.clone());
         }
-        let peer = self.connect().await?;
+        let (peer, running_service) = self.connect().await?;
         *guard = Some(peer.clone());
+        // Store the RunningService<RoleClient, ()> to keep the subprocess alive
+        *self.service.lock().await = Some(running_service);
         Ok(peer)
     }
 

@@ -176,16 +176,47 @@ GraphAnalysisAdapter.process()  →  property update emissions
 Context (nodes now have pagerank_score, community properties)
 ```
 
-Steps verified end-to-end through MCP: export → invoke → parse. The `GraphAnalysisAdapter` ingestion step exists in code (`src/adapter/graph_analysis.rs`) but wasn't exercised in this test drive — that requires the full Plexus → llm-orc → Plexus round-trip via `plexus analyze` CLI or a programmatic call.
+Steps verified end-to-end through MCP: export → invoke → parse.
+
+---
+
+## Full Round-Trip Verified (2026-02-16, session 2)
+
+### Bug fix: SubprocessClient dropping RunningService
+
+The `SubprocessClient::connect()` method created a `RunningService` from `().serve(transport)` but only stored the `Peer` handle. When `connect()` returned, the `RunningService` was dropped, killing the subprocess. First invocation after handshake got "Transport closed".
+
+**Fix:** Store `RunningService<RoleClient, ()>` alongside the `Peer` in the `SubprocessClient` struct. The service stays alive for the client's lifetime.
+
+### Bug fix: cmd_analyze missing project_dir
+
+`cmd_analyze()` created `SubprocessClient::new()` without calling `.with_project_dir()`. The llm-orc subprocess didn't know where to find `.llm-orc/ensembles/`. Fixed by passing `std::env::current_dir()`.
+
+### Live integration test
+
+Added `live_graph_analysis_round_trip` test (`#[ignore]` — requires llm-orc installed):
+- Builds 5-node, 8-edge context (geography + music clusters)
+- Spawns real llm-orc subprocess via `SubprocessClient`
+- Runs `graph-analysis` ensemble (PageRank + community detection)
+- Applies results via `GraphAnalysisAdapter`
+- Asserts: PageRank scores present on all nodes, travel/jazz in different communities
+
+**Result: PASS** — full Plexus → llm-orc → Plexus round-trip works.
+
+### Conformance note: standalone Plexus MCP server
+
+The `mcp__plexus__*` MCP server available in Claude Code sessions is a standalone provenance tool that exposes `add_mark`, `create_chain`, etc. directly — bypassing the ingest pipeline. This violates the invariant that all external surfaces include both semantic data and provenance. The Plexus **engine** MCP server (`src/mcp/mod.rs`) correctly uses `annotate` → `FragmentAdapter` → enrichment loop. The standalone server needs to be replaced or restricted.
 
 ---
 
 ## Next Steps
 
-1. **Exercise `plexus analyze` CLI** — the full round-trip: Plexus exports graph, spawns llm-orc subprocess, receives results, ingests via `GraphAnalysisAdapter`. This is already wired in code but untested with real data.
+1. **Investigate large payload issue** — determine whether the empty-result failure with `concept:`-prefixed node IDs is a size limit, escaping bug, or something else in the MCP transport.
 
-2. **Investigate large payload issue** — determine whether the empty-result failure with `concept:`-prefixed node IDs is a size limit, escaping bug, or something else in the MCP transport.
+2. **Extract `unwrap_input` to shared utility** — if more Plexus scripts are added, the envelope handling should be a reusable module rather than copy-pasted.
 
-3. **Extract `unwrap_input` to shared utility** — if more Plexus scripts are added, the envelope handling should be a reusable module rather than copy-pasted.
+3. **Test semantic extraction ensemble** — the `plexus-semantic-extraction` ensemble (chunker + LLM concept extractor + synthesizer) requires an Ollama model. Test when local LLM is available.
 
-4. **Test semantic extraction ensemble** — the `plexus-semantic-extraction` ensemble (chunker + LLM concept extractor + synthesizer) requires an Ollama model. Test when local LLM is available.
+4. **Database schema migration** — existing production databases use old schema (no `raw_weight`, has `weight`/`strength`/`confidence`). `plexus analyze` CLI can't read them. Migration needed.
+
+5. **Replace standalone Plexus MCP server** — the Claude Code MCP server should use the engine MCP server (with `annotate` tool) instead of the standalone provenance server (with raw `add_mark`).

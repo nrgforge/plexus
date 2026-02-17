@@ -311,7 +311,10 @@ async fn cmd_analyze(engine: &PlexusEngine, context_name: &str, ensemble: &str) 
         ctx.edge_count()
     );
 
-    let client = SubprocessClient::new();
+    let project_dir = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let client = SubprocessClient::new().with_project_dir(project_dir);
 
     let results = match run_analysis(&client, ensemble, &ctx).await {
         Ok(r) => r,
