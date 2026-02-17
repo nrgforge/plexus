@@ -1,6 +1,12 @@
 //! MCP server for Plexus — knowledge graph engine via the Model Context Protocol.
 //!
-//! Tools: 19 total (13 provenance + 5 context management + 1 graph read).
+//! Tools: 8 total (1 write + 6 context + 1 graph read).
+//!
+//! The single write path is `annotate`, which goes through the full ingest
+//! pipeline (FragmentAdapter + ProvenanceAdapter → enrichment loop), enforcing
+//! Invariant 7: all knowledge carries both semantic content and provenance.
+//! There are no tools for direct mark/chain/link manipulation — those are
+//! internal graph structures managed by the pipeline.
 
 pub mod params;
 
@@ -94,59 +100,7 @@ impl PlexusMcpServer {
         ok_text(format!("active context set to '{}'", p.name))
     }
 
-    // ── Chain tools ─────────────────────────────────────────────────────
-
-    #[tool(description = "List all chains, optionally filtered by status")]
-    fn list_chains(
-        &self,
-        Parameters(p): Parameters<ListChainsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.api.list_chains(&self.context()?, p.status.as_deref()) {
-            Ok(chains) => ok_text(serde_json::to_string_pretty(&chains).unwrap()),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    #[tool(description = "Get a chain with all its marks")]
-    fn get_chain(
-        &self,
-        Parameters(p): Parameters<ChainIdParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.api.get_chain(&self.context()?, &p.chain_id) {
-            Ok((chain, marks)) => ok_text(
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "chain": chain,
-                    "marks": marks,
-                }))
-                .unwrap(),
-            ),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    #[tool(description = "Archive a chain (mark as no longer active)")]
-    fn archive_chain(
-        &self,
-        Parameters(p): Parameters<ChainIdParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.api.archive_chain(&self.context()?, &p.chain_id) {
-            Ok(()) => ok_text(format!("archived chain {}", p.chain_id)),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    #[tool(description = "Delete a chain and all its marks")]
-    async fn delete_chain(
-        &self,
-        Parameters(p): Parameters<ChainIdParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.api.delete_chain(&self.context()?, &p.chain_id).await {
-            Ok(()) => ok_text(format!("deleted chain {} and its marks", p.chain_id)),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    // ── Annotate (replaces create_chain + add_mark) ─────────────────────
+    // ── Annotate (single write path — Invariant 7) ──────────────────────
 
     #[tool(description = "Add an annotated mark to a location in a file or artifact")]
     async fn annotate(
@@ -175,112 +129,6 @@ impl PlexusMcpServer {
                 }))
                 .unwrap(),
             ),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    // ── Mark tools ──────────────────────────────────────────────────────
-
-    #[tool(description = "Update an existing mark")]
-    fn update_mark(
-        &self,
-        Parameters(p): Parameters<UpdateMarkParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.api.update_mark(
-            &self.context()?,
-            &p.mark_id,
-            p.annotation.as_deref(),
-            p.line,
-            p.column,
-            p.r#type.as_deref(),
-            p.tags,
-        ) {
-            Ok(()) => ok_text(format!("updated mark {}", p.mark_id)),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    #[tool(description = "Delete a mark")]
-    async fn delete_mark(
-        &self,
-        Parameters(p): Parameters<MarkIdParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.api.delete_mark(&self.context()?, &p.mark_id).await {
-            Ok(()) => ok_text(format!("deleted mark {}", p.mark_id)),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    #[tool(description = "List marks with optional filters")]
-    fn list_marks(
-        &self,
-        Parameters(p): Parameters<ListMarksParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.api.list_marks(
-            &self.context()?,
-            p.chain_id.as_deref(),
-            p.file.as_deref(),
-            p.r#type.as_deref(),
-            p.tag.as_deref(),
-        ) {
-            Ok(marks) => ok_text(serde_json::to_string_pretty(&marks).unwrap()),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    // ── Link tools ──────────────────────────────────────────────────────
-
-    #[tool(description = "Create a link from one mark to another")]
-    async fn link_marks(
-        &self,
-        Parameters(p): Parameters<LinkMarksParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self
-            .api
-            .link_marks(&self.context()?, &p.source_id, &p.target_id)
-            .await
-        {
-            Ok(()) => ok_text(format!("linked {} -> {}", p.source_id, p.target_id)),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    #[tool(description = "Remove a link between two marks")]
-    async fn unlink_marks(
-        &self,
-        Parameters(p): Parameters<LinkMarksParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self
-            .api
-            .unlink_marks(&self.context()?, &p.source_id, &p.target_id)
-            .await
-        {
-            Ok(()) => ok_text(format!("unlinked {} -> {}", p.source_id, p.target_id)),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    #[tool(description = "Get all links to and from a mark (incoming and outgoing)")]
-    fn get_links(
-        &self,
-        Parameters(p): Parameters<MarkIdParams>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.api.get_links(&self.context()?, &p.mark_id) {
-            Ok((outgoing, incoming)) => ok_text(
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "outgoing": outgoing,
-                    "incoming": incoming,
-                }))
-                .unwrap(),
-            ),
-            Err(e) => err_text(e.to_string()),
-        }
-    }
-
-    #[tool(description = "List all unique tags used across all marks")]
-    fn list_tags(&self) -> Result<CallToolResult, McpError> {
-        match self.api.list_tags(&self.context()?) {
-            Ok(tags) => ok_text(serde_json::to_string_pretty(&tags).unwrap()),
             Err(e) => err_text(e.to_string()),
         }
     }
