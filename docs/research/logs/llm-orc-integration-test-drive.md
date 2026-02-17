@@ -205,7 +205,10 @@ Added `live_graph_analysis_round_trip` test (`#[ignore]` — requires llm-orc in
 
 ### Conformance note: standalone Plexus MCP server
 
-~~The `mcp__plexus__*` MCP server available in Claude Code sessions is a standalone provenance tool that exposes `add_mark`, `create_chain`, etc. directly — bypassing the ingest pipeline.~~ **Resolved** (commit `e06a649`). The engine MCP server (`src/mcp/mod.rs`) is now the active binary. It uses `annotate` → `FragmentAdapter` → enrichment loop, has all 19 tools (including context management), and enforces Invariant 7.
+~~The `mcp__plexus__*` MCP server available in Claude Code sessions is a standalone provenance tool that exposes `add_mark`, `create_chain`, etc. directly — bypassing the ingest pipeline.~~ **Resolved** in two stages:
+
+1. (commit `e06a649`) Engine MCP server became the active binary with `annotate` as single write path.
+2. (commit `fda27ff`) Trimmed MCP surface from 19 to **8 tools** — removed all 11 mark/chain/link management tools that bypassed the ingest pipeline. Marks, chains, and links are internal graph structures managed by the pipeline, not consumer-facing primitives. See [MCP Surface Redesign](#mcp-surface-redesign-2026-02-16-session-4) below.
 
 ---
 
@@ -254,6 +257,51 @@ Direct invocation of `plexus-semantic-micro` (single gemma3:1b agent, no fan-out
 
 ---
 
+## MCP Surface Redesign (2026-02-16, session 4)
+
+### Problem: Invariant 7 violation in MCP tools
+
+The engine MCP server initially exposed 19 tools — including direct management of marks, chains, and links (`list_marks`, `update_mark`, `delete_mark`, `list_chains`, `get_chain`, `archive_chain`, `delete_chain`, `list_tags`, `link_marks`, `unlink_marks`, `get_links`). These tools let consumers create and manipulate provenance structures without going through the ingest pipeline, violating Invariant 7 (dual obligation: semantic content AND provenance).
+
+### Key insight: marks, chains, and links are internal
+
+Marks, chains, and links are **internal graph structures** produced by the ingest pipeline — they are the provenance dimension's implementation, not a consumer-facing API. No external consumer needs to manage them directly. The `annotate` tool goes through `FragmentAdapter` + `ProvenanceAdapter` → enrichment loop, which creates the correct provenance structures automatically.
+
+### Final MCP surface: 8 tools
+
+| Tool | Category | Purpose |
+|------|----------|---------|
+| `set_context` | Session | Activate a context (auto-creates if needed) |
+| `annotate` | Write | Single write path → full ingest pipeline |
+| `context_list` | Context | List contexts with sources |
+| `context_create` | Context | Create a new context |
+| `context_delete` | Context | Delete a context |
+| `context_rename` | Context | Rename a context |
+| `context_add_sources` | Context | Add file/directory sources |
+| `context_remove_sources` | Context | Remove sources |
+| `evidence_trail` | Read | Query concept evidence (ADR-013) |
+
+**Commit:** `fda27ff` — `refactor: trim MCP surface to 8 tools (Invariant 7 conformance)`
+
+### Implications for declarative adapters
+
+The MCP surface redesign establishes a pattern that declarative adapters must follow:
+
+1. **Consumers produce structured data, not graph primitives.** The MCP `annotate` tool takes annotation text + metadata. It does NOT take "create this node, create this edge." The adapter pipeline handles graph construction internally.
+
+2. **The two-layer split is validated end-to-end.** Both the llm-orc integration and the MCP redesign confirm the same architecture: external tools produce structured JSON (Layer 1: extractor), and Plexus adapters map that JSON to graph operations (Layer 2: declarative mapper). Consumers never directly manipulate the graph.
+
+3. **Three verified input patterns exist:**
+   - **MCP `annotate`:** text + metadata → `FragmentAdapter` → graph
+   - **llm-orc graph analysis:** graph-export JSON → scripts → analysis-result JSON → `GraphAnalysisAdapter` → graph
+   - **llm-orc semantic extraction:** file path → ensemble (extract + LLM + synthesize) → concepts JSON → `SemanticAdapter` → graph
+
+   All three follow the same shape: **structured JSON in → adapter interprets → emissions out**. This is exactly what `DeclarativeAdapter` formalizes with YAML specs.
+
+4. **The adapter is the boundary, not the transport.** Whether structured JSON arrives via MCP, llm-orc subprocess, or direct Rust API call, the adapter's job is the same: validate input, map to graph primitives, enforce Invariant 7. The declarative spec language should be transport-agnostic.
+
+---
+
 ## Next Steps
 
 1. ~~**Investigate large payload issue**~~ — **Open.** Debug error logging has been added to llm-orc. Retry with verbose stderr next time a large graph export fails silently.
@@ -264,4 +312,6 @@ Direct invocation of `plexus-semantic-micro` (single gemma3:1b agent, no fan-out
 
 4. ~~**Database schema migration**~~ — **Done** (commit `98fefbb`). `SqliteStore::open()` auto-detects old `weight` column and rebuilds the edges table with `raw_weight` using create-copy-swap.
 
-5. ~~**Replace standalone Plexus MCP server**~~ — **Done** (commit `e06a649`). Engine MCP server now has all 19 tools including context management. Rebuilt and installed as the active `plexus` binary.
+5. ~~**Replace standalone Plexus MCP server**~~ — **Done** in two stages: engine MCP server with `annotate` as single write path (commit `e06a649`), then trimmed to 8 tools by removing all mark/chain/link management tools (commit `fda27ff`). Invariant 7 fully enforced.
+
+6. **Declarative adapter primitives (ADR-020)** — **Next.** The llm-orc integration validates the two-layer architecture that declarative specs formalize. All three verified input patterns (MCP annotate, graph analysis, semantic extraction) follow the same shape: structured JSON → adapter → emissions. `DeclarativeAdapter` has 6/7 primitives implemented in Rust; remaining work is YAML parsing, `update_properties`, parameterized enrichment wiring, and declarative enrichments. See the [RDD research cycle](../../research-log.md) for design space exploration.
