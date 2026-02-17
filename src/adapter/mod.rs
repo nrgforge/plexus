@@ -7,6 +7,7 @@ mod cancel;
 pub mod cooccurrence;
 pub mod declarative;
 pub mod discovery_gap;
+pub mod embedding;
 pub mod temporal_proximity;
 mod engine_sink;
 mod enrichment;
@@ -41,6 +42,7 @@ pub use types::{
 pub use cooccurrence::CoOccurrenceEnrichment;
 pub use declarative::DeclarativeAdapter;
 pub use discovery_gap::DiscoveryGapEnrichment;
+pub use embedding::{Embedder, EmbeddingError, EmbeddingSimilarityEnrichment};
 pub use temporal_proximity::TemporalProximityEnrichment;
 pub use extraction::ExtractionCoordinator;
 pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};

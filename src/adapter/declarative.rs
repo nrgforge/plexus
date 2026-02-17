@@ -315,6 +315,10 @@ pub struct EnrichmentDeclaration {
     pub trigger_relationship: Option<String>,
     pub timestamp_property: Option<String>,
     pub threshold_ms: Option<u64>,
+    /// Model name for embedding_similarity enrichment (ADR-026).
+    pub model_name: Option<String>,
+    /// Similarity threshold for embedding_similarity enrichment (ADR-026).
+    pub similarity_threshold: Option<f32>,
 }
 
 /// A declarative adapter spec describing the adapter's behavior.
@@ -426,13 +430,38 @@ impl DeclarativeAdapter {
     ///
     /// Returns enrichments for registration in the EnrichmentRegistry.
     /// Unknown enrichment types produce an error.
+    ///
+    /// For specs that include `embedding_similarity`, use
+    /// [`enrichments_with_embedder`] instead — it accepts the embedder
+    /// implementation that the embedding enrichment needs.
     pub fn enrichments(&self) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
+        self.build_enrichments(None)
+    }
+
+    /// Instantiate core enrichments, providing an embedder for embedding_similarity (ADR-026).
+    ///
+    /// If the spec declares an `embedding_similarity` enrichment, the provided
+    /// embedder is used. If the spec declares multiple embedding enrichments,
+    /// only one embedder can be provided — use separate manual construction
+    /// for multi-model scenarios.
+    pub fn enrichments_with_embedder(
+        &self,
+        embedder: Box<dyn crate::adapter::embedding::Embedder>,
+    ) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
+        self.build_enrichments(Some(embedder))
+    }
+
+    fn build_enrichments(
+        &self,
+        embedder: Option<Box<dyn crate::adapter::embedding::Embedder>>,
+    ) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
         let declarations = match &self.spec.enrichments {
             Some(decls) => decls,
             None => return Ok(Vec::new()),
         };
 
         let mut enrichments: Vec<Arc<dyn Enrichment>> = Vec::new();
+        let mut embedder = embedder;
 
         for decl in declarations {
             let enrichment: Arc<dyn Enrichment> = match decl.enrichment_type.as_str() {
@@ -469,6 +498,23 @@ impl DeclarativeAdapter {
                         AdapterError::Internal("temporal_proximity enrichment requires output_relationship".into())
                     })?;
                     Arc::new(crate::adapter::temporal_proximity::TemporalProximityEnrichment::new(ts_prop, threshold, output))
+                }
+                "embedding_similarity" => {
+                    let model_name = decl.model_name.as_deref().ok_or_else(|| {
+                        AdapterError::Internal("embedding_similarity enrichment requires model_name".into())
+                    })?;
+                    let threshold = decl.similarity_threshold.unwrap_or(0.7);
+                    let output = decl.output_relationship.as_deref().unwrap_or("similar_to");
+                    let emb = embedder.take().ok_or_else(|| {
+                        AdapterError::Internal(
+                            "embedding_similarity enrichment requires an embedder; \
+                             use enrichments_with_embedder() instead of enrichments()"
+                                .into(),
+                        )
+                    })?;
+                    Arc::new(crate::adapter::embedding::EmbeddingSimilarityEnrichment::new(
+                        model_name, threshold, output, emb,
+                    ))
                 }
                 unknown => {
                     return Err(AdapterError::Internal(
@@ -1417,6 +1463,109 @@ emit:
             }
             _ => panic!("expected Internal error"),
         }
+    }
+
+    // --- Scenario: Embedding enrichment declared in adapter spec YAML (ADR-026) ---
+
+    #[test]
+    fn embedding_similarity_from_yaml_with_embedder() {
+        use crate::adapter::embedding::{Embedder, EmbeddingError};
+
+        struct StubEmbedder;
+        impl Embedder for StubEmbedder {
+            fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+                Ok(texts.iter().map(|_| vec![0.0; 3]).collect())
+            }
+        }
+
+        let yaml = r#"
+adapter_id: test-adapter
+input_kind: test.input
+enrichments:
+  - type: embedding_similarity
+    model_name: nomic-embed-text-v1.5
+    similarity_threshold: 0.7
+    output_relationship: similar_to
+emit:
+  - create_node:
+      id: "concept:{input.tag}"
+      type: concept
+      dimension: semantic
+"#;
+
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
+        let enrichments = adapter
+            .enrichments_with_embedder(Box::new(StubEmbedder))
+            .unwrap();
+        assert_eq!(enrichments.len(), 1);
+        assert_eq!(enrichments[0].id(), "embedding:nomic-embed-text-v1.5");
+    }
+
+    // --- Scenario: embedding_similarity without embedder returns error ---
+
+    #[test]
+    fn embedding_similarity_without_embedder_errors() {
+        let yaml = r#"
+adapter_id: test-adapter
+input_kind: test.input
+enrichments:
+  - type: embedding_similarity
+    model_name: nomic-embed-text-v1.5
+    similarity_threshold: 0.7
+    output_relationship: similar_to
+emit:
+  - create_node:
+      id: "concept:{input.tag}"
+      type: concept
+      dimension: semantic
+"#;
+
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
+        let result = adapter.enrichments();
+        assert!(result.is_err(), "should fail without embedder");
+        match result {
+            Err(AdapterError::Internal(msg)) => {
+                assert!(
+                    msg.contains("enrichments_with_embedder"),
+                    "error should point to enrichments_with_embedder()"
+                );
+            }
+            _ => panic!("expected Internal error"),
+        }
+    }
+
+    // --- Scenario: embedding_similarity defaults (threshold 0.7, output similar_to) ---
+
+    #[test]
+    fn embedding_similarity_defaults() {
+        use crate::adapter::embedding::{Embedder, EmbeddingError};
+
+        struct StubEmbedder;
+        impl Embedder for StubEmbedder {
+            fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+                Ok(texts.iter().map(|_| vec![0.0; 3]).collect())
+            }
+        }
+
+        let yaml = r#"
+adapter_id: test-adapter
+input_kind: test.input
+enrichments:
+  - type: embedding_similarity
+    model_name: test-model
+emit:
+  - create_node:
+      id: "concept:{input.tag}"
+      type: concept
+      dimension: semantic
+"#;
+
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
+        let enrichments = adapter
+            .enrichments_with_embedder(Box::new(StubEmbedder))
+            .unwrap();
+        assert_eq!(enrichments.len(), 1);
+        assert_eq!(enrichments[0].id(), "embedding:test-model");
     }
 
     // --- Scenario: Template expressions apply filters ---
