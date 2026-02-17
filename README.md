@@ -9,10 +9,10 @@ Plexus accumulates knowledge from domain data through an adapter pipeline: adapt
 - **Multi-dimensional graph** — nodes and edges span structure, semantic, relational, temporal, and provenance dimensions
 - **Adapter pipeline** — adapters extract domain data into graph mutations; enrichments (TagConceptBridger, CoOccurrenceEnrichment) react and bridge dimensions automatically
 - **Self-reinforcing edges** — relationship weights evolve based on activation patterns (Hebbian learning)
-- **Provenance tracking** — chains, marks, and links for recording decisions and code exploration trails
+- **Provenance tracking** — chains, marks, and links are created automatically through the ingest pipeline, ensuring all knowledge carries both semantic content and provenance
 - **Evidence trails** — "what evidence supports this concept?" answered in a single query across all dimensions
 - **Source manifest** — contexts track which files, directories, and URLs belong to them
-- **MCP server** — expose capabilities to AI tools via the Model Context Protocol (14 tools)
+- **MCP server** — expose capabilities to AI tools via the Model Context Protocol (8 tools)
 - **SQLite persistence** — WAL mode for concurrent reads, incremental upserts, cache coherence via `data_version`
 - **Cross-context queries** — discover shared concepts between contexts via deterministic ID intersection
 
@@ -71,19 +71,17 @@ Configure in your MCP client (e.g. Claude Code `settings.json`):
 }
 ```
 
-### MCP Tools (14)
+### MCP Tools (8)
 
 **Session:** `set_context` — set active context (auto-created if new)
 
-**Provenance — chains (4):** `list_chains`, `get_chain`, `archive_chain`, `delete_chain`
+**Write:** `annotate` — single write path through the full ingest pipeline (Invariant 7)
 
-**Provenance — marks (5):** `annotate`, `update_mark`, `delete_mark`, `list_marks`, `list_tags`
+**Context (5):** `context_list`, `context_create`, `context_delete`, `context_rename`, `context_add_sources`, `context_remove_sources`
 
-**Provenance — links (3):** `link_marks`, `unlink_marks`, `get_links`
+**Queries:** `evidence_trail` — marks, fragments, and chains supporting a concept
 
-**Queries (1):** `evidence_trail` — marks, fragments, and chains supporting a concept
-
-Context management (create, delete, rename, add/remove sources) is via the CLI: `plexus context <subcommand>`.
+All writes go through `annotate` → adapter pipeline → enrichment loop. There are no tools for direct mark/chain/link manipulation — those are internal graph structures managed by the pipeline.
 
 ## Development
 
@@ -120,7 +118,7 @@ plexus/
 │   ├── graph/              # Core graph: Node, Edge, Context, Engine
 │   ├── adapter/            # Adapter pipeline, enrichments, FragmentAdapter
 │   ├── provenance/         # Provenance API (chains, marks, links)
-│   ├── mcp/                # MCP server (rmcp, 14 tools)
+│   ├── mcp/                # MCP server (rmcp, 8 tools)
 │   ├── analysis/           # Content analysis pipeline
 │   ├── query/              # Find, traverse, path queries
 │   └── storage/            # SQLite persistence (WAL, incremental upserts)
@@ -137,4 +135,4 @@ See the [Integration Guide](docs/integration-guide.md) for adapter pipeline arch
 
 ## License
 
-MIT
+AGPL-3.0 — see [LICENSE](LICENSE)

@@ -3,7 +3,7 @@ name = "plexus"
 description = "Network-aware knowledge graph engine with self-reinforcing edges"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 repository = "https://github.com/mrilikecoding/plexus"
 
 [[bin]]
