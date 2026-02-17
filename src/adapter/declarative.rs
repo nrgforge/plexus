@@ -8,13 +8,16 @@
 //! interpolate input fields via `{input.field}` syntax with optional
 //! filters (lowercase, sort, join, default).
 
+use crate::adapter::enrichment::Enrichment;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission};
+use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, PropertyUpdate};
 use crate::graph::{dimension, ContentType, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Template engine
@@ -231,64 +234,97 @@ fn resolve_content_type(node_type: &str) -> ContentType {
 }
 
 /// Strategy for generating a node ID.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
 pub enum IdStrategy {
     /// String interpolation: `"artifact:{input.file_path}"`
     Template(String),
     /// Content hash (UUID v5): deterministic from a list of fields
-    Hash(Vec<String>),
+    Hash { hash: Vec<String> },
 }
 
 /// Primitive: create a node in the graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateNodePrimitive {
     pub id: IdStrategy,
+    #[serde(rename = "type")]
     pub node_type: String,
     pub dimension: String,
+    #[serde(default)]
     pub properties: HashMap<String, String>,
 }
 
 /// Primitive: create an edge in the graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateEdgePrimitive {
     pub source: String,
     pub target: String,
     pub relationship: String,
     pub source_dimension: Option<String>,
     pub target_dimension: Option<String>,
+    #[serde(alias = "contribution")]
     pub weight: Option<f32>,
 }
 
 /// Primitive: iterate over an array field.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ForEachPrimitive {
     pub collection: String,
+    #[serde(default = "default_variable")]
     pub variable: String,
     pub emit: Vec<Primitive>,
 }
 
+fn default_variable() -> String {
+    "item".to_string()
+}
+
 /// Primitive: create provenance (chain + mark + contains edge).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateProvenancePrimitive {
     pub chain_id: String,
     pub mark_annotation: String,
     pub tags: Option<String>,
 }
 
+/// Primitive: update properties on an existing node (ADR-023, ADR-025).
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdatePropertiesPrimitive {
+    pub node_id: String,
+    pub properties: HashMap<String, String>,
+}
+
 /// Input field requirement for validation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct InputField {
     pub name: String,
+    #[serde(rename = "type")]
     pub field_type: String, // "string", "array", "number", "boolean"
+    #[serde(default)]
     pub required: bool,
 }
 
+/// Declaration of a core enrichment in the adapter spec (ADR-025).
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnrichmentDeclaration {
+    #[serde(rename = "type")]
+    pub enrichment_type: String,
+    pub relationship: Option<String>,
+    pub source_relationship: Option<String>,
+    pub output_relationship: Option<String>,
+    pub trigger_relationship: Option<String>,
+    pub timestamp_property: Option<String>,
+    pub threshold_ms: Option<u64>,
+}
+
 /// A declarative adapter spec describing the adapter's behavior.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DeclarativeSpec {
     pub adapter_id: String,
     pub input_kind: String,
+    pub ensemble: Option<String>,
     pub input_schema: Option<Vec<InputField>>,
+    pub enrichments: Option<Vec<EnrichmentDeclaration>>,
     pub emit: Vec<Primitive>,
 }
 
@@ -299,6 +335,56 @@ pub enum Primitive {
     CreateEdge(CreateEdgePrimitive),
     ForEach(ForEachPrimitive),
     CreateProvenance(CreateProvenancePrimitive),
+    UpdateProperties(UpdatePropertiesPrimitive),
+}
+
+impl<'de> Deserialize<'de> for Primitive {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let map = std::collections::HashMap::<String, serde_yaml::Value>::deserialize(deserializer)?;
+
+        if map.len() != 1 {
+            return Err(serde::de::Error::custom(
+                "each emit primitive must be a single-key map (e.g., create_node: {...})",
+            ));
+        }
+
+        let (key, value) = map.into_iter().next().unwrap();
+
+        match key.as_str() {
+            "create_node" => {
+                let p: CreateNodePrimitive = serde_yaml::from_value(value)
+                    .map_err(serde::de::Error::custom)?;
+                Ok(Primitive::CreateNode(p))
+            }
+            "create_edge" => {
+                let p: CreateEdgePrimitive = serde_yaml::from_value(value)
+                    .map_err(serde::de::Error::custom)?;
+                Ok(Primitive::CreateEdge(p))
+            }
+            "for_each" => {
+                let p: ForEachPrimitive = serde_yaml::from_value(value)
+                    .map_err(serde::de::Error::custom)?;
+                Ok(Primitive::ForEach(p))
+            }
+            "create_provenance" => {
+                let p: CreateProvenancePrimitive = serde_yaml::from_value(value)
+                    .map_err(serde::de::Error::custom)?;
+                Ok(Primitive::CreateProvenance(p))
+            }
+            "update_properties" => {
+                let p: UpdatePropertiesPrimitive = serde_yaml::from_value(value)
+                    .map_err(serde::de::Error::custom)?;
+                Ok(Primitive::UpdateProperties(p))
+            }
+            _ => Err(serde::de::Error::custom(format!(
+                "unknown primitive: {}",
+                key
+            ))),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +409,77 @@ impl DeclarativeAdapter {
     pub fn new(spec: DeclarativeSpec) -> Result<Self, AdapterError> {
         validate_spec(&spec)?;
         Ok(Self { spec })
+    }
+
+    /// Create a DeclarativeAdapter from a YAML string (ADR-025).
+    ///
+    /// Deserializes the YAML into a DeclarativeSpec, validates it, and returns
+    /// the adapter. Returns an error for malformed YAML or spec violations.
+    pub fn from_yaml(yaml: &str) -> Result<Self, AdapterError> {
+        let spec: DeclarativeSpec = serde_yaml::from_str(yaml).map_err(|e| {
+            AdapterError::Internal(format!("YAML deserialization error: {}", e))
+        })?;
+        Self::new(spec)
+    }
+
+    /// Instantiate core enrichments declared in the spec (ADR-025).
+    ///
+    /// Returns enrichments for registration in the EnrichmentRegistry.
+    /// Unknown enrichment types produce an error.
+    pub fn enrichments(&self) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
+        let declarations = match &self.spec.enrichments {
+            Some(decls) => decls,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut enrichments: Vec<Arc<dyn Enrichment>> = Vec::new();
+
+        for decl in declarations {
+            let enrichment: Arc<dyn Enrichment> = match decl.enrichment_type.as_str() {
+                "tag_concept_bridger" => {
+                    let relationship = decl.relationship.as_deref().unwrap_or("references");
+                    Arc::new(crate::adapter::tag_bridger::TagConceptBridger::with_relationship(relationship))
+                }
+                "co_occurrence" => {
+                    let source = decl.source_relationship.as_deref().ok_or_else(|| {
+                        AdapterError::Internal("co_occurrence enrichment requires source_relationship".into())
+                    })?;
+                    let output = decl.output_relationship.as_deref().ok_or_else(|| {
+                        AdapterError::Internal("co_occurrence enrichment requires output_relationship".into())
+                    })?;
+                    Arc::new(crate::adapter::cooccurrence::CoOccurrenceEnrichment::with_relationships(source, output))
+                }
+                "discovery_gap" => {
+                    let trigger = decl.trigger_relationship.as_deref().ok_or_else(|| {
+                        AdapterError::Internal("discovery_gap enrichment requires trigger_relationship".into())
+                    })?;
+                    let output = decl.output_relationship.as_deref().ok_or_else(|| {
+                        AdapterError::Internal("discovery_gap enrichment requires output_relationship".into())
+                    })?;
+                    Arc::new(crate::adapter::discovery_gap::DiscoveryGapEnrichment::new(trigger, output))
+                }
+                "temporal_proximity" => {
+                    let ts_prop = decl.timestamp_property.as_deref().ok_or_else(|| {
+                        AdapterError::Internal("temporal_proximity enrichment requires timestamp_property".into())
+                    })?;
+                    let threshold = decl.threshold_ms.ok_or_else(|| {
+                        AdapterError::Internal("temporal_proximity enrichment requires threshold_ms".into())
+                    })?;
+                    let output = decl.output_relationship.as_deref().ok_or_else(|| {
+                        AdapterError::Internal("temporal_proximity enrichment requires output_relationship".into())
+                    })?;
+                    Arc::new(crate::adapter::temporal_proximity::TemporalProximityEnrichment::new(ts_prop, threshold, output))
+                }
+                unknown => {
+                    return Err(AdapterError::Internal(
+                        format!("unknown enrichment type: {}", unknown),
+                    ));
+                }
+            };
+            enrichments.push(enrichment);
+        }
+
+        Ok(enrichments)
     }
 }
 
@@ -479,6 +636,10 @@ fn interpret_primitives(
                     emission = emission.with_edge(edge);
                 }
             }
+            Primitive::UpdateProperties(up) => {
+                let update = interpret_update_properties(up, ctx)?;
+                emission = emission.with_property_update(update);
+            }
         }
     }
 
@@ -510,7 +671,7 @@ fn interpret_create_node(
 fn resolve_id(strategy: &IdStrategy, ctx: &TemplateContext) -> Result<String, AdapterError> {
     match strategy {
         IdStrategy::Template(template) => render_template(template, ctx),
-        IdStrategy::Hash(fields) => {
+        IdStrategy::Hash { hash: ref fields } => {
             let mut parts = Vec::new();
             for field_template in fields {
                 parts.push(render_template(field_template, ctx)?);
@@ -674,6 +835,22 @@ fn interpret_create_provenance(
         .with_edge(AnnotatedEdge::new(contains_edge)))
 }
 
+/// Interpret an update_properties primitive (ADR-023, ADR-025).
+fn interpret_update_properties(
+    up: &UpdatePropertiesPrimitive,
+    ctx: &TemplateContext,
+) -> Result<PropertyUpdate, AdapterError> {
+    let node_id_str = render_template(&up.node_id, ctx)?;
+    let mut update = PropertyUpdate::new(NodeId::from_string(node_id_str));
+
+    for (key, template) in &up.properties {
+        let value = render_template(template, ctx)?;
+        update = update.with_property(key, PropertyValue::String(value));
+    }
+
+    Ok(update)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -702,7 +879,9 @@ mod tests {
         let spec = DeclarativeSpec {
             adapter_id: "test-declarative".to_string(),
             input_kind: "extract-file".to_string(),
+            ensemble: None,
             input_schema: None,
+            enrichments: None,
             emit: vec![Primitive::CreateNode(CreateNodePrimitive {
                 id: IdStrategy::Template("artifact:{input.file_path}".to_string()),
                 node_type: "artifact".to_string(),
@@ -744,7 +923,9 @@ mod tests {
         let spec = DeclarativeSpec {
             adapter_id: "test-declarative".to_string(),
             input_kind: "tagged-item".to_string(),
+            ensemble: None,
             input_schema: None,
+            enrichments: None,
             emit: vec![
                 // Source node
                 Primitive::CreateNode(CreateNodePrimitive {
@@ -819,12 +1000,14 @@ mod tests {
         let spec = DeclarativeSpec {
             adapter_id: "test-declarative".to_string(),
             input_kind: "extract-file".to_string(),
+            ensemble: None,
             input_schema: None,
+            enrichments: None,
             emit: vec![Primitive::CreateNode(CreateNodePrimitive {
-                id: IdStrategy::Hash(vec![
+                id: IdStrategy::Hash { hash: vec![
                     "{adapter_id}".to_string(),
                     "{input.file_path}".to_string(),
-                ]),
+                ] },
                 node_type: "artifact".to_string(),
                 dimension: "structure".to_string(),
                 properties: HashMap::from([
@@ -876,7 +1059,9 @@ mod tests {
         let spec = DeclarativeSpec {
             adapter_id: "test-declarative".to_string(),
             input_kind: "annotate".to_string(),
+            ensemble: None,
             input_schema: None,
+            enrichments: None,
             emit: vec![
                 Primitive::CreateNode(CreateNodePrimitive {
                     id: IdStrategy::Template("concept:{input.topic}".to_string()),
@@ -950,6 +1135,8 @@ mod tests {
         let spec = DeclarativeSpec {
             adapter_id: "test-declarative".to_string(),
             input_kind: "extract-file".to_string(),
+            ensemble: None,
+            enrichments: None,
             input_schema: Some(vec![
                 InputField {
                     name: "file_path".to_string(),
@@ -998,7 +1185,9 @@ mod tests {
         let spec = DeclarativeSpec {
             adapter_id: "test-declarative".to_string(),
             input_kind: "annotate".to_string(),
+            ensemble: None,
             input_schema: None,
+            enrichments: None,
             emit: vec![Primitive::CreateProvenance(CreateProvenancePrimitive {
                 chain_id: "chain:{adapter_id}".to_string(),
                 mark_annotation: "note".to_string(),
@@ -1011,6 +1200,223 @@ mod tests {
             result.is_err(),
             "should fail: create_provenance without semantic node violates Invariant 7"
         );
+    }
+
+    // --- Scenario: update_properties merges into existing node ---
+
+    #[tokio::test]
+    async fn update_properties_merges_into_existing_node() {
+        let spec = DeclarativeSpec {
+            adapter_id: "test-declarative".to_string(),
+            input_kind: "analysis-result".to_string(),
+            ensemble: None,
+            input_schema: None,
+            enrichments: None,
+            emit: vec![Primitive::UpdateProperties(UpdatePropertiesPrimitive {
+                node_id: "concept:{input.tag | lowercase}".to_string(),
+                properties: HashMap::from([
+                    ("pagerank_score".to_string(), "{input.score}".to_string()),
+                ]),
+            })],
+        };
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap();
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+
+        // Pre-existing node with a property
+        {
+            let mut snapshot = ctx.lock().unwrap();
+            let mut node = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+            node.id = NodeId::from_string("concept:travel");
+            node.properties.insert(
+                "community".to_string(),
+                PropertyValue::String("3".to_string()),
+            );
+            snapshot.add_node(node);
+        }
+
+        let sink = test_sink(ctx.clone());
+        let input_json = serde_json::json!({ "tag": "travel", "score": "0.034" });
+        let input = AdapterInput::new("analysis-result", input_json, "test");
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        let node = snapshot
+            .get_node(&NodeId::from_string("concept:travel"))
+            .expect("node should exist");
+
+        // Both properties present
+        assert_eq!(
+            node.properties.get("pagerank_score"),
+            Some(&PropertyValue::String("0.034".to_string())),
+            "new property should be set"
+        );
+        assert_eq!(
+            node.properties.get("community"),
+            Some(&PropertyValue::String("3".to_string())),
+            "existing property should be preserved"
+        );
+    }
+
+    // --- Scenario: update_properties is no-op for absent node ---
+
+    #[tokio::test]
+    async fn update_properties_noop_for_absent_node() {
+        let spec = DeclarativeSpec {
+            adapter_id: "test-declarative".to_string(),
+            input_kind: "analysis-result".to_string(),
+            ensemble: None,
+            input_schema: None,
+            enrichments: None,
+            emit: vec![Primitive::UpdateProperties(UpdatePropertiesPrimitive {
+                node_id: "concept:nonexistent".to_string(),
+                properties: HashMap::from([
+                    ("score".to_string(), "{input.score}".to_string()),
+                ]),
+            })],
+        };
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap();
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone());
+
+        let input_json = serde_json::json!({ "score": "0.5" });
+        let input = AdapterInput::new("analysis-result", input_json, "test");
+
+        // Should not error
+        adapter.process(&input, &sink).await.unwrap();
+
+        // No node created
+        let snapshot = ctx.lock().unwrap();
+        assert_eq!(snapshot.nodes().count(), 0, "no node should be created");
+    }
+
+    // --- Scenario: from_yaml deserializes a complete spec ---
+
+    #[test]
+    fn from_yaml_deserializes_complete_spec() {
+        let yaml = r#"
+adapter_id: test-adapter
+input_kind: test.input
+enrichments:
+  - type: co_occurrence
+    source_relationship: exhibits
+    output_relationship: co_exhibited
+emit:
+  - create_node:
+      id: "concept:{input.tag}"
+      type: concept
+      dimension: semantic
+  - create_edge:
+      source: "{input.source_id}"
+      target: "concept:{input.tag}"
+      relationship: tagged_with
+      weight: 1.0
+"#;
+
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
+        assert_eq!(adapter.id(), "test-adapter");
+        assert_eq!(adapter.input_kind(), "test.input");
+    }
+
+    // --- Scenario: from_yaml validates dual obligation ---
+
+    #[test]
+    fn from_yaml_validates_dual_obligation() {
+        let yaml = r#"
+adapter_id: bad-adapter
+input_kind: test.input
+emit:
+  - create_provenance:
+      chain_id: "chain:{adapter_id}"
+      mark_annotation: "note"
+"#;
+
+        let result = DeclarativeAdapter::from_yaml(yaml);
+        assert!(result.is_err(), "should fail: provenance without semantic node");
+    }
+
+    // --- Scenario: from_yaml rejects malformed YAML ---
+
+    #[test]
+    fn from_yaml_rejects_malformed_yaml() {
+        let yaml = "not: [valid: yaml: spec";
+        let result = DeclarativeAdapter::from_yaml(yaml);
+        assert!(result.is_err(), "should fail on malformed YAML");
+    }
+
+    // --- Scenario: DeclarativeAdapter exposes enrichments from spec ---
+
+    #[test]
+    fn exposes_enrichments_from_spec() {
+        let yaml = r#"
+adapter_id: test-adapter
+input_kind: test.input
+enrichments:
+  - type: co_occurrence
+    source_relationship: exhibits
+    output_relationship: co_exhibited
+emit:
+  - create_node:
+      id: "concept:{input.tag}"
+      type: concept
+      dimension: semantic
+"#;
+
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
+        let enrichments = adapter.enrichments().unwrap();
+        assert_eq!(enrichments.len(), 1);
+        assert_eq!(enrichments[0].id(), "co_occurrence:exhibits:co_exhibited");
+    }
+
+    // --- Scenario: Default enrichment parameters when omitted ---
+
+    #[test]
+    fn default_enrichment_parameters() {
+        let yaml = r#"
+adapter_id: test-adapter
+input_kind: test.input
+enrichments:
+  - type: tag_concept_bridger
+emit:
+  - create_node:
+      id: "concept:{input.tag}"
+      type: concept
+      dimension: semantic
+"#;
+
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
+        let enrichments = adapter.enrichments().unwrap();
+        assert_eq!(enrichments.len(), 1);
+        assert_eq!(enrichments[0].id(), "tag_bridger:references");
+    }
+
+    // --- Scenario: Unknown enrichment type is rejected ---
+
+    #[test]
+    fn unknown_enrichment_type_rejected() {
+        let yaml = r#"
+adapter_id: test-adapter
+input_kind: test.input
+enrichments:
+  - type: nonexistent_enrichment
+emit:
+  - create_node:
+      id: "concept:{input.tag}"
+      type: concept
+      dimension: semantic
+"#;
+
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
+        let result = adapter.enrichments();
+        assert!(result.is_err(), "should fail on unknown enrichment type");
+        match result {
+            Err(AdapterError::Internal(msg)) => {
+                assert!(msg.contains("nonexistent_enrichment"), "error should name the unknown type");
+            }
+            _ => panic!("expected Internal error"),
+        }
     }
 
     // --- Scenario: Template expressions apply filters ---
