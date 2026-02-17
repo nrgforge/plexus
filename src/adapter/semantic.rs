@@ -62,6 +62,56 @@ impl SemanticInput {
     }
 }
 
+/// Extract a JSON object from LLM response text.
+///
+/// LLMs sometimes wrap JSON in markdown code fences or add explanation text.
+/// This function tries, in order:
+/// 1. Direct parse (response is pure JSON)
+/// 2. Extract from ```json ... ``` or ``` ... ``` fenced block
+/// 3. Find the first `{` to last `}` span and parse that
+fn extract_json(text: &str) -> Option<serde_json::Value> {
+    let trimmed = text.trim();
+
+    // Try 1: Direct parse
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if v.is_object() {
+            return Some(v);
+        }
+    }
+
+    // Try 2: Extract from fenced code block
+    let fenced = if let Some(start) = trimmed.find("```json") {
+        let after = &trimmed[start + 7..];
+        after.find("```").map(|end| &after[..end])
+    } else if let Some(start) = trimmed.find("```\n") {
+        let after = &trimmed[start + 4..];
+        after.find("```").map(|end| &after[..end])
+    } else {
+        None
+    };
+
+    if let Some(block) = fenced {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(block.trim()) {
+            if v.is_object() {
+                return Some(v);
+            }
+        }
+    }
+
+    // Try 3: Find first { to last }
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if start < end {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&trimmed[start..=end]) {
+                if v.is_object() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Phase 3 semantic adapter — delegates to llm-orc for concept extraction.
 pub struct SemanticAdapter {
     /// The llm-orc client (mock or real)
@@ -159,8 +209,10 @@ impl SemanticAdapter {
         response_text: &str,
         file_path: &str,
     ) -> Result<Emission, AdapterError> {
-        let parsed: serde_json::Value = serde_json::from_str(response_text)
-            .map_err(|e| AdapterError::Internal(format!("failed to parse llm-orc response: {}", e)))?;
+        let parsed: serde_json::Value = extract_json(response_text)
+            .ok_or_else(|| AdapterError::Internal(
+                format!("no valid JSON found in llm-orc response: {}", &response_text[..response_text.len().min(200)])
+            ))?;
 
         let mut emission = Emission::new();
         let file_node_id = NodeId::from_string(format!("file:{}", file_path));
@@ -168,8 +220,10 @@ impl SemanticAdapter {
         // Parse concepts
         if let Some(concepts) = parsed.get("concepts").and_then(|v| v.as_array()) {
             for concept in concepts {
+                // Accept "label" (canonical) or "name" (LLM fallback)
                 let label = concept
                     .get("label")
+                    .or_else(|| concept.get("name"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
 
@@ -222,8 +276,10 @@ impl SemanticAdapter {
                     .get("relationship")
                     .and_then(|v| v.as_str())
                     .unwrap_or("related_to");
+                // Accept "weight" (canonical) or "confidence" (LLM fallback)
                 let weight = rel
                     .get("weight")
+                    .or_else(|| rel.get("confidence"))
                     .and_then(|v| v.as_f64())
                     .unwrap_or(1.0);
 
@@ -683,5 +739,297 @@ mod tests {
             .filter(|e| e.relationship == "tagged_with")
             .collect();
         assert_eq!(tagged_edges.len(), 3, "three tagged_with edges");
+    }
+
+    // --- Scenario: Parser accepts LLM fallback field names ---
+
+    #[tokio::test]
+    async fn parse_response_accepts_name_and_confidence_fallbacks() {
+        // LLM returns "name" instead of "label", "confidence" instead of "weight"
+        let llm_response = r#"{
+            "concepts": [
+                { "name": "rust", "confidence": 0.95 },
+                { "name": "async", "confidence": 0.80 }
+            ],
+            "relationships": [
+                {
+                    "source": "rust",
+                    "target": "async",
+                    "relationship": "uses",
+                    "confidence": 0.75
+                }
+            ]
+        }"#;
+
+        let mock_client = Arc::new(
+            MockClient::available().with_response(
+                "semantic-extraction",
+                crate::llm_orc::InvokeResponse {
+                    results: {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert(
+                            "extractor".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(llm_response.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m
+                    },
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        );
+
+        let adapter = SemanticAdapter::new(mock_client, "semantic-extraction");
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        {
+            let mut c = ctx.lock().unwrap();
+            let mut file_node = Node::new_in_dimension(
+                "file",
+                ContentType::Document,
+                dimension::STRUCTURE,
+            );
+            file_node.id = NodeId::from_string("file:/docs/test.rs");
+            c.add_node(file_node);
+        }
+
+        let sink = test_sink(ctx.clone());
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::for_file("/docs/test.rs"),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        // Concepts created from "name" fallback
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:rust")).is_some(),
+            "rust concept from 'name' fallback"
+        );
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:async")).is_some(),
+            "async concept from 'name' fallback"
+        );
+
+        // Relationship with "confidence" → weight fallback
+        let uses_edges: Vec<_> = snapshot
+            .edges()
+            .filter(|e| e.relationship == "uses")
+            .collect();
+        assert_eq!(uses_edges.len(), 1);
+        assert_eq!(uses_edges[0].source, NodeId::from_string("concept:rust"));
+        assert_eq!(uses_edges[0].target, NodeId::from_string("concept:async"));
+    }
+
+    // --- Live integration test: real SubprocessClient → llm-orc → Ollama ---
+    //
+    // Run with: cargo test live_semantic_extraction -- --ignored
+    // Requires: llm-orc installed, Ollama running, gemma3:1b model available
+
+    #[tokio::test]
+    #[ignore = "requires llm-orc, Ollama running, gemma3:1b model"]
+    async fn live_semantic_extraction_round_trip() {
+        use crate::llm_orc::{LlmOrcClient, SubprocessClient};
+
+        let project_dir = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let client = SubprocessClient::new().with_project_dir(project_dir);
+
+        // Verify llm-orc is available
+        assert!(
+            client.is_available().await,
+            "llm-orc subprocess must be available"
+        );
+
+        // Send a short text for the LLM to analyze
+        let sample_text = r#"
+Rust is a systems programming language focused on safety and performance.
+It uses an ownership model to guarantee memory safety without garbage collection.
+The borrow checker enforces these rules at compile time.
+Async/await support enables concurrent programming with Tokio as the primary runtime.
+Cargo is the build system and package manager for Rust projects.
+"#;
+
+        // Invoke the micro ensemble (gemma3:1b) with the sample text
+        let response = client
+            .invoke("plexus-semantic-micro", sample_text.trim())
+            .await
+            .expect("llm-orc semantic invocation should succeed");
+
+        assert!(
+            response.is_completed(),
+            "ensemble should complete, got status: {}",
+            response.status
+        );
+
+        // Get the LLM agent's response text
+        let agent_response = response
+            .results
+            .get("semantic-analyzer")
+            .expect("semantic-analyzer agent should exist")
+            .response
+            .as_deref()
+            .expect("agent should have response text");
+
+        eprintln!("LLM raw response:\n{}", agent_response);
+
+        // Try to parse through SemanticAdapter's parse_response
+        let mock_client = Arc::new(crate::llm_orc::MockClient::unavailable());
+        let adapter = SemanticAdapter::new(mock_client, "plexus-semantic-micro");
+
+        let emission = adapter
+            .parse_response(agent_response, "/test/sample.md")
+            .expect("parse_response should handle LLM output");
+
+        // We should get at least some concepts from this text
+        let concept_count = emission.nodes.len();
+        let edge_count = emission.edges.len();
+
+        eprintln!(
+            "Extracted {} concepts, {} edges",
+            concept_count, edge_count
+        );
+
+        assert!(
+            concept_count >= 1,
+            "LLM should extract at least 1 concept from Rust text, got {}",
+            concept_count
+        );
+
+        // Print what was extracted for debugging
+        for node in emission.nodes {
+            let label = node.node.properties.get("label").map(|v| match v {
+                PropertyValue::String(s) => s.as_str(),
+                _ => "?",
+            }).unwrap_or("?");
+            eprintln!("  concept: {}", label);
+        }
+
+        for edge in emission.edges {
+            eprintln!(
+                "  edge: {} --{}-> {}",
+                edge.edge.source, edge.edge.relationship, edge.edge.target
+            );
+        }
+
+        eprintln!(
+            "Live semantic extraction test passed: {} concepts, {} edges",
+            concept_count, edge_count
+        );
+    }
+
+    // --- Live test: fan-out pipeline with real file reading ---
+    //
+    // Run with: cargo test live_semantic_fanout -- --ignored
+    // Requires: llm-orc installed, Ollama running, gemma3:1b model
+    // Tests: extract_content.py → concept-extractor (fan_out) → synthesizer
+
+    #[tokio::test]
+    #[ignore = "requires llm-orc, Ollama running, gemma3:1b model"]
+    async fn live_semantic_fanout_extraction() {
+        use crate::llm_orc::{LlmOrcClient, SubprocessClient};
+
+        let project_dir = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let client = SubprocessClient::new().with_project_dir(project_dir.clone());
+
+        assert!(
+            client.is_available().await,
+            "llm-orc subprocess must be available"
+        );
+
+        // Point the ensemble at README.md — a real file with enough content to chunk
+        let readme_path = format!("{}/README.md", project_dir);
+        let input_json = serde_json::json!({
+            "file_path": readme_path,
+        });
+
+        eprintln!("Invoking semantic-extraction fan-out pipeline on README.md...");
+
+        let response = client
+            .invoke("semantic-extraction", &input_json.to_string())
+            .await
+            .expect("semantic-extraction invocation should succeed");
+
+        assert!(
+            response.is_completed(),
+            "ensemble should complete, got status: {}",
+            response.status
+        );
+
+        // The synthesizer is the last agent — it has the merged results
+        let synth_response = response
+            .results
+            .get("synthesizer")
+            .expect("synthesizer agent should exist")
+            .response
+            .as_deref()
+            .expect("synthesizer should have response text");
+
+        eprintln!("Synthesizer raw response:\n{}", synth_response);
+
+        // Parse through our extract_json → parse_response pipeline
+        let mock_client = Arc::new(crate::llm_orc::MockClient::unavailable());
+        let adapter = SemanticAdapter::new(mock_client, "semantic-extraction");
+
+        let emission = adapter
+            .parse_response(synth_response, &readme_path)
+            .expect("parse_response should handle synthesizer output");
+
+        let concept_count = emission.nodes.len();
+        let edge_count = emission.edges.len();
+
+        eprintln!(
+            "\nFan-out pipeline results: {} concepts, {} edges",
+            concept_count, edge_count
+        );
+
+        assert!(
+            concept_count >= 2,
+            "fan-out pipeline should extract at least 2 concepts from README, got {}",
+            concept_count
+        );
+
+        for node in &emission.nodes {
+            let label = node.node.properties.get("label").map(|v| match v {
+                PropertyValue::String(s) => s.as_str(),
+                _ => "?",
+            }).unwrap_or("?");
+            eprintln!("  concept: {}", label);
+        }
+
+        for edge in &emission.edges {
+            eprintln!(
+                "  edge: {} --{}-> {}",
+                edge.edge.source, edge.edge.relationship, edge.edge.target
+            );
+        }
+
+        // Verify fan-out actually happened — check that individual chunk agents ran
+        let fan_out_instances: Vec<_> = response
+            .results
+            .keys()
+            .filter(|k| k.starts_with("concept-extractor["))
+            .collect();
+        assert!(
+            !fan_out_instances.is_empty(),
+            "fan-out should produce indexed instances, got: {:?}",
+            response.results.keys().collect::<Vec<_>>()
+        );
+
+        eprintln!(
+            "\nLive fan-out test passed: {} chunks processed, {} concepts, {} edges",
+            fan_out_instances.len(),
+            concept_count,
+            edge_count
+        );
     }
 }

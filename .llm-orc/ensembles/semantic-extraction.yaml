@@ -1,0 +1,70 @@
+name: semantic-extraction
+description: >
+  Multi-stage semantic extraction for Plexus Phase 3.
+  Reads a file, chunks by section boundaries, fans out concept extraction
+  across chunks in parallel, then synthesizes into unified results.
+  Input: JSON with file_path (and optional sections/existing_concepts).
+  Output: concepts and relationships (docs/schemas/phase3-result.schema.json).
+
+agents:
+  # Stage 1: Read file, detect MIME, extract text, chunk
+  - name: content-extractor
+    type: script
+    script: scripts/specialized/plexus/extract_content.py
+    parameters:
+      max_chunk_lines: 100
+
+  # Stage 2: Extract concepts from each chunk (parallel fan-out)
+  - name: concept-extractor
+    model_profile: ollama-gemma3-1b
+    fan_out: true
+    depends_on: [content-extractor]
+    timeout_seconds: 45
+    system_prompt: |
+      You are a concept extraction specialist for a knowledge graph.
+      Given a text chunk from a document, identify key concepts and relationships.
+
+      Return ONLY valid JSON (no other text):
+      {
+        "concepts": [
+          {"label": "concept name", "confidence": 0.9}
+        ],
+        "relationships": [
+          {"source": "concept A", "target": "concept B",
+           "relationship": "type", "weight": 0.8}
+        ]
+      }
+
+      Guidelines:
+      - Normalize concept labels to lowercase (1-3 words)
+      - Extract 3-10 concepts per chunk
+      - Use relationship types: is_a, part_of, related_to, depends_on,
+        uses, implements, describes, creates, contrasts_with
+      - Only include relationships with clear evidence in the text
+      - Return ONLY the JSON, no explanation
+    output_format: json
+
+  # Stage 3: Merge chunk-level concepts into file-level results
+  - name: synthesizer
+    model_profile: ollama-gemma3-1b
+    depends_on: [concept-extractor]
+    timeout_seconds: 30
+    system_prompt: |
+      You are a concept synthesis specialist. You receive concept extractions
+      from multiple chunks of the same document. Merge them into a single
+      coherent set of file-level concepts and relationships.
+
+      Rules:
+      - Deduplicate identical concepts (keep highest confidence)
+      - Merge near-synonyms into the canonical lowercase form
+      - Aggregate relationships across chunks
+      - Adjust confidence based on how many chunks confirmed each concept
+      - Maximum 15 concepts and 10 relationships in final output
+
+      Return ONLY valid JSON:
+      {
+        "concepts": [{"label": "...", "confidence": 0.9}],
+        "relationships": [{"source": "...", "target": "...",
+                           "relationship": "...", "weight": 0.8}]
+      }
+    output_format: json

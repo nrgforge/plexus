@@ -209,13 +209,58 @@ The `mcp__plexus__*` MCP server available in Claude Code sessions is a standalon
 
 ---
 
+## Semantic Extraction with Fan-Out (2026-02-16, session 3)
+
+### Field name mismatch fixed
+
+All ensemble prompts used `"name"` for concepts and `"confidence"` for relationship weights. `parse_response()` expected `"label"` and `"weight"`. Fixed both sides:
+- Ensemble prompts now request `label` and `weight` (canonical names)
+- `parse_response()` accepts `name` as fallback for `label`, `confidence` as fallback for `weight` (defensive against LLM output variance)
+
+### JSON extraction from LLM prose
+
+Small models (gemma3:1b) wrap JSON in explanation text and markdown fences. Added `extract_json()` helper that tries:
+1. Direct JSON parse
+2. Extract from ` ```json ... ``` ` fenced blocks
+3. Find first `{` to last `}` span
+
+### Fan-out pipeline verified
+
+Created `semantic-extraction` ensemble with three stages:
+
+```
+extract_content.py  →  concept-extractor (fan_out: true)  →  synthesizer
+   (read file,           (parallel LLM per chunk)             (merge chunks)
+    detect MIME,
+    chunk by lines)
+```
+
+**Live test result:** Invoked on `README.md`:
+- `extract_content.py` read file, detected `text/markdown`, produced 2 chunks
+- `concept-extractor[0]` and `[1]` ran in parallel (gemma3:1b, ~7s each)
+- `synthesizer` merged results → 5 concepts (plexus, adapter pipeline, provenance tracking, evidence trails, source manifest) + 4 relationships
+- `parse_response()` + `extract_json()` correctly parsed the synthesizer output (which included explanation prose around the JSON)
+- Total round-trip: ~40s including llm-orc startup + 3 LLM calls
+
+### AgentResult fan-out deserialization fix
+
+Fan-out gathered results have `response: [...]` (array) instead of `response: "..."` (string). Added custom deserializer that accepts both, converting arrays to JSON strings.
+
+### Single-agent extraction also verified
+
+Direct invocation of `plexus-semantic-micro` (single gemma3:1b agent, no fan-out) with inline text:
+- 12 concepts extracted from 5-sentence Rust text in 16s
+- All concepts semantically relevant (rust, ownership model, borrow checker, tokio, cargo, etc.)
+
+---
+
 ## Next Steps
 
 1. **Investigate large payload issue** — determine whether the empty-result failure with `concept:`-prefixed node IDs is a size limit, escaping bug, or something else in the MCP transport.
 
 2. **Extract `unwrap_input` to shared utility** — if more Plexus scripts are added, the envelope handling should be a reusable module rather than copy-pasted.
 
-3. **Test semantic extraction ensemble** — the `plexus-semantic-extraction` ensemble (chunker + LLM concept extractor + synthesizer) requires an Ollama model. Test when local LLM is available.
+3. **Wire `semantic-extraction` ensemble into `SemanticAdapter`** — currently `build_input()` sends metadata only. With `extract_content.py` in the ensemble, it just needs to send `{"file_path": "..."}` and let the ensemble handle content reading. The adapter's `process()` should use `semantic-extraction` ensemble by default.
 
 4. **Database schema migration** — existing production databases use old schema (no `raw_weight`, has `weight`/`strength`/`confidence`). `plexus analyze` CLI can't read them. Migration needed.
 

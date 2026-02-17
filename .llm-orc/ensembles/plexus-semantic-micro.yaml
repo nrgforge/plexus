@@ -17,10 +17,10 @@ agents:
       Return ONLY valid JSON in this exact format (no other text):
       {
         "concepts": [
-          {"name": "concept name", "type": "concept|entity|topic|technology|action", "confidence": 0.9}
+          {"label": "concept name", "confidence": 0.9}
         ],
         "relationships": [
-          {"source": "concept1", "target": "concept2", "relationship": "implements|describes|depends_on|related_to|part_of|uses|creates", "confidence": 0.8}
+          {"source": "concept1", "target": "concept2", "relationship": "implements|describes|depends_on|related_to|part_of|uses|creates", "weight": 0.8}
         ]
       }
 

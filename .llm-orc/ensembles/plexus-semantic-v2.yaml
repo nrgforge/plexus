@@ -16,10 +16,10 @@ agents:
       Return ONLY valid JSON:
       {
         "raw_concepts": [
-          {"name": "concept name", "type": "concept|entity|topic|technology|action", "confidence": 0.9}
+          {"label": "concept name", "confidence": 0.9}
         ],
         "relationships": [
-          {"source": "concept1", "target": "concept2", "relationship": "implements|describes|depends_on|related_to|part_of|uses|creates", "confidence": 0.8}
+          {"source": "concept1", "target": "concept2", "relationship": "implements|describes|depends_on|related_to|part_of|uses|creates", "weight": 0.8}
         ]
       }
 
@@ -54,13 +54,13 @@ agents:
       Return ONLY valid JSON:
       {
         "concepts": [
-          {"name": "concept name", "type": "...", "confidence": 0.9}
+          {"label": "concept name", "confidence": 0.9}
         ],
         "relationships": [
-          {"source": "...", "target": "...", "relationship": "...", "confidence": 0.8}
+          {"source": "...", "target": "...", "relationship": "...", "weight": 0.8}
         ],
         "removed": [
-          {"name": "...", "reason": "..."}
+          {"label": "...", "reason": "..."}
         ]
       }
     output_format: json

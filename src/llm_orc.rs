@@ -48,8 +48,9 @@ impl InvokeResponse {
 /// Result from a single agent in an ensemble.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentResult {
-    /// The agent's response text or JSON
-    #[serde(default)]
+    /// The agent's response text or JSON.
+    /// Fan-out gathered results may be arrays — deserialized as JSON array string.
+    #[serde(default, deserialize_with = "deserialize_response")]
     pub response: Option<String>,
     /// Agent status
     #[serde(default)]
@@ -57,6 +58,22 @@ pub struct AgentResult {
     /// Error message if the agent failed
     #[serde(default)]
     pub error: Option<String>,
+}
+
+/// Custom deserializer: accepts String, Array (serialized back to JSON string), or null.
+fn deserialize_response<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(s)),
+        Some(other) => {
+            // Arrays, objects, etc. — serialize back to JSON string
+            Ok(Some(serde_json::to_string(&other).unwrap_or_default()))
+        }
+    }
 }
 
 impl AgentResult {
