@@ -351,13 +351,15 @@ impl Adapter for SemanticAdapter {
             ));
         }
 
-        // Find the final agent's response (last in the pipeline)
-        // Convention: the last agent produces the structured output
+        // Extract the synthesizer's response (fan-out pipeline convention).
+        // Try "synthesizer" key first, fall back to last agent response.
         let response_text = response
             .results
-            .values()
-            .filter_map(|r| r.response.as_deref())
-            .last()
+            .get("synthesizer")
+            .and_then(|r| r.response.as_deref())
+            .or_else(|| {
+                response.results.values().filter_map(|r| r.response.as_deref()).last()
+            })
             .ok_or_else(|| {
                 AdapterError::Internal("no agent responses in llm-orc result".to_string())
             })?;
@@ -825,6 +827,101 @@ mod tests {
         assert_eq!(uses_edges.len(), 1);
         assert_eq!(uses_edges[0].source, NodeId::from_string("concept:rust"));
         assert_eq!(uses_edges[0].target, NodeId::from_string("concept:async"));
+    }
+
+    // --- Scenario: Fan-out pipeline extracts from synthesizer, not arbitrary agent ---
+
+    #[tokio::test]
+    async fn fan_out_pipeline_prefers_synthesizer_agent() {
+        // Simulate a fan-out pipeline with multiple agents.
+        // The synthesizer has the merged result; other agents have partial data.
+        let synth_response = r#"{
+            "concepts": [
+                { "label": "merged concept", "confidence": 0.95 }
+            ],
+            "relationships": []
+        }"#;
+
+        let partial_response = r#"{
+            "concepts": [
+                { "label": "partial only", "confidence": 0.5 }
+            ],
+            "relationships": []
+        }"#;
+
+        let mock_client = Arc::new(
+            MockClient::available().with_response(
+                "semantic-extraction",
+                crate::llm_orc::InvokeResponse {
+                    results: {
+                        let mut m = std::collections::HashMap::new();
+                        // Fan-out chunk agents (inserted first — HashMap order is arbitrary)
+                        m.insert(
+                            "concept-extractor[0]".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(partial_response.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m.insert(
+                            "concept-extractor[1]".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(partial_response.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        // Synthesizer — this is the one we want
+                        m.insert(
+                            "synthesizer".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(synth_response.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m
+                    },
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        );
+
+        let adapter = SemanticAdapter::new(mock_client, "semantic-extraction");
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        {
+            let mut c = ctx.lock().unwrap();
+            let mut file_node = Node::new_in_dimension(
+                "file",
+                ContentType::Document,
+                dimension::STRUCTURE,
+            );
+            file_node.id = NodeId::from_string("file:/docs/fanout.md");
+            c.add_node(file_node);
+        }
+
+        let sink = test_sink(ctx.clone());
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::for_file("/docs/fanout.md"),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        // Should have the synthesizer's "merged concept", not the partial agents' "partial only"
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:merged concept")).is_some(),
+            "should extract from synthesizer agent"
+        );
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:partial only")).is_none(),
+            "should NOT extract from chunk agents"
+        );
     }
 
     // --- Live integration test: real SubprocessClient → llm-orc → Ollama ---
