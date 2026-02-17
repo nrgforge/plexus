@@ -95,7 +95,8 @@ impl SqliteStore {
             "#,
         )?;
 
-        // Phase 2: Run migrations
+        // Phase 2: Run migrations (order matters — legacy rebuild before column additions)
+        Self::migrate_legacy_edge_columns(conn)?;
         Self::migrate_add_dimensions(conn)?;
         Self::migrate_add_contributions(conn)?;
 
@@ -170,6 +171,69 @@ impl SqliteStore {
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_edges_cross_dimensional ON edges(context_id, source_dimension, target_dimension)",
                 [],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Migration: Rename legacy edge columns (weight → raw_weight)
+    ///
+    /// Old databases may have `weight`, `strength`, `confidence` columns instead
+    /// of `raw_weight`. Detects this and migrates by copying data into the
+    /// canonical schema.
+    fn migrate_legacy_edge_columns(conn: &Connection) -> StorageResult<()> {
+        // Check if the old `weight` column exists AND `raw_weight` does NOT
+        let has_weight: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('edges') WHERE name = 'weight'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        let has_raw_weight: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('edges') WHERE name = 'raw_weight'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if has_weight && !has_raw_weight {
+            // Old schema detected — rebuild the table with canonical columns.
+            // SQLite < 3.35.0 doesn't support DROP COLUMN, so we use the
+            // recommended create-copy-swap approach.
+            conn.execute_batch(
+                r#"
+                -- Create new table with canonical schema
+                CREATE TABLE edges_new (
+                    id TEXT NOT NULL,
+                    context_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    relationship TEXT NOT NULL,
+                    raw_weight REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    properties_json TEXT NOT NULL,
+                    PRIMARY KEY (context_id, id),
+                    FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE CASCADE
+                );
+
+                -- Copy data, mapping old weight → raw_weight
+                INSERT INTO edges_new (id, context_id, source_id, target_id, relationship, raw_weight, created_at, properties_json)
+                SELECT id, context_id, source_id, target_id, relationship, COALESCE(weight, 1.0), created_at, properties_json
+                FROM edges;
+
+                -- Swap tables
+                DROP TABLE edges;
+                ALTER TABLE edges_new RENAME TO edges;
+
+                -- Recreate base indexes
+                CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(context_id, source_id);
+                CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(context_id, target_id);
+                CREATE INDEX IF NOT EXISTS idx_edges_relationship ON edges(context_id, relationship);
+                "#,
             )?;
         }
 
@@ -1541,6 +1605,124 @@ mod tests {
 
         let v2 = store_a.data_version().unwrap();
         assert_ne!(v1, v2, "data_version must change after external write");
+    }
+
+    // ========================================================================
+    // Legacy Edge Schema Migration Tests
+    // ========================================================================
+
+    #[test]
+    fn test_legacy_weight_column_migrated_to_raw_weight() {
+        // Simulate an old database with `weight` column instead of `raw_weight`
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Create old-style schema (contexts + nodes + edges with `weight`)
+        conn.execute_batch(
+            r#"
+            CREATE TABLE contexts (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                metadata_json TEXT NOT NULL
+            );
+            CREATE TABLE nodes (
+                id TEXT NOT NULL,
+                context_id TEXT NOT NULL,
+                node_type TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                properties_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                PRIMARY KEY (context_id, id)
+            );
+            CREATE TABLE edges (
+                id TEXT NOT NULL,
+                context_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                relationship TEXT NOT NULL,
+                weight REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                properties_json TEXT NOT NULL,
+                PRIMARY KEY (context_id, id)
+            );
+            CREATE INDEX idx_edges_source ON edges(context_id, source_id);
+            CREATE INDEX idx_edges_target ON edges(context_id, target_id);
+            CREATE INDEX idx_edges_relationship ON edges(context_id, relationship);
+
+            -- Insert test data
+            INSERT INTO contexts VALUES ('ctx:test', 'test', NULL, '{}');
+            INSERT INTO nodes VALUES ('node:a', 'ctx:test', 'concept', '"code"', '{}', '{}');
+            INSERT INTO nodes VALUES ('node:b', 'ctx:test', 'concept', '"code"', '{}', '{}');
+            INSERT INTO edges VALUES ('edge:1', 'ctx:test', 'node:a', 'node:b', 'calls', 0.75, '2024-01-01T00:00:00Z', '{}');
+            "#,
+        )
+        .unwrap();
+
+        // Run the migration
+        SqliteStore::migrate_legacy_edge_columns(&conn).unwrap();
+
+        // Verify: `raw_weight` column exists and has the old `weight` value
+        let has_raw_weight: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('edges') WHERE name = 'raw_weight'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(has_raw_weight, "raw_weight column should exist after migration");
+
+        let has_old_weight: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('edges') WHERE name = 'weight'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!has_old_weight, "old weight column should be gone after migration");
+
+        // Verify data was preserved
+        let raw_weight: f64 = conn
+            .query_row(
+                "SELECT raw_weight FROM edges WHERE id = 'edge:1' AND context_id = 'ctx:test'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((raw_weight - 0.75).abs() < f64::EPSILON, "weight value should be preserved");
+
+        // Verify further migrations (dimensions, contributions) can run on top
+        SqliteStore::migrate_add_dimensions(&conn).unwrap();
+        SqliteStore::migrate_add_contributions(&conn).unwrap();
+        SqliteStore::create_dimension_indexes(&conn).unwrap();
+    }
+
+    #[test]
+    fn test_migration_noop_on_current_schema() {
+        // Running the legacy migration on a database that already has raw_weight
+        // should be a no-op
+        let store = create_test_store();
+        let ctx = create_test_context();
+        let ctx_id = ctx.id.clone();
+        store.save_context(&ctx).unwrap();
+
+        let node_a = create_test_node("node:a", "function");
+        let node_b = create_test_node("node:b", "function");
+        store.save_node(&ctx_id, &node_a).unwrap();
+        store.save_node(&ctx_id, &node_b).unwrap();
+
+        let mut edge = Edge::new(node_a.id.clone(), node_b.id.clone(), "calls");
+        edge.raw_weight = 0.5;
+        store.save_edge(&ctx_id, &edge).unwrap();
+
+        // Run the migration again — should be a no-op
+        let conn = store.conn.lock().unwrap();
+        SqliteStore::migrate_legacy_edge_columns(&conn).unwrap();
+        drop(conn);
+
+        // Verify data is intact
+        let edges = store.get_edges_from(&ctx_id, &node_a.id).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert!((edges[0].raw_weight - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]
