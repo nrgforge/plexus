@@ -85,6 +85,30 @@ pub struct SetContextParams {
     pub name: String,
 }
 
+// ── Context management params ──────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ContextNameParams {
+    #[schemars(description = "Name of the context")]
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ContextRenameParams {
+    #[schemars(description = "Current context name")]
+    pub old_name: String,
+    #[schemars(description = "New context name")]
+    pub new_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ContextSourceParams {
+    #[schemars(description = "Name of the context")]
+    pub name: String,
+    #[schemars(description = "Source paths (files or directories) to add or remove")]
+    pub paths: Vec<String>,
+}
+
 // ── Graph read params ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]

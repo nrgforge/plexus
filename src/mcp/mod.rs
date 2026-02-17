@@ -1,6 +1,6 @@
-//! MCP server for Plexus — provenance tracking via the Model Context Protocol.
+//! MCP server for Plexus — knowledge graph engine via the Model Context Protocol.
 //!
-//! Tools: 14 total (13 provenance + 1 graph read).
+//! Tools: 19 total (13 provenance + 5 context management + 1 graph read).
 
 pub mod params;
 
@@ -10,6 +10,7 @@ use crate::adapter::{
     CoOccurrenceEnrichment, FragmentAdapter, IngestPipeline,
     ProvenanceAdapter, TagConceptBridger,
 };
+use crate::graph::Source;
 use crate::{OpenStore, PlexusEngine, SqliteStore};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -284,6 +285,96 @@ impl PlexusMcpServer {
         }
     }
 
+    // ── Context management ─────────────────────────────────────────────
+
+    #[tool(description = "List all contexts with their sources")]
+    fn context_list(&self) -> Result<CallToolResult, McpError> {
+        match self.api.context_list_info() {
+            Ok(infos) => {
+                let items: Vec<serde_json::Value> = infos
+                    .into_iter()
+                    .map(|ci| serde_json::json!({
+                        "name": ci.name,
+                        "id": ci.id,
+                        "source_count": ci.sources.len(),
+                        "sources": ci.sources,
+                    }))
+                    .collect();
+                ok_text(serde_json::to_string_pretty(&items).unwrap())
+            }
+            Err(e) => err_text(e.to_string()),
+        }
+    }
+
+    #[tool(description = "Create a new context")]
+    fn context_create(
+        &self,
+        Parameters(p): Parameters<ContextNameParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.context_create(&p.name) {
+            Ok(id) => ok_text(format!("created context '{}' ({})", p.name, id)),
+            Err(e) => err_text(e.to_string()),
+        }
+    }
+
+    #[tool(description = "Delete a context by name")]
+    fn context_delete(
+        &self,
+        Parameters(p): Parameters<ContextNameParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.context_delete(&p.name) {
+            Ok(()) => ok_text(format!("deleted context '{}'", p.name)),
+            Err(e) => err_text(e.to_string()),
+        }
+    }
+
+    #[tool(description = "Rename an existing context")]
+    fn context_rename(
+        &self,
+        Parameters(p): Parameters<ContextRenameParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.context_rename(&p.old_name, &p.new_name) {
+            Ok(()) => ok_text(format!("renamed '{}' to '{}'", p.old_name, p.new_name)),
+            Err(e) => err_text(e.to_string()),
+        }
+    }
+
+    #[tool(description = "Add file or directory sources to a context")]
+    fn context_add_sources(
+        &self,
+        Parameters(p): Parameters<ContextSourceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let sources: Vec<Source> = p.paths.iter().map(|path| {
+            if std::path::Path::new(path).is_dir() {
+                Source::Directory { path: path.clone(), recursive: false }
+            } else {
+                Source::File { path: path.clone() }
+            }
+        }).collect();
+        match self.api.context_add_sources(&p.name, &sources) {
+            Ok(()) => ok_text(format!("added {} source(s) to '{}'", sources.len(), p.name)),
+            Err(e) => err_text(e.to_string()),
+        }
+    }
+
+    #[tool(description = "Remove file or directory sources from a context")]
+    fn context_remove_sources(
+        &self,
+        Parameters(p): Parameters<ContextSourceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let sources: Vec<Source> = p.paths.iter().map(|path| {
+            if std::path::Path::new(path).is_dir() {
+                Source::Directory { path: path.clone(), recursive: false }
+            } else {
+                Source::File { path: path.clone() }
+            }
+        }).collect();
+        match self.api.context_remove_sources(&p.name, &sources) {
+            Ok(()) => ok_text(format!("removed {} source(s) from '{}'", sources.len(), p.name)),
+            Err(e) => err_text(e.to_string()),
+        }
+    }
+
     // ── Graph reads ────────────────────────────────────────────────────
 
     #[tool(description = "Query the evidence trail for a concept: marks, fragments, and chains (ADR-013)")]
@@ -303,7 +394,7 @@ impl ServerHandler for PlexusMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Plexus MCP server — provenance tracking (chains, marks, links). Call set_context before using other tools."
+                "Plexus MCP server — knowledge graph engine with provenance tracking. Call set_context before using other tools."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
