@@ -213,28 +213,28 @@ ADRs: 019 (phased extraction), 020 (declarative adapter specs), 021 (Phase 3 llm
 
 ---
 
-## Feature: Graph Analysis (ADR-023)
+## Feature: External Enrichment — On-Demand (ADR-023, vocabulary updated by ADR-024)
 
 > Build last — depends on llm-orc integration and a mature graph to analyze.
 
-### Scenario: Graph analysis results enter via ingest
-**Given** a graph analysis ensemble completes (e.g., PageRank)
+### Scenario: External enrichment results enter via ingest
+**Given** an external enrichment ensemble completes (e.g., PageRank)
 **When** results are returned to Plexus
-**Then** a graph analysis adapter with stable ID (e.g., `graph-analysis:pagerank`) ingests the results via `ingest()`
+**Then** a `GraphAnalysisAdapter` with stable ID (e.g., `graph-analysis:pagerank`) ingests the results via `ingest()`
 **And** existing nodes receive property updates (`pagerank_score: 0.034`)
 **And** the enrichment loop fires after the ingest (standard pipeline)
 
-### Scenario: Graph analysis does not run in enrichment loop
-**Given** a PageRank analysis ensemble
+### Scenario: External enrichment does not run in enrichment loop
+**Given** a PageRank external enrichment ensemble
 **When** a new fragment is ingested via the normal pipeline
 **Then** the enrichment loop runs (TagConceptBridger, CoOccurrenceEnrichment)
-**And** PageRank does NOT run — it is not registered as an enrichment
+**And** PageRank does NOT run — it is not registered as a core enrichment
 
-### Scenario: On-demand graph analysis
+### Scenario: On-demand external enrichment
 **Given** a context with 200 concept nodes and 500 edges
 **When** `plexus analyze my-context` is invoked
 **Then** the graph is exported to a format consumable by llm-orc script agents
-**And** the llm-orc graph-analysis ensemble runs (PageRank, community detection in parallel)
+**And** the llm-orc `graph-analysis` ensemble runs (PageRank, community detection in parallel)
 **And** results are applied back via `ingest()`
 
 ---

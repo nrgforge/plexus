@@ -164,7 +164,7 @@ This requires adding `serde::Deserialize` derives to `DeclarativeSpec`, `Primiti
 - A single YAML artifact captures the full adapter integration: extraction (ensemble), mapping (emit), and enrichment wiring (enrichments). Self-documenting.
 - External consumers write YAML, not Rust. The `ensemble` field connects to their existing llm-orc extraction pipeline; the `enrichments` section connects to Plexus's discovery capabilities.
 - `from_yaml()` enables runtime loading of adapter specs from files or MCP tool parameters — no recompilation needed to add a new adapter.
-- `update_properties` completes the primitive set, enabling declarative expression of graph analysis result application.
+- `update_properties` completes the primitive set, enabling declarative expression of external enrichment result application.
 
 **Negative:**
 

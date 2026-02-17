@@ -36,11 +36,11 @@ enum Commands {
         #[arg(long)]
         db: Option<PathBuf>,
     },
-    /// Run graph analysis on a context via llm-orc
+    /// Run on-demand external enrichment on a context via llm-orc (ADR-024)
     Analyze {
         /// Name of the context to analyze
         name: String,
-        /// llm-orc ensemble name for graph analysis
+        /// llm-orc ensemble name for external enrichment
         #[arg(long, default_value = "graph-analysis")]
         ensemble: String,
         /// Path to SQLite database file

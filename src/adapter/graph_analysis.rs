@@ -1,11 +1,11 @@
-//! Graph analysis adapter (ADR-023)
+//! External enrichment adapter (ADR-023, vocabulary updated by ADR-024)
 //!
-//! Thin adapter that ingests results from external graph analysis
+//! Thin adapter that ingests results from on-demand external enrichments
 //! (e.g., PageRank, community detection) as property updates on existing nodes.
 //!
-//! Graph analysis runs outside the enrichment loop — it is an adapter,
-//! not an enrichment (Invariant 49). Results enter via `ingest()` and
-//! the standard pipeline (including enrichments) fires after.
+//! External enrichments run outside the enrichment loop (Invariant 49).
+//! Results enter via `ingest()` and the standard pipeline (including
+//! core enrichments) fires after.
 //!
 //! Each algorithm has a distinct adapter ID (e.g., `graph-analysis:pagerank`)
 //! for contribution tracking.
@@ -17,9 +17,9 @@ use crate::graph::{Context, NodeId, PropertyValue};
 use crate::llm_orc::{InvokeResponse, LlmOrcClient, LlmOrcError};
 use async_trait::async_trait;
 
-/// Input for the graph analysis adapter.
+/// Input for the external enrichment adapter.
 ///
-/// Contains a list of node property updates from an analysis run.
+/// Contains a list of node property updates from an enrichment run.
 #[derive(Debug, Clone)]
 pub struct GraphAnalysisInput {
     pub results: Vec<NodePropertyUpdate>,
@@ -32,7 +32,7 @@ pub struct NodePropertyUpdate {
     pub properties: Vec<(String, PropertyValue)>,
 }
 
-/// Adapter that applies graph analysis results as property updates.
+/// Adapter that applies external enrichment results as property updates.
 ///
 /// Parameterized by algorithm name for stable, unique adapter IDs.
 /// e.g., `graph-analysis:pagerank`, `graph-analysis:community`.
@@ -98,7 +98,7 @@ impl Adapter for GraphAnalysisAdapter {
     }
 }
 
-// --- On-demand analysis orchestration (ADR-023, Scenario 3) ---
+// --- On-demand external enrichment orchestration (ADR-023, ADR-024) ---
 
 /// Export a context's graph to JSON for llm-orc script agents.
 ///
@@ -229,10 +229,10 @@ pub fn parse_analysis_response(
     Ok(results)
 }
 
-/// Run on-demand graph analysis on a context.
+/// Run on-demand external enrichment on a context.
 ///
 /// 1. Exports the context graph as JSON
-/// 2. Invokes the llm-orc graph-analysis ensemble
+/// 2. Invokes the llm-orc external enrichment ensemble
 /// 3. Parses per-agent results
 /// 4. Returns `(algorithm, GraphAnalysisInput)` pairs for ingestion
 ///

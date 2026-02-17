@@ -7,7 +7,7 @@
 //!
 //! llm-orc runs as a persistent service. Plexus calls it for:
 //! - Phase 3 semantic extraction (ADR-021)
-//! - On-demand graph analysis (ADR-023)
+//! - On-demand external enrichment (ADR-023, vocabulary updated by ADR-024)
 
 use async_trait::async_trait;
 use rmcp::model::{CallToolRequestParams, Content};

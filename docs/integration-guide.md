@@ -382,9 +382,9 @@ sink.emit()  →  enrichment loop  →  graph
 
 The adapter prefers the `synthesizer` agent's response (the merged result) over individual chunk agents. When llm-orc is unavailable, Phase 4 is skipped — the graph lacks LLM-derived semantic enrichment but is otherwise fully functional (Invariant 47).
 
-### Graph analysis
+### External enrichment (on-demand)
 
-On-demand graph analysis (PageRank, community detection) also delegates to llm-orc but enters the graph via `GraphAnalysisAdapter`, not the enrichment loop (Invariant 49). Analysis results are property updates on existing nodes, not new nodes.
+On-demand external enrichment (PageRank, community detection) also delegates to llm-orc but enters the graph via `GraphAnalysisAdapter`, not the enrichment loop (Invariant 49). Enrichment results are property updates on existing nodes, not new nodes.
 
 ```
 Context graph

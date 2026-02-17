@@ -4,7 +4,7 @@
 
 **Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
 
-**Domain model:** [domain-model.md](../domain-model.md) — extraction phase, extractor, graph analysis
+**Domain model:** [domain-model.md](../domain-model.md) — extraction phase, extractor, external enrichment
 
 **Depends on:** ADR-019 (phased extraction)
 

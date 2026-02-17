@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://plexus.dev/schemas/graph-export.schema.json",
   "title": "Graph Export",
-  "description": "Context graph exported for llm-orc analysis ensembles. Produced by export_graph_for_analysis() in src/adapter/graph_analysis.rs.",
+  "description": "Context graph exported for llm-orc external enrichment ensembles. Produced by export_graph_for_analysis() in src/adapter/graph_analysis.rs.",
   "type": "object",
   "required": ["nodes", "edges", "node_count", "edge_count"],
   "properties": {
