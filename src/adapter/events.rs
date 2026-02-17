@@ -1,6 +1,6 @@
 //! Graph events fired when emissions are committed
 //!
-//! Five low-level event types, one per mutation kind.
+//! Six low-level event types, one per mutation kind.
 //! Higher-level events are modeled as nodes/edges from reflexive adapters.
 
 use crate::graph::{EdgeId, NodeId};
@@ -39,6 +39,12 @@ pub enum GraphEvent {
         edge_ids: Vec<EdgeId>,
         adapter_id: String,
         context_id: String,
+    },
+    /// Contributions from an adapter/enrichment were retracted (ADR-027)
+    ContributionsRetracted {
+        adapter_id: String,
+        context_id: String,
+        edges_affected: usize,
     },
 }
 

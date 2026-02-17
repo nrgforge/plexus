@@ -65,6 +65,11 @@ impl IngestPipeline {
         self.enrichments = Arc::new(EnrichmentRegistry::new(all));
     }
 
+    /// Get the enrichment registry (for running enrichment loop outside ingest).
+    pub fn enrichment_registry(&self) -> &Arc<EnrichmentRegistry> {
+        &self.enrichments
+    }
+
     /// The single write endpoint (ADR-012).
     ///
     /// 1. Routes to adapters matching `input_kind` (fan-out if multiple)

@@ -355,6 +355,47 @@ impl PlexusApi {
         Ok(())
     }
 
+    // --- Contribution retraction (ADR-027) ---
+
+    /// Retract all contributions from an adapter/enrichment (ADR-027).
+    ///
+    /// Removes the adapter's contribution slot from every edge in the context,
+    /// prunes zero-evidence edges, recomputes raw weights, fires events,
+    /// and runs the enrichment loop so dependent enrichments can react.
+    ///
+    /// Returns the count of edges affected.
+    pub fn retract_contributions(
+        &self,
+        context_id: &str,
+        adapter_id: &str,
+    ) -> PlexusResult<usize> {
+        use crate::adapter::{EngineSink, GraphEvent};
+
+        let ctx_id = self.resolve(context_id)?;
+
+        // Phase 1: Retract and get events
+        let events = self.engine.retract_contributions(&ctx_id, adapter_id)?;
+
+        // Extract edges_affected from the ContributionsRetracted event
+        let edges_affected = events.iter().find_map(|e| match e {
+            GraphEvent::ContributionsRetracted { edges_affected, .. } => Some(*edges_affected),
+            _ => None,
+        }).unwrap_or(0);
+
+        // Phase 2: Run enrichment loop with retraction events
+        let registry = self.pipeline.enrichment_registry();
+        if !registry.enrichments().is_empty() && !events.is_empty() {
+            let _ = EngineSink::run_enrichment_loop(
+                &self.engine,
+                &ctx_id,
+                registry,
+                &events,
+            );
+        }
+
+        Ok(edges_affected)
+    }
+
     // --- Context management ---
 
     /// Create a context. Returns error if name is already taken.
@@ -978,5 +1019,106 @@ mod tests {
         // No chain should have been created
         let chains = api.list_chains("research", None).unwrap();
         assert_eq!(chains.len(), 0);
+    }
+
+    // === ADR-027: Contribution Retraction via PlexusApi ===
+
+    #[test]
+    fn retract_contributions_removes_adapter_slots() {
+        let (engine, api) = setup();
+
+        let mut ctx = Context::new("research");
+        let id_a = NodeId::from("concept:travel");
+        let id_b = NodeId::from("concept:journey");
+        ctx.nodes.insert(id_a.clone(), Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC));
+        ctx.nodes.insert(id_b.clone(), Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC));
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", dimension::SEMANTIC)
+                .with_contribution("embedding:model-a", 0.8)
+                .with_contribution("co_occurrence:tagged_with:may_be_related", 0.6),
+        );
+        ctx.recompute_raw_weights();
+        engine.upsert_context(ctx).unwrap();
+
+        let affected = api.retract_contributions("research", "embedding:model-a").unwrap();
+
+        assert_eq!(affected, 1);
+        let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
+        assert_eq!(ctx.edge_count(), 1, "edge with remaining contributions should survive");
+        assert!(!ctx.edges[0].contributions.contains_key("embedding:model-a"));
+    }
+
+    #[test]
+    fn retract_contributions_is_context_scoped() {
+        let (engine, api) = setup();
+
+        // Context A with edge from embedding:model-a
+        let mut ctx_a = Context::new("ctx-a");
+        let id_a = NodeId::from("concept:alpha");
+        let id_b = NodeId::from("concept:beta");
+        ctx_a.nodes.insert(id_a.clone(), Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC));
+        ctx_a.nodes.insert(id_b.clone(), Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC));
+        ctx_a.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", dimension::SEMANTIC)
+                .with_contribution("embedding:model-a", 0.9),
+        );
+        ctx_a.recompute_raw_weights();
+        engine.upsert_context(ctx_a).unwrap();
+
+        // Context B with same adapter
+        let mut ctx_b = Context::new("ctx-b");
+        ctx_b.nodes.insert(id_a.clone(), Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC));
+        ctx_b.nodes.insert(id_b.clone(), Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC));
+        ctx_b.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", dimension::SEMANTIC)
+                .with_contribution("embedding:model-a", 0.7),
+        );
+        ctx_b.recompute_raw_weights();
+        engine.upsert_context(ctx_b).unwrap();
+
+        // Retract only in ctx-a
+        api.retract_contributions("ctx-a", "embedding:model-a").unwrap();
+
+        // ctx-a: edge pruned (only contributor was retracted)
+        let ctx_a = engine.get_context(&api.resolve("ctx-a").unwrap()).unwrap();
+        assert_eq!(ctx_a.edge_count(), 0, "ctx-a edge should be pruned");
+
+        // ctx-b: unaffected
+        let ctx_b = engine.get_context(&api.resolve("ctx-b").unwrap()).unwrap();
+        assert_eq!(ctx_b.edge_count(), 1, "ctx-b edge should be unaffected");
+        assert!(ctx_b.edges[0].contributions.contains_key("embedding:model-a"));
+    }
+
+    #[test]
+    fn retract_contributions_lifecycle_add_update_remove() {
+        let (engine, api) = setup();
+
+        let mut ctx = Context::new("research");
+        let id_a = NodeId::from("concept:a");
+        let id_b = NodeId::from("concept:b");
+        ctx.nodes.insert(id_a.clone(), Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC));
+        ctx.nodes.insert(id_b.clone(), Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC));
+
+        // Add: create edge with contribution
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", dimension::SEMANTIC)
+                .with_contribution("test-adapter", 0.5),
+        );
+        ctx.recompute_raw_weights();
+        engine.upsert_context(ctx).unwrap();
+        assert_eq!(engine.get_context(&api.resolve("research").unwrap()).unwrap().edge_count(), 1);
+
+        // Update: re-emit with new value (simulated by direct mutation)
+        engine.with_context_mut(&api.resolve("research").unwrap(), |ctx| {
+            ctx.edges[0].contributions.insert("test-adapter".to_string(), 0.8);
+            ctx.recompute_raw_weights();
+        }).unwrap();
+        let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
+        assert_eq!(*ctx.edges[0].contributions.get("test-adapter").unwrap(), 0.8);
+
+        // Remove: retract contributions
+        api.retract_contributions("research", "test-adapter").unwrap();
+        let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
+        assert_eq!(ctx.edge_count(), 0, "edge should be pruned after retraction");
     }
 }

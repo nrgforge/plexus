@@ -317,6 +317,46 @@ impl Context {
         }
     }
 
+    /// Retract all contributions from a named adapter/enrichment (ADR-027).
+    ///
+    /// Removes the adapter's contribution slot from every edge in the context.
+    /// Recomputes raw weights from remaining contributions. Prunes edges
+    /// whose contributions map becomes empty (zero evidence).
+    ///
+    /// Returns (edges_affected, pruned_edge_ids).
+    pub fn retract_contributions(&mut self, adapter_id: &str) -> (usize, Vec<super::EdgeId>) {
+        // Phase 1: Remove contribution slots, track which edges were affected
+        let mut edges_affected = 0;
+        let mut was_affected = vec![false; self.edges.len()];
+        for (i, edge) in self.edges.iter_mut().enumerate() {
+            if edge.contributions.remove(adapter_id).is_some() {
+                edges_affected += 1;
+                was_affected[i] = true;
+            }
+        }
+
+        // Phase 2: Collect pruned edge IDs, then retain non-pruned edges
+        let mut pruned_ids = Vec::new();
+        for (i, edge) in self.edges.iter().enumerate() {
+            if was_affected[i] && edge.contributions.is_empty() {
+                pruned_ids.push(edge.id.clone());
+            }
+        }
+        if !pruned_ids.is_empty() {
+            let pruned_set: std::collections::HashSet<&super::EdgeId> =
+                pruned_ids.iter().collect();
+            self.edges.retain(|e| !pruned_set.contains(&e.id));
+        }
+
+        // Phase 3: Recompute raw weights from remaining contributions
+        if edges_affected > 0 {
+            self.recompute_raw_weights();
+            self.touch();
+        }
+
+        (edges_affected, pruned_ids)
+    }
+
     /// Update the last modified timestamp
     fn touch(&mut self) {
         self.metadata.updated_at = Some(Utc::now());
@@ -390,6 +430,136 @@ mod tests {
         if let Some(PropertyValue::Int(n)) = count {
             assert_eq!(*n, 2, "cross_dim_count should be 2");
         }
+    }
+
+    // === ADR-027: Contribution Retraction ===
+
+    #[test]
+    fn retract_removes_adapter_contribution_from_all_edges() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_c = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+
+        // Two edges with contributions from "embedding:model-a"
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", "semantic")
+                .with_contribution("embedding:model-a", 0.8)
+                .with_contribution("co_occurrence:tagged_with:may_be_related", 0.6),
+        );
+        ctx.add_edge(
+            Edge::new_in_dimension(id_b.clone(), id_c.clone(), "similar_to", "semantic")
+                .with_contribution("embedding:model-a", 0.7),
+        );
+        ctx.recompute_raw_weights();
+
+        let (affected, pruned) = ctx.retract_contributions("embedding:model-a");
+
+        assert_eq!(affected, 2, "both edges had the adapter's contribution");
+        // Edge A→B survives (has remaining contribution from co_occurrence)
+        // Edge B→C is pruned (only had embedding:model-a)
+        assert_eq!(pruned.len(), 1, "one edge should be pruned");
+        assert_eq!(ctx.edge_count(), 1, "one edge should remain");
+
+        // Remaining edge should not have embedding:model-a contribution
+        let remaining = &ctx.edges[0];
+        assert!(!remaining.contributions.contains_key("embedding:model-a"));
+        assert!(remaining.contributions.contains_key("co_occurrence:tagged_with:may_be_related"));
+    }
+
+    #[test]
+    fn retract_prunes_zero_evidence_edges() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", "semantic")
+                .with_contribution("embedding:model-a", 0.9),
+        );
+        ctx.recompute_raw_weights();
+
+        let (affected, pruned) = ctx.retract_contributions("embedding:model-a");
+
+        assert_eq!(affected, 1);
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(ctx.edge_count(), 0, "edge with no remaining contributions should be pruned");
+    }
+
+    #[test]
+    fn retract_preserves_edges_with_remaining_contributions() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", "semantic")
+                .with_contribution("embedding:model-a", 0.8)
+                .with_contribution("co_occurrence:tagged_with:may_be_related", 0.6),
+        );
+        ctx.recompute_raw_weights();
+
+        let (affected, pruned) = ctx.retract_contributions("embedding:model-a");
+
+        assert_eq!(affected, 1);
+        assert!(pruned.is_empty(), "edge with remaining contributions should not be pruned");
+        assert_eq!(ctx.edge_count(), 1);
+
+        let edge = &ctx.edges[0];
+        assert_eq!(edge.contributions.len(), 1);
+        assert!(edge.contributions.contains_key("co_occurrence:tagged_with:may_be_related"));
+    }
+
+    #[test]
+    fn retract_nonexistent_adapter_is_noop() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", "semantic")
+                .with_contribution("embedding:model-a", 0.8),
+        );
+        ctx.recompute_raw_weights();
+        let original_weight = ctx.edges[0].raw_weight;
+
+        let (affected, pruned) = ctx.retract_contributions("nonexistent-adapter");
+
+        assert_eq!(affected, 0);
+        assert!(pruned.is_empty());
+        assert_eq!(ctx.edge_count(), 1);
+        assert_eq!(ctx.edges[0].raw_weight, original_weight, "weights should be unchanged");
+    }
+
+    #[test]
+    fn retract_recomputes_raw_weights() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_c = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+
+        // Two edges with two adapters each
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", "semantic")
+                .with_contribution("embedding:model-a", 0.8)
+                .with_contribution("other-adapter", 0.5),
+        );
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_c.clone(), "similar_to", "semantic")
+                .with_contribution("embedding:model-a", 0.6)
+                .with_contribution("other-adapter", 0.9),
+        );
+        ctx.recompute_raw_weights();
+        let weight_before = ctx.edges[0].raw_weight;
+
+        ctx.retract_contributions("embedding:model-a");
+
+        // After retraction, only "other-adapter" remains
+        // With a single adapter, scale normalization changes the weights
+        let weight_after = ctx.edges[0].raw_weight;
+        assert_ne!(weight_before, weight_after, "raw weight should change after retraction");
+        // Both edges still exist (both had remaining contributions)
+        assert_eq!(ctx.edge_count(), 2);
     }
 
     #[test]

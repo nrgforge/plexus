@@ -3,6 +3,7 @@
 use super::context::{Context, ContextId, ContextMetadata, Source};
 use super::edge::Edge;
 use super::node::NodeId;
+use crate::adapter::GraphEvent;
 use crate::query::{FindQuery, PathQuery, QueryResult, PathResult, TraversalResult, TraverseQuery};
 use crate::storage::{GraphStore, StorageError};
 use chrono::Utc;
@@ -193,6 +194,46 @@ impl PlexusEngine {
         }
 
         Ok(result)
+    }
+
+    /// Retract all contributions from an adapter/enrichment (ADR-027).
+    ///
+    /// Removes the adapter's contribution slot from every edge in the context,
+    /// prunes zero-evidence edges, recomputes raw weights, and persists.
+    /// Returns graph events (ContributionsRetracted + EdgesRemoved for pruned edges).
+    pub fn retract_contributions(
+        &self,
+        context_id: &ContextId,
+        adapter_id: &str,
+    ) -> PlexusResult<Vec<GraphEvent>> {
+        let mut context = self.contexts.get_mut(context_id)
+            .ok_or_else(|| PlexusError::ContextNotFound(context_id.clone()))?;
+
+        let (edges_affected, pruned_ids) = context.retract_contributions(adapter_id);
+
+        // Persist after mutation
+        if let Some(ref store) = self.store {
+            store.save_context(&context)?;
+        }
+
+        // Build events
+        let mut events = Vec::new();
+        events.push(GraphEvent::ContributionsRetracted {
+            adapter_id: adapter_id.to_string(),
+            context_id: context_id.as_str().to_string(),
+            edges_affected,
+        });
+
+        if !pruned_ids.is_empty() {
+            events.push(GraphEvent::EdgesRemoved {
+                edge_ids: pruned_ids,
+                adapter_id: adapter_id.to_string(),
+                context_id: context_id.as_str().to_string(),
+                reason: "retraction".to_string(),
+            });
+        }
+
+        Ok(events)
     }
 
     /// Check `data_version` and reload all contexts if the database
