@@ -205,7 +205,7 @@ Added `live_graph_analysis_round_trip` test (`#[ignore]` — requires llm-orc in
 
 ### Conformance note: standalone Plexus MCP server
 
-The `mcp__plexus__*` MCP server available in Claude Code sessions is a standalone provenance tool that exposes `add_mark`, `create_chain`, etc. directly — bypassing the ingest pipeline. This violates the invariant that all external surfaces include both semantic data and provenance. The Plexus **engine** MCP server (`src/mcp/mod.rs`) correctly uses `annotate` → `FragmentAdapter` → enrichment loop. The standalone server needs to be replaced or restricted.
+~~The `mcp__plexus__*` MCP server available in Claude Code sessions is a standalone provenance tool that exposes `add_mark`, `create_chain`, etc. directly — bypassing the ingest pipeline.~~ **Resolved** (commit `e06a649`). The engine MCP server (`src/mcp/mod.rs`) is now the active binary. It uses `annotate` → `FragmentAdapter` → enrichment loop, has all 19 tools (including context management), and enforces Invariant 7.
 
 ---
 
@@ -256,12 +256,12 @@ Direct invocation of `plexus-semantic-micro` (single gemma3:1b agent, no fan-out
 
 ## Next Steps
 
-1. **Investigate large payload issue** — determine whether the empty-result failure with `concept:`-prefixed node IDs is a size limit, escaping bug, or something else in the MCP transport.
+1. ~~**Investigate large payload issue**~~ — **Open.** Debug error logging has been added to llm-orc. Retry with verbose stderr next time a large graph export fails silently.
 
-2. **Extract `unwrap_input` to shared utility** — if more Plexus scripts are added, the envelope handling should be a reusable module rather than copy-pasted.
+2. ~~**Extract `unwrap_input` to shared utility**~~ — **Resolved.** Fixed on the llm-orc side; envelope unwrapping is now handled by the framework, not individual scripts.
 
-3. **Wire `semantic-extraction` ensemble into `SemanticAdapter`** — currently `build_input()` sends metadata only. With `extract_content.py` in the ensemble, it just needs to send `{"file_path": "..."}` and let the ensemble handle content reading. The adapter's `process()` should use `semantic-extraction` ensemble by default.
+3. ~~**Wire `semantic-extraction` ensemble into `SemanticAdapter`**~~ — **Done** (commit `2951a54`). `process()` now prefers the `"synthesizer"` key from the results HashMap, falling back to last agent response.
 
-4. **Database schema migration** — existing production databases use old schema (no `raw_weight`, has `weight`/`strength`/`confidence`). `plexus analyze` CLI can't read them. Migration needed.
+4. ~~**Database schema migration**~~ — **Done** (commit `98fefbb`). `SqliteStore::open()` auto-detects old `weight` column and rebuilds the edges table with `raw_weight` using create-copy-swap.
 
-5. **Replace standalone Plexus MCP server** — the Claude Code MCP server should use the engine MCP server (with `annotate` tool) instead of the standalone provenance server (with raw `add_mark`).
+5. ~~**Replace standalone Plexus MCP server**~~ — **Done** (commit `e06a649`). Engine MCP server now has all 19 tools including context management. Rebuilt and installed as the active `plexus` binary.

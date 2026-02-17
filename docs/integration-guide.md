@@ -339,6 +339,76 @@ Enrichments are deduplicated by `id()` across integrations — if two integratio
 
 ---
 
+## Phased Extraction (llm-orc)
+
+Plexus extracts knowledge from source files in four phases, ordered from cheapest to most expensive. Cheap phases complete synchronously; expensive phases run in the background. The graph is useful from the moment Phase 1 completes.
+
+| Phase | What it does | Speed | Blocking? |
+|---|---|---|---|
+| 1 — File info | MIME type, file size, extension | Instant | Yes |
+| 2 — Metadata | YAML frontmatter, ID3 tags, format-specific metadata | Fast | Yes |
+| 3 — Heuristic | Section structure, link extraction, term frequency | Moderate | No (background) |
+| 4 — Semantic (LLM) | Abstract concepts, themes, inter-concept relationships | Slow | No (background) |
+
+Each phase has a distinct adapter ID, so contributions accumulate rather than overwrite. When Phase 3 discovers a concept via link extraction and Phase 4 discovers the same concept via LLM analysis, the edge has two contribution slots — evidence diversity across methods strengthens the weight automatically.
+
+### llm-orc integration
+
+Phase 4 delegates to [llm-orc](https://github.com/nathangreen/llm-orchestra) for LLM orchestration. The `SemanticAdapter` invokes an ensemble (a pipeline of agents) that reads the file, chunks it, runs parallel LLM extraction on each chunk, and synthesizes the results.
+
+```
+Source file
+  │
+  ▼
+SemanticAdapter.process()
+  │
+  ▼
+llm-orc invoke("semantic-extraction", {"file_path": "..."})
+  │
+  ├──► extract_content.py    (read file, detect MIME, chunk by lines)
+  │         │
+  │         ▼
+  ├──► concept-extractor     (fan_out: true — parallel LLM per chunk)
+  │         │
+  │         ▼
+  └──► synthesizer           (merge chunk results into unified concepts)
+  │
+  ▼
+parse_response()  →  Emission (concept nodes + relationship edges)
+  │
+  ▼
+sink.emit()  →  enrichment loop  →  graph
+```
+
+The adapter prefers the `synthesizer` agent's response (the merged result) over individual chunk agents. When llm-orc is unavailable, Phase 4 is skipped — the graph lacks LLM-derived semantic enrichment but is otherwise fully functional (Invariant 47).
+
+### Graph analysis
+
+On-demand graph analysis (PageRank, community detection) also delegates to llm-orc but enters the graph via `GraphAnalysisAdapter`, not the enrichment loop (Invariant 49). Analysis results are property updates on existing nodes, not new nodes.
+
+```
+Context graph
+  │
+  ▼
+export_graph_for_analysis()  →  graph-export JSON
+  │
+  ▼
+llm-orc invoke("graph-analysis", graph_json)
+  │
+  ├──► run_pagerank.py       →  {"updates": [{"node_id": "...", "properties": {...}}]}
+  └──► run_communities.py    →  {"updates": [{"node_id": "...", "properties": {...}}]}
+  │
+  ▼
+GraphAnalysisAdapter.process()  →  property update emissions
+  │
+  ▼
+Context (nodes now have pagerank_score, community properties)
+```
+
+See [Essay 18](essays/18-phased-extraction-architecture.md) for the full design rationale. The [llm-orc integration test drive](research/logs/llm-orc-integration-test-drive.md) documents the end-to-end verification.
+
+---
+
 ## Reads and Queries
 
 All reads go through `PlexusApi`. No adapter needed.
@@ -389,26 +459,21 @@ For non-MCP applications, the options today:
 
 All transports call the same `PlexusApi` methods. The transport is a thin shell — no domain logic.
 
-### MCP Tools (14)
+### MCP Tools (8)
 
-The MCP server exposes 14 tools. Context management (create, delete, rename, sources) is handled by the CLI (`plexus context <subcommand>`), not MCP.
+The MCP server exposes 8 tools. `annotate` is the single write path — it goes through the full ingest pipeline (FragmentAdapter + ProvenanceAdapter → enrichment loop), enforcing Invariant 7: all knowledge carries both semantic content and provenance. There are no tools for direct mark, chain, or link manipulation — those are internal graph structures managed by the pipeline.
 
-| Tool | Description |
-|---|---|
-| `set_context` | Set active context for the session (auto-created if new) |
-| `annotate` | Add a mark to a file location, auto-creating chain and fragment |
-| `list_chains` | List chains, optionally filtered by status |
-| `get_chain` | Get a chain with all its marks |
-| `archive_chain` | Archive a chain |
-| `delete_chain` | Delete a chain and all its marks |
-| `update_mark` | Update an existing mark |
-| `delete_mark` | Delete a mark |
-| `list_marks` | List marks with optional filters (chain, file, type, tag) |
-| `list_tags` | List all unique tags |
-| `link_marks` | Create a link from one mark to another |
-| `unlink_marks` | Remove a link between marks |
-| `get_links` | Get all links to and from a mark |
-| `evidence_trail` | Query evidence supporting a concept |
+| Tool | Category | Description |
+|---|---|---|
+| `set_context` | Session | Set active context (auto-created if new) |
+| `annotate` | Write | Add a mark to a file location — creates chain, mark, fragment, and concepts atomically through the pipeline |
+| `context_list` | Context | List all contexts with their sources |
+| `context_create` | Context | Create a new context |
+| `context_delete` | Context | Delete a context by name |
+| `context_rename` | Context | Rename an existing context |
+| `context_add_sources` | Context | Add file or directory sources to a context |
+| `context_remove_sources` | Context | Remove sources from a context |
+| `evidence_trail` | Read | Query evidence supporting a concept (marks, fragments, chains across all dimensions) |
 
 ---
 
@@ -432,6 +497,16 @@ Multiple processes can share the same SQLite database safely:
 - **Incremental upserts** — `save_context()` upserts nodes/edges and only deletes IDs that were in the engine's baseline but have since been removed. Nodes added by other processes are preserved.
 - **Cache coherence** — `PlexusEngine::reload_if_changed()` uses SQLite's `PRAGMA data_version` to detect external modifications and reload when needed.
 - **Cross-context queries** — `shared_concepts()` discovers concept nodes shared between contexts via deterministic ID intersection (`concept:{lowercase_tag}`).
+
+### Schema Migration
+
+`SqliteStore::open()` automatically detects and migrates older database schemas. Migrations run on every open and are idempotent:
+
+- **Legacy edge columns** — old databases with `weight`/`strength`/`confidence` are rebuilt to use `raw_weight` (create-copy-swap, compatible with all SQLite versions)
+- **Dimension columns** — `dimension` added to nodes, `source_dimension`/`target_dimension` added to edges (Phase 5.0)
+- **Contribution tracking** — `contributions_json` added to edges (ADR-007)
+
+No manual migration is needed. Opening an old database with a new binary just works.
 
 ### For Library Embedders
 
