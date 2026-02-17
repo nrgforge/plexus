@@ -50,10 +50,10 @@ The `for_each` primitive over an empty array is the implicit conditional — if 
 
 ## The llm-orc Integration Pattern
 
-Before this research, the Plexus → llm-orc → Plexus round trip was verified end-to-end for both graph analysis (PageRank, community detection) and semantic extraction (fan-out LLM pipeline). Three integration patterns emerged, all following the same shape:
+Before this research, the Plexus → llm-orc → Plexus round trip was verified end-to-end for both external enrichment (PageRank, community detection) and semantic extraction (fan-out LLM pipeline). Three integration patterns emerged, all following the same shape:
 
 1. **MCP `annotate`:** text + metadata → `FragmentAdapter` → graph
-2. **Graph analysis:** graph-export JSON → llm-orc scripts → analysis-result JSON → `GraphAnalysisAdapter` → graph
+2. **External enrichment:** graph-export JSON → llm-orc scripts → analysis-result JSON → `GraphAnalysisAdapter` → graph
 3. **Semantic extraction:** file path → llm-orc ensemble (extract + LLM + synthesize) → concepts JSON → `SemanticAdapter` → graph
 
 Each pattern is: **structured JSON in → adapter interprets → emissions out.** This is exactly what `DeclarativeAdapter` formalizes. The llm-orc ensembles ARE Layer 1 extractors — domain-specific pipelines that produce structured JSON for a domain-agnostic mapper.
@@ -85,15 +85,15 @@ The original research plan asked: "What's the right execution model for declarat
 
 The better question turned out to be: **what discovery affordances should the enrichment system provide?** This reframing, driven by considering EDDI's real-time temporal dynamics and the embedding possibilities from Open Question 14, produced a simpler and more powerful architecture.
 
-### Four core enrichments
+### Core enrichments
 
-Plexus's enrichment system provides reactive, graph-wide discovery after every emission. The existing enrichments — `TagConceptBridger` and `CoOccurrenceEnrichment` — are parameterizable general graph algorithms. Two more are needed:
+Plexus's core enrichments provide reactive, graph-wide discovery after every emission. The existing enrichments — `TagConceptBridger` and `CoOccurrenceEnrichment` — are parameterizable general graph algorithms. Two more are needed:
 
 **DiscoveryGapEnrichment.** When embedding-derived `similar_to` edges enter the graph, this enrichment checks whether each similar pair is also structurally connected. Pairs that are latently similar but structurally unconnected get a `discovery_gap` edge — surfacing unexplored territory. This is a negative structural query (checking for the ABSENCE of connections), which co-occurrence cannot express.
 
 **TemporalProximityEnrichment.** Nodes with timestamps within a configurable threshold get `temporal_proximity` edges. For EDDI, this captures movement qualities that co-occur in the same time window. For Trellis, it captures edits made in the same session. The adapter attaches timestamps; the enrichment handles the temporal logic — no baked-in window granularity.
 
-All four enrichments share the same characteristics:
+All four core enrichments share the same characteristics:
 
 | Property | Value |
 |----------|-------|
@@ -122,21 +122,21 @@ enrichments:
 
 Enrichments are global — they fire after any adapter, not just the declaring one. But they are registered alongside the adapter via the existing `register_integration()` pattern. Deduplication by `id()` handles multiple adapters declaring the same enrichment with the same parameters.
 
-### Declarative flows: unifying enrichments and graph analysis
+### External enrichments: unifying the execution model
 
-The three-tier model described an implementation detail (where code runs), not an architectural distinction. The real distinction is:
+The original three-tier enrichment model (Tier 0 parameterized built-ins, Tier 1 declarative enrichments, Tier 2 graph analysis) described implementation details (where code runs), not an architectural distinction. The real distinction is simpler:
 
 **Core enrichments** are general graph algorithms fundamental to Plexus. Fast, reactive, in Rust.
 
-**Declarative flows** are custom patterns specified as llm-orc ensembles. The graph analysis pipeline already exists end-to-end: ensemble YAML defines the computation, `invoke()` executes it, results re-enter via `ingest()`. What the "deferred Tier 1" was designing — a new `match`/`find_nodes`/`guard`/`emit` DSL — is unnecessary. The llm-orc ensemble YAML already serves this purpose.
+**External enrichments** are custom patterns implemented as llm-orc ensembles. The pipeline already exists end-to-end: ensemble YAML defines the computation, `invoke()` executes it, results re-enter via `ingest()`. What the "deferred Tier 1" was designing — a new `match`/`find_nodes`/`guard`/`emit` DSL — is unnecessary. The llm-orc ensemble YAML already serves this purpose.
 
-The only missing piece is the trigger. Today, graph analysis runs on demand (`plexus analyze`). The extension is an emission trigger: "also fire this ensemble when new data enters the graph." Same ensemble, same result path, different scheduling.
+The only missing piece is the trigger. Today, external enrichments run on demand (`plexus analyze`). The extension is an emission trigger: "also fire this ensemble when new data enters the graph." Same ensemble, same result path, different scheduling.
 
-Emission-triggered flows are always background — you cannot block the enrichment loop on an external subprocess. Results re-enter via `ingest()`, which triggers core enrichments on the new data. This creates a layered response:
+Emission-triggered external enrichments are always background — you cannot block the enrichment loop on an external subprocess. Results re-enter via `ingest()`, which triggers core enrichments on the new data. This creates a layered response:
 
-1. **Immediate:** core Rust enrichments fire synchronously (microseconds)
-2. **Background:** emission-triggered ensemble kicks off (seconds)
-3. **Delayed:** ensemble results arrive via `ingest()`, core enrichments fire again
+1. **Immediate:** core enrichments fire synchronously (microseconds)
+2. **Background:** emission-triggered external enrichment kicks off (seconds)
+3. **Delayed:** external enrichment results arrive via `ingest()`, core enrichments fire again
 
 For EDDI, the performer gets instant structural feedback (temporal proximity, co-occurrence). Richer semantic analysis arrives moments later and triggers another discovery round. The same pattern as phased extraction: Phase 1 is synchronous, Phase 3 (LLM) is background, results re-enter via `ingest()`.
 
@@ -144,17 +144,15 @@ For EDDI, the performer gets instant structural feedback (temporal proximity, co
 
 ## Invariant Tensions
 
-### Disambiguation 13: "Enrichment" ≠ "Graph analysis"
+### Disambiguation 13: Core vs External enrichments
 
-The domain model states: "Never call graph analysis an 'enrichment' — it does not participate in the enrichment loop and does not terminate via idempotency (Invariant 49)."
+The domain model previously stated: "Never call graph analysis an 'enrichment.'" This research found that the conceptual boundary is softer than that framing implies — both are enrichments, distinguished by where the computation happens. An emission-triggered external enrichment is conceptually reactive (it fires in response to graph changes) but does not participate in the enrichment loop (results re-enter via `ingest()`).
 
-This research partially challenges that distinction. An emission-triggered declarative flow is conceptually reactive — it fires in response to graph changes. But it does not participate in the enrichment loop (results re-enter via `ingest()`, not via `Emission` return). And it does not terminate via idempotency (the ensemble runs unconditionally; deduplication happens at the results level, not the trigger level).
+The updated disambiguation: both are enrichments. **Core enrichments** are Rust-native, reactive, and fire in the enrichment loop. **External enrichments** are llm-orc ensembles that run outside the enrichment loop, with results re-entering via `ingest()`. The technical distinction (enrichment loop participation, idempotency termination) remains — but the vocabulary now reflects the unity rather than enforcing a false dichotomy.
 
-So the disambiguation remains technically correct: graph analysis never participates in the enrichment loop. But the conceptual boundary is softer than the disambiguation implies. The recommendation: keep the disambiguation for the enrichment loop's internal mechanics, but acknowledge that declarative flows with emission triggers are a hybrid — reactive scheduling with batch execution.
+### Invariant 49: external enrichments via ingest, not enrichment loop
 
-### Invariant 49: graph analysis via ingest, not enrichment loop
-
-Invariant 49 says graph analysis results must enter through `ingest()`, not the enrichment loop. This is upheld — emission-triggered declarative flows are background tasks whose results re-enter via `ingest()`. The trigger is reactive; the result path is the standard ingest pipeline.
+Invariant 49 says external enrichment results must enter through `ingest()`, not the enrichment loop. This is upheld — emission-triggered external enrichments are background tasks whose results re-enter via `ingest()`. The trigger is reactive; the result path is the standard ingest pipeline.
 
 No other invariant tensions were found. Invariant 7 (dual obligation) is enforced by `DeclarativeAdapter` at registration time. Invariant 50 (structure-aware enrichments) is upheld by all four core enrichments. Invariant 48 (`create_provenance` enforces provenance half) is structurally guaranteed by the primitive.
 
@@ -168,9 +166,9 @@ The research produced a simpler architecture than what was planned:
 
 **Core enrichments** expand from two to four: co-occurrence, tag bridging, discovery gap, and temporal proximity. All are general graph algorithms in Rust, parameterizable, reactive, and fast. They are the engine's built-in discovery capabilities.
 
-**Declarative flows** are not a new system. They are the existing llm-orc integration with an emission trigger option. The "deferred Tier 1 declarative enrichment DSL" (`match`/`find_nodes`/`guard`/`emit`) is unnecessary — llm-orc ensemble YAML already handles custom computation patterns.
+**External enrichments** are not a new system. They are the existing llm-orc integration with an emission trigger option. The "deferred Tier 1 declarative enrichment DSL" (`match`/`find_nodes`/`guard`/`emit`) is unnecessary — llm-orc ensemble YAML already handles custom computation patterns.
 
-The three-tier enrichment model collapses to two categories: core (Rust, fast, reactive, general) and declarative flows (llm-orc, background, custom). The difference is not a tier — it's where the computation happens and how fast it needs to be.
+The three-tier enrichment model collapses to two categories: core (Rust, fast, reactive, general) and external (llm-orc, background, custom). The difference is not a tier — it's where the computation happens and how fast it needs to be.
 
 ---
 

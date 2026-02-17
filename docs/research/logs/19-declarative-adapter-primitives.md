@@ -19,7 +19,7 @@ The remaining work is about the **consumer-facing surface**: YAML format design,
 The llm-orc integration verified three input patterns that all follow the same shape — **structured JSON in → adapter interprets → emissions out**:
 
 1. **MCP `annotate`:** text + metadata → `FragmentAdapter` → graph
-2. **llm-orc graph analysis:** graph-export JSON → scripts → analysis-result JSON → `GraphAnalysisAdapter` → graph
+2. **llm-orc external enrichment:** graph-export JSON → scripts → analysis-result JSON → `GraphAnalysisAdapter` → graph
 3. **llm-orc semantic extraction:** file path → ensemble (extract + LLM + synthesize) → concepts JSON → `SemanticAdapter` → graph
 
 Key lessons from integration testing:
@@ -413,11 +413,11 @@ Discovery gap logic in the match/find_nodes/guard/emit pattern:
 - **Guard:** no `discovery_gap` edge exists between A and B
 - **Emit:** `discovery_gap` edge with the similarity score as weight
 
-This is reactive — it should fire in the enrichment loop when embeddings produce new `similar_to` edges (which enter via `ingest()` from the graph analysis path).
+This is reactive — it should fire in the enrichment loop when embeddings produce new `similar_to` edges (which enter via `ingest()` from the external enrichment path).
 
 ### Why EDDI forces reactivity
 
-EDDI is a real-time performance system. The performer moves → gesture data enters the graph → enrichments fire → environmental parameters shift. This loop needs to complete within the enrichment loop's execution, not as a batch job. Batch analysis (Tier 2) is too slow for environmental response.
+EDDI is a real-time performance system. The performer moves → gesture data enters the graph → enrichments fire → environmental parameters shift. This loop needs to complete within the enrichment loop's execution, not as a batch job. External enrichments are too slow for environmental response.
 
 If temporal co-occurrence is modeled as adapter-encoded time windows + Tier 0 co-occurrence, the reactive requirement is met. But discovery gap and cross-modal bridge cannot be expressed this way.
 
@@ -461,13 +461,12 @@ Algorithm in `enrich()`:
 
 **This strengthens the Tier 1 deferral.** The enrichment tier model becomes:
 
-| Tier | Purpose | Performance | Examples |
-|------|---------|-------------|----------|
-| 0 | General graph algorithms, parameterized | Native Rust, microseconds | Co-occurrence, tag bridging, discovery gap |
-| 1 | Domain-specific reactive patterns (deferred) | YAML-interpreted, milliseconds | No concrete case yet |
-| 2 | Batch analysis, LLM/script computation | llm-orc subprocess, seconds | PageRank, community detection, embeddings |
+| Category | Purpose | Performance | Examples |
+|----------|---------|-------------|----------|
+| Core | General graph algorithms, parameterized | Native Rust, microseconds | Co-occurrence, tag bridging, discovery gap, temporal proximity |
+| External | Custom computation, LLM/script, batch or emission-triggered | llm-orc subprocess, seconds | PageRank, community detection, embeddings, semantic analysis |
 
-The decision criterion: if an enrichment is a **generalizable graph algorithm** → Tier 0. If it needs **LLM/script computation** → Tier 2. Tier 1 would only be needed for domain-specific reactive patterns too specialized for a built-in but too latency-sensitive for batch. No known consumer needs this yet.
+The decision criterion: if an enrichment is a **generalizable graph algorithm** → core enrichment. If it needs **LLM/script computation** → external enrichment.
 
 ### Implications for this build phase
 
@@ -497,46 +496,46 @@ The three-tier model (Tier 0 parameterized built-ins, Tier 1 declarative enrichm
 - Discovery gap (latent-structural disagreement)
 - Temporal proximity (timestamp-based co-occurrence)
 
-**Declarative flows (YAML).** Custom patterns specific to a consumer, where the specification is the same but the execution model is a parameter:
-- `trigger: emission` → reactive, fires in the enrichment loop (formerly "Tier 1")
-- `trigger: on_demand` → batch, runs via llm-orc when requested (formerly "Tier 2")
+**External enrichments (llm-orc).** Custom patterns implemented as llm-orc ensembles, where the specification is the same but the trigger mode varies:
+- `trigger: emission` → emission-triggered, background execution, results via ingest()
+- `trigger: on_demand` → batch, run when requested, results via ingest()
 
-The difference between a "declarative enrichment" and a "graph analysis flow" collapses — a discovery gap sweep over the whole graph and a per-emission discovery gap check are the same algorithm with different scheduling. The Rust built-in handles the reactive case because it's core. A declarative flow handles the batch/LLM/script case.
+The difference between a "declarative enrichment" and a "graph analysis flow" collapses — a discovery gap sweep over the whole graph and a per-emission discovery gap check are the same algorithm with different scheduling. The Rust built-in handles the reactive case because it's core. An external enrichment handles the batch/LLM/script case.
 
 This unification means:
-1. The deferred "Tier 1 declarative enrichments" and the existing "Tier 2 graph analysis" are the same thing with different triggers.
-2. When we build declarative flows, the YAML spec should support both `trigger: emission` and `trigger: on_demand` — same vocabulary, different scheduling.
+1. The deferred "Tier 1 declarative enrichments" and the existing "Tier 2 graph analysis" are the same thing with different triggers — both are external enrichments.
+2. When we build external enrichments, the YAML spec should support both `trigger: emission` and `trigger: on_demand` — same vocabulary, different scheduling.
 3. Core enrichments stay in Rust because they're general, fast, and fundamental — not because "Tier 0" is a separate category.
 
-### Emission-triggered declarative flows are always background
+### Emission-triggered external enrichments are always background
 
-A declarative flow with `trigger: emission` that delegates to llm-orc can't block the enrichment loop — it spawns in the background. Results re-enter via `ingest()`, which triggers the core enrichments again on the new data.
+An external enrichment with `trigger: emission` delegates to llm-orc and can't block the enrichment loop — it spawns in the background. Results re-enter via `ingest()`, which triggers the core enrichments again on the new data.
 
 This creates a layered response:
-1. **Immediate:** core Rust enrichments fire synchronously (structural discovery in microseconds)
-2. **Background:** emission-triggered llm-orc flow kicks off (LLM/script computation)
-3. **Delayed:** llm-orc results arrive → `ingest()` → core enrichments fire again on new data
+1. **Immediate:** core enrichments fire synchronously (structural discovery in microseconds)
+2. **Background:** emission-triggered external enrichment kicks off (LLM/script computation)
+3. **Delayed:** external enrichment results arrive → `ingest()` → core enrichments fire again on new data
 
 For EDDI: the performer gets instant structural feedback (temporal proximity, co-occurrence). Richer semantic analysis (LLM-derived movement quality) arrives moments later and triggers another discovery round.
 
-This is the same pattern as phased extraction — Phase 1 is synchronous, Phase 3 (LLM) is background, results re-enter via `ingest()`. Applied to enrichments: core enrichments are synchronous, declarative flows are background, results re-enter and trigger more core enrichments.
+This is the same pattern as phased extraction — Phase 1 is synchronous, Phase 3 (LLM) is background, results re-enter via `ingest()`. Applied to enrichments: core enrichments are synchronous, external enrichments are background, results re-enter and trigger more core enrichments.
 
-The execution model options for declarative flows are:
-- `trigger: emission, async: true` — reactive trigger, background execution, results via ingest()
+The execution model options for external enrichments are:
+- `trigger: emission` — emission-triggered, background execution, results via ingest()
 - `trigger: on_demand` — batch, run when requested, results via ingest()
 
 Both use the same result path (`ingest()`). Both trigger core enrichments on their results. The difference is only when the flow starts.
 
-### Key realization: "declarative enrichments" = existing llm-orc integration + emission trigger
+### Key realization: external enrichments = existing llm-orc integration + emission trigger
 
-The graph analysis pipeline already exists end-to-end: llm-orc ensembles defined in YAML, invoked via `invoke()`, results back through `ingest()`. This IS the declarative flow infrastructure.
+The external enrichment pipeline already exists end-to-end: llm-orc ensembles defined in YAML, invoked via `invoke()`, results back through `ingest()`. This IS the external enrichment infrastructure.
 
-"Declarative enrichments" are not a new system. They are the existing llm-orc integration with an emission trigger wired up. Today: `plexus analyze` runs manually. The extension: also fire a configured ensemble when an emission happens. Same ensemble YAML, same result path, different trigger.
+External enrichments are not a new system. They are the existing llm-orc integration with an emission trigger wired up. Today: `plexus analyze` runs manually. The extension: also fire a configured ensemble when an emission happens. Same ensemble YAML, same result path, different trigger.
 
 This means:
 - **No new declarative enrichment DSL needed.** The `match/find_nodes/guard/emit` pattern from the domain model was designing a DSL for something the llm-orc ensemble YAML already handles.
 - **The "deferred Tier 1" work is just wiring:** listen for emissions, dispatch the configured ensemble to the background, let results re-enter via `ingest()`.
-- **The genuinely new work is the core Rust enrichments** (discovery gap, temporal proximity) — these are new algorithms that need to be fast and reactive.
+- **The genuinely new work is the core enrichments** (discovery gap, temporal proximity) — these are new algorithms that need to be fast and reactive.
 
 ---
 
@@ -566,4 +565,4 @@ This makes the two-layer split explicit in a single artifact:
 
 When `DeclarativeAdapter::process()` runs, it invokes the named ensemble via llm-orc, receives structured JSON, then applies the `emit` primitives.
 
-This also connects to the declarative flow design: the same `ensemble` field could appear in a declarative flow spec with a trigger parameter, unifying adapter extraction and emission-triggered analysis under one vocabulary.
+This also connects to the external enrichment design: the same `ensemble` field could appear in an external enrichment spec with a trigger parameter, unifying adapter extraction and emission-triggered analysis under one vocabulary.
