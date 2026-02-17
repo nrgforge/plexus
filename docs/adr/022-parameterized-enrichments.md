@@ -48,6 +48,8 @@ This means Sketchbin doesn't need a custom enrichment at all — if its adapter 
 
 ### Tier 1: Declarative enrichments (design deferred)
 
+> **Superseded by ADR-024:** The Tier 1 declarative enrichment DSL (`match`/`find_nodes`/`guard`/`emit`) is cancelled. Essay 19 found that the llm-orc ensemble YAML already serves this purpose — any computation pattern beyond the core enrichments is expressed as an external enrichment (llm-orc ensemble) with an on-demand or emission trigger. The three-tier model (Tier 0/1/2) is replaced by two categories: core enrichments (Rust) and external enrichments (llm-orc). See ADR-024 for the full decision.
+
 For bridging patterns not covered by parameterized built-ins, a YAML spec with `match`, `find_nodes`, `guard`, and `emit` primitives. Still graph-wide and reactive. Implementation deferred — the parameterized built-ins cover the known use cases. The design is sketched (Essay 18 §Three tiers) but not detailed enough for an ADR. Deferred pending resolution of Open Question 13 (declarative enrichment termination guarantees) in the domain model.
 
 ## Consequences
@@ -66,4 +68,4 @@ For bridging patterns not covered by parameterized built-ins, a YAML spec with `
 **Neutral:**
 
 - The existing hardcoded enrichments become the default parameterization. CoOccurrenceEnrichment with no explicit config uses `tagged_with` / `may_be_related` — backward compatible.
-- Tier 1 (declarative enrichments) is explicitly deferred. This ADR only decides Tier 0 (parameterized built-ins).
+- Tier 1 (declarative enrichments) is explicitly deferred. This ADR only decides Tier 0 (parameterized built-ins). **Superseded:** Tier 1 cancelled by ADR-024; replaced by external enrichments (llm-orc ensembles).

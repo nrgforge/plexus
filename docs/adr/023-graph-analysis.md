@@ -12,6 +12,8 @@
 
 ## Context
 
+> **Terminology updated by ADR-024:** "Graph analysis" is now called "external enrichment (on-demand)." The pipeline, data contracts, and llm-orc integration described in this ADR are unchanged — only the vocabulary. ADR-024 also adds emission-triggered external enrichments (background, results via `ingest()`). The core/external enrichment distinction replaces the three-tier model. See ADR-024 and domain model Disambiguation §13.
+
 Network science algorithms — PageRank, community detection, betweenness centrality, HITS, label propagation — operate on global graph topology and are computationally expensive. Running PageRank after every fragment ingestion is wasteful. These algorithms have a fundamentally different execution cadence from reactive enrichments.
 
 Essay 18 identified this as a distinct concept from enrichment. Enrichments are reactive (per-emission, in the enrichment loop, terminating via idempotency). Graph analysis is batch (on-demand or threshold-triggered, outside the enrichment loop, entering results via `ingest()`).
