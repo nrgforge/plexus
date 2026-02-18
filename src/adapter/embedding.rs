@@ -45,39 +45,65 @@ pub trait Embedder: Send + Sync {
     fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError>;
 }
 
+/// Trait for storing and querying embedding vectors.
+///
+/// Implementations range from in-memory (tests/fallback) to sqlite-vec
+/// (production persistence). All operations are scoped by `context_id`
+/// so vectors from different contexts never mix.
+pub trait VectorStore: Send + Sync {
+    /// Store an embedding vector for a node in a context.
+    fn store(&self, context_id: &str, node_id: &NodeId, vector: Vec<f32>);
+    /// Check if an embedding exists for a node in a context.
+    fn has(&self, context_id: &str, node_id: &NodeId) -> bool;
+    /// Find nodes with vectors similar to the query above the threshold.
+    fn find_similar(&self, context_id: &str, query: &[f32], threshold: f32) -> Vec<(NodeId, f32)>;
+}
+
 /// In-memory vector store for embedding cache.
 ///
-/// Thread-safe via RwLock. Production path will use sqlite-vec (ADR-026 V1);
+/// Thread-safe via RwLock. Scoped by context_id so vectors from different
+/// contexts never mix. Production path uses sqlite-vec (ADR-026);
 /// this is the test/fallback path for contexts without persistence.
-struct InMemoryVectorStore {
-    vectors: RwLock<HashMap<String, Vec<f32>>>,
+pub struct InMemoryVectorStore {
+    /// Outer key: context_id, inner key: node_id
+    vectors: RwLock<HashMap<String, HashMap<String, Vec<f32>>>>,
 }
 
 impl InMemoryVectorStore {
-    fn new() -> Self {
+    /// Create a new empty in-memory vector store.
+    pub fn new() -> Self {
         Self {
             vectors: RwLock::new(HashMap::new()),
         }
     }
+}
 
-    fn store(&self, node_id: &NodeId, vector: Vec<f32>) {
+impl VectorStore for InMemoryVectorStore {
+    fn store(&self, context_id: &str, node_id: &NodeId, vector: Vec<f32>) {
         self.vectors
             .write()
             .unwrap()
+            .entry(context_id.to_string())
+            .or_default()
             .insert(node_id.as_str().to_string(), vector);
     }
 
-    fn has(&self, node_id: &NodeId) -> bool {
+    fn has(&self, context_id: &str, node_id: &NodeId) -> bool {
         self.vectors
             .read()
             .unwrap()
-            .contains_key(node_id.as_str())
+            .get(context_id)
+            .map_or(false, |ctx| ctx.contains_key(node_id.as_str()))
     }
 
-    fn find_similar(&self, query: &[f32], threshold: f32) -> Vec<(NodeId, f32)> {
+    fn find_similar(&self, context_id: &str, query: &[f32], threshold: f32) -> Vec<(NodeId, f32)> {
         let store = self.vectors.read().unwrap();
+        let ctx_store = match store.get(context_id) {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
         let mut results = Vec::new();
-        for (id, cached) in store.iter() {
+        for (id, cached) in ctx_store.iter() {
             let sim = cosine_similarity(query, cached);
             if sim >= threshold {
                 results.push((NodeId::from_string(id.clone()), sim));
@@ -110,12 +136,12 @@ pub struct EmbeddingSimilarityEnrichment {
     output_relationship: String,
     id: String,
     embedder: Box<dyn Embedder>,
-    cache: InMemoryVectorStore,
+    cache: Box<dyn VectorStore>,
     dimension_filter: String,
 }
 
 impl EmbeddingSimilarityEnrichment {
-    /// Create a new embedding similarity enrichment.
+    /// Create a new embedding similarity enrichment with an in-memory vector store.
     ///
     /// - `model_name`: identifies the embedding model (encoded in enrichment ID)
     /// - `similarity_threshold`: minimum cosine similarity for edge emission (e.g., 0.7)
@@ -132,7 +158,25 @@ impl EmbeddingSimilarityEnrichment {
             similarity_threshold,
             output_relationship: output_relationship.to_string(),
             embedder,
-            cache: InMemoryVectorStore::new(),
+            cache: Box::new(InMemoryVectorStore::new()),
+            dimension_filter: dimension::SEMANTIC.to_string(),
+        }
+    }
+
+    /// Create a new embedding similarity enrichment with a custom vector store.
+    pub fn with_vector_store(
+        model_name: &str,
+        similarity_threshold: f32,
+        output_relationship: &str,
+        embedder: Box<dyn Embedder>,
+        store: Box<dyn VectorStore>,
+    ) -> Self {
+        Self {
+            id: format!("embedding:{}", model_name),
+            similarity_threshold,
+            output_relationship: output_relationship.to_string(),
+            embedder,
+            cache: store,
             dimension_filter: dimension::SEMANTIC.to_string(),
         }
     }
@@ -158,6 +202,8 @@ impl Enrichment for EmbeddingSimilarityEnrichment {
     }
 
     fn enrich(&self, events: &[GraphEvent], context: &Context) -> Option<Emission> {
+        let ctx_name = &context.name;
+
         // Only fire on NodesAdded events
         let new_node_ids: Vec<&NodeId> = events
             .iter()
@@ -180,7 +226,7 @@ impl Enrichment for EmbeddingSimilarityEnrichment {
                 if node.dimension != self.dimension_filter {
                     continue;
                 }
-                if self.cache.has(&node.id) {
+                if self.cache.has(ctx_name, &node.id) {
                     continue;
                 }
                 if let Some(text) = Self::node_text(node) {
@@ -205,7 +251,7 @@ impl Enrichment for EmbeddingSimilarityEnrichment {
 
         for ((node_id, _), embedding) in to_embed.iter().zip(embeddings.iter()) {
             // Find similar nodes already in cache
-            let similar = self.cache.find_similar(embedding, self.similarity_threshold);
+            let similar = self.cache.find_similar(ctx_name, embedding, self.similarity_threshold);
 
             for (other_id, similarity) in &similar {
                 // Idempotency: skip if edges already exist
@@ -237,7 +283,7 @@ impl Enrichment for EmbeddingSimilarityEnrichment {
             }
 
             // Cache the new embedding after comparisons
-            self.cache.store(node_id, embedding.clone());
+            self.cache.store(ctx_name, node_id, embedding.clone());
         }
 
         if emission.is_empty() {
@@ -641,6 +687,31 @@ mod tests {
             emission.edges.len() >= 4,
             "at least journey↔travel and voyage↔travel: got {} edges",
             emission.edges.len()
+        );
+    }
+
+    // === Scenario: Vectors from different contexts are isolated ===
+
+    #[test]
+    fn context_isolation_prevents_cross_context_matches() {
+        let embedder = MockEmbedder::simple(test_vectors());
+        let enrichment =
+            EmbeddingSimilarityEnrichment::new("test-model", 0.7, "similar_to", Box::new(embedder));
+
+        // Context A: cache "travel"
+        let mut ctx_a = Context::new("context-a");
+        ctx_a.add_node(concept_node("concept:travel", "travel"));
+        enrichment.enrich(&[nodes_added_event(&["concept:travel"])], &ctx_a);
+
+        // Context B: add "journey" — should NOT find similarity with travel
+        // because travel was cached under context-a
+        let mut ctx_b = Context::new("context-b");
+        ctx_b.add_node(concept_node("concept:journey", "journey"));
+        let result = enrichment.enrich(&[nodes_added_event(&["concept:journey"])], &ctx_b);
+
+        assert!(
+            result.is_none(),
+            "vectors from context-a should not appear in context-b queries"
         );
     }
 }

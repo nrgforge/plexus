@@ -435,7 +435,7 @@ impl DeclarativeAdapter {
     /// [`enrichments_with_embedder`] instead — it accepts the embedder
     /// implementation that the embedding enrichment needs.
     pub fn enrichments(&self) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
-        self.build_enrichments(None)
+        self.build_enrichments(None, None)
     }
 
     /// Instantiate core enrichments, providing an embedder for embedding_similarity (ADR-026).
@@ -448,12 +448,23 @@ impl DeclarativeAdapter {
         &self,
         embedder: Box<dyn crate::adapter::embedding::Embedder>,
     ) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
-        self.build_enrichments(Some(embedder))
+        self.build_enrichments(Some(embedder), None)
+    }
+
+    /// Instantiate core enrichments, providing both an embedder and a vector store
+    /// for embedding_similarity (ADR-026).
+    pub fn enrichments_with_embedder_and_store(
+        &self,
+        embedder: Box<dyn crate::adapter::embedding::Embedder>,
+        store: Box<dyn crate::adapter::embedding::VectorStore>,
+    ) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
+        self.build_enrichments(Some(embedder), Some(store))
     }
 
     fn build_enrichments(
         &self,
         embedder: Option<Box<dyn crate::adapter::embedding::Embedder>>,
+        store: Option<Box<dyn crate::adapter::embedding::VectorStore>>,
     ) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
         let declarations = match &self.spec.enrichments {
             Some(decls) => decls,
@@ -462,6 +473,7 @@ impl DeclarativeAdapter {
 
         let mut enrichments: Vec<Arc<dyn Enrichment>> = Vec::new();
         let mut embedder = embedder;
+        let mut store = store;
 
         for decl in declarations {
             let enrichment: Arc<dyn Enrichment> = match decl.enrichment_type.as_str() {
@@ -512,9 +524,15 @@ impl DeclarativeAdapter {
                                 .into(),
                         )
                     })?;
-                    Arc::new(crate::adapter::embedding::EmbeddingSimilarityEnrichment::new(
-                        model_name, threshold, output, emb,
-                    ))
+                    if let Some(vs) = store.take() {
+                        Arc::new(crate::adapter::embedding::EmbeddingSimilarityEnrichment::with_vector_store(
+                            model_name, threshold, output, emb, vs,
+                        ))
+                    } else {
+                        Arc::new(crate::adapter::embedding::EmbeddingSimilarityEnrichment::new(
+                            model_name, threshold, output, emb,
+                        ))
+                    }
                 }
                 unknown => {
                     return Err(AdapterError::Internal(
