@@ -1,6 +1,6 @@
 # ADR-026: Embedding as Enrichment
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 20](../essays/20-embedding-infrastructure.md)
 

@@ -3,3 +3,6 @@ Cargo.lock
 
 # llm-orc execution artifacts (transient, not tracked)
 .llm-orc/artifacts/
+
+# ONNX model cache (downloaded at runtime by fastembed)
+.fastembed_cache/
