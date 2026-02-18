@@ -113,6 +113,61 @@ impl VectorStore for InMemoryVectorStore {
     }
 }
 
+// ---------------------------------------------------------------------------
+// FastEmbedEmbedder — production embedder behind `embeddings` feature
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "embeddings")]
+mod fastembed_impl {
+    use super::{Embedder, EmbeddingError};
+    use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+    use std::sync::Mutex;
+
+    /// Production embedder backed by fastembed (ONNX Runtime).
+    ///
+    /// Wraps `fastembed::TextEmbedding` in a `Mutex` because its `embed`
+    /// method requires `&mut self`, while the `Embedder` trait uses `&self`.
+    pub struct FastEmbedEmbedder {
+        model: Mutex<TextEmbedding>,
+    }
+
+    impl FastEmbedEmbedder {
+        /// Create a new FastEmbedEmbedder with a specific model.
+        pub fn new(model: EmbeddingModel) -> Result<Self, EmbeddingError> {
+            let options = InitOptions::new(model).with_show_download_progress(false);
+            let embedding = TextEmbedding::try_new(options)
+                .map_err(|e| EmbeddingError::ModelError(e.to_string()))?;
+            Ok(Self {
+                model: Mutex::new(embedding),
+            })
+        }
+
+        /// Create a new FastEmbedEmbedder with the default model (nomic-embed-text-v1.5).
+        pub fn default_model() -> Result<Self, EmbeddingError> {
+            Self::new(EmbeddingModel::NomicEmbedTextV15)
+        }
+    }
+
+    impl Embedder for FastEmbedEmbedder {
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+            if texts.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut model = self.model.lock().unwrap();
+            let embeddings = model
+                .embed(texts.to_vec(), None)
+                .map_err(|e| EmbeddingError::ModelError(e.to_string()))?;
+            if embeddings.is_empty() {
+                return Err(EmbeddingError::EmptyResult);
+            }
+            Ok(embeddings)
+        }
+    }
+}
+
+#[cfg(feature = "embeddings")]
+pub use fastembed_impl::FastEmbedEmbedder;
+
 /// Cosine similarity between two vectors.
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
@@ -713,5 +768,17 @@ mod tests {
             result.is_none(),
             "vectors from context-a should not appear in context-b queries"
         );
+    }
+
+    // === Scenario: FastEmbedEmbedder loads model and embeds text ===
+
+    #[cfg(feature = "embeddings")]
+    #[test]
+    #[ignore] // requires model download
+    fn fastembed_default_model_embeds_text() {
+        let embedder = super::FastEmbedEmbedder::default_model().expect("model should load");
+        let result = embedder.embed_batch(&["hello world"]).expect("should embed");
+        assert_eq!(result.len(), 1);
+        assert!(!result[0].is_empty(), "embedding vector should not be empty");
     }
 }

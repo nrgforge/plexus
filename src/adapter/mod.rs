@@ -43,6 +43,8 @@ pub use cooccurrence::CoOccurrenceEnrichment;
 pub use declarative::DeclarativeAdapter;
 pub use discovery_gap::DiscoveryGapEnrichment;
 pub use embedding::{Embedder, EmbeddingError, EmbeddingSimilarityEnrichment, InMemoryVectorStore, VectorStore};
+#[cfg(feature = "embeddings")]
+pub use embedding::FastEmbedEmbedder;
 pub use temporal_proximity::TemporalProximityEnrichment;
 pub use extraction::ExtractionCoordinator;
 pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};
