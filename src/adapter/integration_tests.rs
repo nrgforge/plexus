@@ -3740,4 +3740,201 @@ mod tests {
             "concepts survive restart"
         );
     }
+
+    // ================================================================
+    // Embedding Enrichment Integration (ADR-026)
+    // ================================================================
+
+    use crate::adapter::embedding::{Embedder, EmbeddingError, EmbeddingSimilarityEnrichment};
+
+    /// Mock embedder for integration testing — returns predetermined vectors.
+    ///
+    /// Uses the same test vectors as the unit tests in `embedding.rs`:
+    /// travel=[0.9,0.3,0.1], journey=[0.85,0.35,0.15],
+    /// voyage=[0.88,0.32,0.12], democracy=[0.1,0.2,0.95].
+    struct MockEmbedder {
+        vectors: std::collections::HashMap<String, Vec<f32>>,
+    }
+
+    impl MockEmbedder {
+        fn with_test_vectors() -> Self {
+            let mut vectors = std::collections::HashMap::new();
+            vectors.insert("travel".to_string(), vec![0.9, 0.3, 0.1]);
+            vectors.insert("journey".to_string(), vec![0.85, 0.35, 0.15]);
+            vectors.insert("voyage".to_string(), vec![0.88, 0.32, 0.12]);
+            vectors.insert("democracy".to_string(), vec![0.1, 0.2, 0.95]);
+            Self { vectors }
+        }
+    }
+
+    impl Embedder for MockEmbedder {
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+            let mut results = Vec::new();
+            for text in texts {
+                let vec = self
+                    .vectors
+                    .get(*text)
+                    .cloned()
+                    .unwrap_or_else(|| vec![0.0; 3]);
+                results.push(vec);
+            }
+            Ok(results)
+        }
+    }
+
+    // === Scenario: Embedding enrichment fires alongside existing enrichments in pipeline ===
+    #[tokio::test]
+    async fn embedding_enrichment_fires_alongside_existing_enrichments() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("embedding-integration");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "embedding-integration"))
+            .unwrap();
+
+        // Pipeline with FragmentAdapter + 3 enrichments:
+        // TagConceptBridger, CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment
+        let fragment_adapter = Arc::new(FragmentAdapter::new("test-fragment"));
+        let embedding_enrichment = Arc::new(EmbeddingSimilarityEnrichment::new(
+            "mock-model",
+            0.7,
+            "similar_to",
+            Box::new(MockEmbedder::with_test_vectors()),
+        ));
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            fragment_adapter,
+            vec![
+                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
+                Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
+                embedding_enrichment as Arc<dyn Enrichment>,
+            ],
+        );
+
+        // Fragment 1: tags=["travel", "voyage"]
+        // Creates concept:travel and concept:voyage → embedding enrichment caches both,
+        // finds travel↔voyage similarity (cosine ~0.99), emits similar_to edges
+        pipeline
+            .ingest(
+                "embedding-integration",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "Sailing voyage across the Mediterranean",
+                    vec!["travel".to_string(), "voyage".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+
+        // Fragment 2: tags=["journey", "democracy"]
+        // Creates concept:journey and concept:democracy
+        // journey is similar to cached travel/voyage; democracy is not
+        pipeline
+            .ingest(
+                "embedding-integration",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "Journey through democratic institutions",
+                    vec!["journey".to_string(), "democracy".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // --- Assert: similar_to edges exist for the travel cluster ---
+        let similar_to_edges: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "similar_to")
+            .collect();
+
+        // travel↔voyage (symmetric pair) = 2 edges from fragment 1
+        // journey↔travel + journey↔voyage (symmetric pairs) = 4 edges from fragment 2
+        // Total: ≥4 similar_to edges (at least the 4 from cross-fragment similarity)
+        assert!(
+            similar_to_edges.len() >= 4,
+            "expected ≥4 similar_to edges, got {}",
+            similar_to_edges.len()
+        );
+
+        // --- Assert: democracy has NO similar_to edges ---
+        let democracy_id = NodeId::from_string("concept:democracy");
+        let democracy_similar: Vec<_> = similar_to_edges
+            .iter()
+            .filter(|e| e.source == democracy_id || e.target == democracy_id)
+            .collect();
+        assert!(
+            democracy_similar.is_empty(),
+            "democracy should have no similar_to edges, got {}",
+            democracy_similar.len()
+        );
+
+        // --- Assert: similar_to edges are in semantic dimension with positive weight ---
+        for edge in &similar_to_edges {
+            assert_eq!(
+                edge.source_dimension, dimension::SEMANTIC,
+                "similar_to edge source should be in semantic dimension"
+            );
+            assert_eq!(
+                edge.target_dimension, dimension::SEMANTIC,
+                "similar_to edge target should be in semantic dimension"
+            );
+            assert!(
+                edge.raw_weight > 0.0,
+                "similar_to edge should have positive weight, got {}",
+                edge.raw_weight
+            );
+        }
+
+        // --- Assert: CoOccurrenceEnrichment also fired (may_be_related edges exist) ---
+        let may_be_related: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "may_be_related")
+            .collect();
+        assert!(
+            !may_be_related.is_empty(),
+            "CoOccurrenceEnrichment should have produced may_be_related edges"
+        );
+
+        // --- Assert: TagConceptBridger also fired (references edges exist) ---
+        let references: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "references")
+            .collect();
+        assert!(
+            !references.is_empty(),
+            "TagConceptBridger should have produced references edges"
+        );
+
+        // --- Assert: provenance traversal works ---
+        // concept:journey → incoming references → mark → incoming contains → chain
+        let journey_id = NodeId::from_string("concept:journey");
+        let journey_refs: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == journey_id && e.relationship == "references")
+            .collect();
+        assert!(
+            !journey_refs.is_empty(),
+            "concept:journey should have incoming references edges from marks"
+        );
+
+        // Follow from mark to chain via contains
+        let mark_id = &journey_refs[0].source;
+        let contains_edges: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.target == *mark_id && e.relationship == "contains")
+            .collect();
+        assert!(
+            !contains_edges.is_empty(),
+            "mark should have incoming contains edge from chain"
+        );
+
+        // The chain node should exist
+        let chain_id = &contains_edges[0].source;
+        assert!(
+            ctx.get_node(chain_id).is_some(),
+            "chain node should exist at end of provenance traversal"
+        );
+    }
 }
