@@ -3937,4 +3937,407 @@ mod tests {
             "chain node should exist at end of provenance traversal"
         );
     }
+
+    // === Scenario: Different embedding models produce separate contribution slots ===
+    #[tokio::test]
+    async fn multi_model_contribution_slots_on_same_edge() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("multi-model");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "multi-model"))
+            .unwrap();
+
+        // Model A: uses the standard test vectors
+        let enrichment_a = Arc::new(EmbeddingSimilarityEnrichment::new(
+            "model-a",
+            0.7,
+            "similar_to",
+            Box::new(MockEmbedder::with_test_vectors()),
+        ));
+
+        // Model B: uses slightly different vectors (still similar travel/journey)
+        let mut vectors_b = std::collections::HashMap::new();
+        vectors_b.insert("travel".to_string(), vec![0.85, 0.35, 0.15]);
+        vectors_b.insert("journey".to_string(), vec![0.9, 0.3, 0.1]);
+        vectors_b.insert("democracy".to_string(), vec![0.1, 0.2, 0.95]);
+        let enrichment_b = Arc::new(EmbeddingSimilarityEnrichment::new(
+            "model-b",
+            0.7,
+            "similar_to",
+            Box::new(MockEmbedder { vectors: vectors_b }),
+        ));
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("multi-model")),
+            vec![
+                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
+                enrichment_a as Arc<dyn Enrichment>,
+                enrichment_b as Arc<dyn Enrichment>,
+            ],
+        );
+
+        // Ingest: travel and journey appear together → both models fire
+        pipeline
+            .ingest(
+                "multi-model",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "A journey through travel",
+                    vec!["travel".to_string(), "journey".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // Find a similar_to edge (either direction)
+        let similar_to: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "similar_to")
+            .collect();
+        assert!(
+            !similar_to.is_empty(),
+            "should have similar_to edges from both models"
+        );
+
+        // Check contribution slots on one of the edges
+        let edge = &similar_to[0];
+        assert!(
+            edge.contributions.contains_key("embedding:model-a"),
+            "edge should have contribution from model-a, got: {:?}",
+            edge.contributions.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            edge.contributions.contains_key("embedding:model-b"),
+            "edge should have contribution from model-b, got: {:?}",
+            edge.contributions.keys().collect::<Vec<_>>()
+        );
+
+        // Both contribution values should be positive
+        let val_a = edge.contributions["embedding:model-a"];
+        let val_b = edge.contributions["embedding:model-b"];
+        assert!(val_a > 0.0, "model-a contribution should be positive");
+        assert!(val_b > 0.0, "model-b contribution should be positive");
+    }
+
+    // === Scenario: Embedding enrichment triggers discovery gap detection ===
+    #[tokio::test]
+    async fn embedding_triggers_discovery_gap_detection() {
+        use crate::adapter::discovery_gap::DiscoveryGapEnrichment;
+
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("embed-gap");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "embed-gap"))
+            .unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("embed-gap")),
+            vec![
+                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
+                Arc::new(EmbeddingSimilarityEnrichment::new(
+                    "mock-model",
+                    0.7,
+                    "similar_to",
+                    Box::new(MockEmbedder::with_test_vectors()),
+                )) as Arc<dyn Enrichment>,
+                Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap"))
+                    as Arc<dyn Enrichment>,
+            ],
+        );
+
+        // Fragment 1: travel only — caches embedding
+        pipeline
+            .ingest(
+                "embed-gap",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "Planning a trip",
+                    vec!["travel".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+
+        // Fragment 2: journey only — structurally disconnected from travel
+        // (different fragments, no shared tags → no co-occurrence)
+        // Embedding enrichment finds journey↔travel similar, emits similar_to
+        // DiscoveryGapEnrichment detects: similar but no structural evidence → gap
+        pipeline
+            .ingest(
+                "embed-gap",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "A long journey",
+                    vec!["journey".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // similar_to edges should exist
+        let similar_to: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "similar_to")
+            .collect();
+        assert!(
+            !similar_to.is_empty(),
+            "embedding enrichment should have produced similar_to edges"
+        );
+
+        // discovery_gap edges should exist between travel and journey
+        let discovery_gaps: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "discovery_gap")
+            .collect();
+        assert!(
+            !discovery_gaps.is_empty(),
+            "DiscoveryGapEnrichment should have fired after similar_to edges were added"
+        );
+
+        // Verify the gap is between travel and journey
+        let travel = NodeId::from_string("concept:travel");
+        let journey = NodeId::from_string("concept:journey");
+        let gap_involves_travel_journey = discovery_gaps.iter().any(|e| {
+            (e.source == travel && e.target == journey)
+                || (e.source == journey && e.target == travel)
+        });
+        assert!(
+            gap_involves_travel_journey,
+            "discovery_gap should connect travel and journey"
+        );
+    }
+
+    // === Scenario: Discovery gap cleanup after embedding retraction ===
+    #[tokio::test]
+    async fn discovery_gap_cleanup_after_retraction() {
+        use crate::adapter::discovery_gap::DiscoveryGapEnrichment;
+
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("retract-gap");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "retract-gap"))
+            .unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(
+            Arc::new(FragmentAdapter::new("retract-gap")),
+            vec![
+                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
+                Arc::new(EmbeddingSimilarityEnrichment::new(
+                    "mock-model",
+                    0.7,
+                    "similar_to",
+                    Box::new(MockEmbedder::with_test_vectors()),
+                )) as Arc<dyn Enrichment>,
+                Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap"))
+                    as Arc<dyn Enrichment>,
+            ],
+        );
+
+        // Ingest two structurally disconnected concepts
+        pipeline
+            .ingest(
+                "retract-gap",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "Planning a trip",
+                    vec!["travel".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+        pipeline
+            .ingest(
+                "retract-gap",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "A long journey",
+                    vec!["journey".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+
+        // Verify pre-conditions: similar_to and discovery_gap edges exist
+        {
+            let ctx = engine.get_context(&ctx_id).unwrap();
+            assert!(
+                ctx.edges().any(|e| e.relationship == "similar_to"),
+                "pre-condition: similar_to edges should exist"
+            );
+            assert!(
+                ctx.edges().any(|e| e.relationship == "discovery_gap"),
+                "pre-condition: discovery_gap edges should exist"
+            );
+        }
+
+        // Retract the embedding model's contributions
+        engine
+            .retract_contributions(&ctx_id, "embedding:mock-model")
+            .unwrap();
+
+        // After retraction: similar_to edges should be pruned (sole contributor removed)
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let similar_to_after: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "similar_to")
+            .collect();
+        assert!(
+            similar_to_after.is_empty(),
+            "similar_to edges should be pruned after retracting their only contributor"
+        );
+
+        // discovery_gap edges should also be pruned (their sole contributor was the gap enrichment,
+        // but with the trigger edges gone, retraction of the gap enrichment's contributions
+        // removes them too)
+        // Note: the gap enrichment contributed these edges, so retract its contributions as well
+        engine
+            .retract_contributions(
+                &ctx_id,
+                "discovery_gap:similar_to:discovery_gap",
+            )
+            .unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let gaps_after: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "discovery_gap")
+            .collect();
+        assert!(
+            gaps_after.is_empty(),
+            "discovery_gap edges should be pruned after retracting gap enrichment contributions"
+        );
+    }
+
+    // === Scenario: Model replacement workflow ===
+    #[tokio::test]
+    async fn model_replacement_retract_v1_ingest_v2() {
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("model-replace");
+        engine
+            .upsert_context(Context::with_id(ctx_id.clone(), "model-replace"))
+            .unwrap();
+
+        // Phase 1: Ingest with model-v1
+        let enrichment_v1 = Arc::new(EmbeddingSimilarityEnrichment::new(
+            "model-v1",
+            0.7,
+            "similar_to",
+            Box::new(MockEmbedder::with_test_vectors()),
+        ));
+
+        let mut pipeline_v1 = IngestPipeline::new(engine.clone());
+        pipeline_v1.register_integration(
+            Arc::new(FragmentAdapter::new("model-replace")),
+            vec![
+                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
+                enrichment_v1 as Arc<dyn Enrichment>,
+            ],
+        );
+
+        pipeline_v1
+            .ingest(
+                "model-replace",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "Sailing voyage",
+                    vec!["travel".to_string(), "voyage".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+
+        // Verify v1 edges exist
+        {
+            let ctx = engine.get_context(&ctx_id).unwrap();
+            let v1_edges: Vec<_> = ctx
+                .edges()
+                .filter(|e| {
+                    e.relationship == "similar_to"
+                        && e.contributions.contains_key("embedding:model-v1")
+                })
+                .collect();
+            assert!(!v1_edges.is_empty(), "v1 should have produced similar_to edges");
+        }
+
+        // Phase 2: Retract model-v1
+        engine
+            .retract_contributions(&ctx_id, "embedding:model-v1")
+            .unwrap();
+
+        // Verify v1 edges are gone
+        {
+            let ctx = engine.get_context(&ctx_id).unwrap();
+            let similar_after: Vec<_> = ctx
+                .edges()
+                .filter(|e| e.relationship == "similar_to")
+                .collect();
+            assert!(
+                similar_after.is_empty(),
+                "similar_to edges should be pruned after v1 retraction"
+            );
+        }
+
+        // Phase 3: Re-ingest with model-v2 (different vectors, slightly different similarities)
+        let mut vectors_v2 = std::collections::HashMap::new();
+        vectors_v2.insert("travel".to_string(), vec![0.85, 0.4, 0.05]);
+        vectors_v2.insert("voyage".to_string(), vec![0.82, 0.38, 0.08]);
+        let enrichment_v2 = Arc::new(EmbeddingSimilarityEnrichment::new(
+            "model-v2",
+            0.7,
+            "similar_to",
+            Box::new(MockEmbedder { vectors: vectors_v2 }),
+        ));
+
+        let mut pipeline_v2 = IngestPipeline::new(engine.clone());
+        pipeline_v2.register_integration(
+            Arc::new(FragmentAdapter::new("model-replace")),
+            vec![
+                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
+                enrichment_v2 as Arc<dyn Enrichment>,
+            ],
+        );
+
+        // Re-ingest the same content — nodes already exist, embedding enrichment
+        // fires on the NodesAdded events, caches with v2 vectors
+        pipeline_v2
+            .ingest(
+                "model-replace",
+                "fragment",
+                Box::new(FragmentInput::new(
+                    "Sailing voyage",
+                    vec!["travel".to_string(), "voyage".to_string()],
+                )),
+            )
+            .await
+            .unwrap();
+
+        // Verify: only v2 contributions remain
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let similar_to: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "similar_to")
+            .collect();
+        assert!(
+            !similar_to.is_empty(),
+            "v2 should have produced similar_to edges"
+        );
+
+        for edge in &similar_to {
+            assert!(
+                !edge.contributions.contains_key("embedding:model-v1"),
+                "no v1 slots should remain"
+            );
+            assert!(
+                edge.contributions.contains_key("embedding:model-v2"),
+                "edge should have v2 contribution slot"
+            );
+        }
+    }
 }
