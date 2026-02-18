@@ -32,13 +32,17 @@ mod inner {
         dimensions: usize,
     }
 
-    /// Register the sqlite-vec extension globally (idempotent).
+    /// Register the sqlite-vec extension globally (safe under parallel test execution).
     fn register_vec_extension() {
-        unsafe {
-            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-                sqlite3_vec_init as *const (),
-            )));
-        }
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            unsafe {
+                rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                    sqlite3_vec_init as *const (),
+                )));
+            }
+        });
     }
 
     impl SqliteVecStore {

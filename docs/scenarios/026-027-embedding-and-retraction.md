@@ -75,6 +75,8 @@ enrichments:
 **Then** an EmbeddingSimilarityEnrichment is instantiated with the specified parameters
 **And** its id is "embedding:nomic-embed-text-v1.5"
 
+*Note:* When `similarity_threshold` is omitted, the default is 0.55 — empirically tuned for single-word concept labels with nomic-embed-text-v1.5 (see spike_05 diagnostic).
+
 ---
 
 ## Feature: Contribution Retraction (ADR-027)

@@ -515,7 +515,9 @@ impl DeclarativeAdapter {
                     let model_name = decl.model_name.as_deref().ok_or_else(|| {
                         AdapterError::Internal("embedding_similarity enrichment requires model_name".into())
                     })?;
-                    let threshold = decl.similarity_threshold.unwrap_or(0.7);
+                    // Default 0.55: empirically tuned for single-word concept labels
+                    // with nomic-embed-text-v1.5 (spike_05 diagnostic)
+                    let threshold = decl.similarity_threshold.unwrap_or(0.55);
                     let output = decl.output_relationship.as_deref().unwrap_or("similar_to");
                     let emb = embedder.take().ok_or_else(|| {
                         AdapterError::Internal(
@@ -1552,7 +1554,7 @@ emit:
         }
     }
 
-    // --- Scenario: embedding_similarity defaults (threshold 0.7, output similar_to) ---
+    // --- Scenario: embedding_similarity defaults (threshold 0.55, output similar_to) ---
 
     #[test]
     fn embedding_similarity_defaults() {
