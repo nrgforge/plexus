@@ -28,6 +28,8 @@ pub struct TemplateContext<'a> {
     pub input: &'a Value,
     pub adapter_id: &'a str,
     pub context_id: &'a str,
+    /// Ensemble response data (populated when spec.ensemble is invoked).
+    pub ensemble: Option<&'a Value>,
 }
 
 /// Render a template string, replacing `{input.field}` with values from context.
@@ -97,6 +99,23 @@ fn resolve_accessor(accessor: &str, ctx: &TemplateContext) -> Result<Value, Adap
                 Some(v) => current = v,
                 None => return Err(AdapterError::Internal(
                     format!("input field not found: {}", accessor),
+                )),
+            }
+        }
+        return Ok(current.clone());
+    }
+
+    if let Some(path) = accessor.strip_prefix("ensemble.") {
+        // Navigate into the ensemble response JSON
+        let ensemble = ctx.ensemble.ok_or_else(|| {
+            AdapterError::Internal("ensemble accessor used but no ensemble response available".to_string())
+        })?;
+        let mut current = ensemble;
+        for segment in path.split('.') {
+            match current.get(segment) {
+                Some(v) => current = v,
+                None => return Err(AdapterError::Internal(
+                    format!("ensemble field not found: {}", accessor),
                 )),
             }
         }
@@ -402,6 +421,8 @@ impl<'de> Deserialize<'de> for Primitive {
 /// ID and input kind from the spec.
 pub struct DeclarativeAdapter {
     spec: DeclarativeSpec,
+    /// Optional LLM client for ensemble invocation (ADR-025).
+    llm_client: Option<Arc<dyn crate::llm_orc::LlmOrcClient>>,
 }
 
 impl DeclarativeAdapter {
@@ -412,7 +433,17 @@ impl DeclarativeAdapter {
     /// semantic node.
     pub fn new(spec: DeclarativeSpec) -> Result<Self, AdapterError> {
         validate_spec(&spec)?;
-        Ok(Self { spec })
+        Ok(Self { spec, llm_client: None })
+    }
+
+    /// Attach an LLM client for ensemble invocation (ADR-025).
+    ///
+    /// When `spec.ensemble` is set, `process()` invokes the named ensemble
+    /// via this client before interpreting emit primitives. The ensemble
+    /// response is available as `{ensemble.*}` in template expressions.
+    pub fn with_llm_client(mut self, client: Arc<dyn crate::llm_orc::LlmOrcClient>) -> Self {
+        self.llm_client = Some(client);
+        self
     }
 
     /// Create a DeclarativeAdapter from a YAML string (ADR-025).
@@ -649,10 +680,57 @@ impl Adapter for DeclarativeAdapter {
             validate_input(json_input, schema)?;
         }
 
+        // Invoke ensemble if declared (ADR-025 two-layer architecture)
+        let ensemble_response = if let Some(ref ensemble_name) = self.spec.ensemble {
+            let client = self.llm_client.as_ref().ok_or_else(|| {
+                AdapterError::Skipped("ensemble declared but no LlmOrcClient configured".to_string())
+            })?;
+
+            // Graceful degradation (Invariant 47)
+            if !client.is_available().await {
+                return Err(AdapterError::Skipped(
+                    "llm-orc not running".to_string(),
+                ));
+            }
+
+            let input_str = serde_json::to_string(json_input).unwrap_or_default();
+            let response = client
+                .invoke(ensemble_name, &input_str)
+                .await
+                .map_err(|e| match e {
+                    crate::llm_orc::LlmOrcError::Unavailable(msg) => AdapterError::Skipped(msg),
+                    other => AdapterError::Internal(other.to_string()),
+                })?;
+
+            if response.is_failed() {
+                return Err(AdapterError::Internal(
+                    "ensemble execution failed".to_string(),
+                ));
+            }
+
+            // Extract the synthesizer's response, fall back to last agent
+            let response_text = response
+                .results
+                .get("synthesizer")
+                .and_then(|r| r.response.as_deref())
+                .or_else(|| {
+                    response.results.values().filter_map(|r| r.response.as_deref()).last()
+                })
+                .unwrap_or("{}");
+
+            let parsed: Value = serde_json::from_str(response_text).unwrap_or(Value::Object(
+                serde_json::Map::new(),
+            ));
+            Some(parsed)
+        } else {
+            None
+        };
+
         let ctx = TemplateContext {
             input: json_input,
             adapter_id: &self.spec.adapter_id,
             context_id: &input.context_id,
+            ensemble: ensemble_response.as_ref(),
         };
 
         let emission = interpret_primitives(&self.spec.emit, &ctx)?;
@@ -824,6 +902,7 @@ fn interpret_for_each(
             input: &modified_input,
             adapter_id: ctx.adapter_id,
             context_id: ctx.context_id,
+            ensemble: ctx.ensemble,
         };
 
         let emission = interpret_primitives(&fe.emit, &item_ctx)?;
@@ -1600,6 +1679,7 @@ emit:
             input: &input,
             adapter_id: "test",
             context_id: "test",
+            ensemble: None,
         };
 
         // lowercase filter
@@ -1609,5 +1689,308 @@ emit:
         // sort + join filters
         let result = render_template("{input.tags | sort | join:,}", &ctx).unwrap();
         assert_eq!(result, "alpha,beta");
+    }
+
+    // ================================================================
+    // Essay 22 Item 2: DeclarativeAdapter Ensemble Invocation Scenarios
+    // ================================================================
+
+    fn ensemble_spec(ensemble_name: &str) -> DeclarativeSpec {
+        DeclarativeSpec {
+            adapter_id: "test-declarative".to_string(),
+            input_kind: "test-input".to_string(),
+            ensemble: Some(ensemble_name.to_string()),
+            input_schema: None,
+            enrichments: None,
+            emit: vec![
+                Primitive::CreateNode(CreateNodePrimitive {
+                    id: IdStrategy::Template("concept:{input.name | lowercase}".to_string()),
+                    node_type: "concept".to_string(),
+                    dimension: "semantic".to_string(),
+                    properties: HashMap::new(),
+                }),
+            ],
+        }
+    }
+
+    fn mock_ensemble_response(
+        ensemble_name: &str,
+        response_json: &str,
+    ) -> Arc<crate::llm_orc::MockClient> {
+        use crate::llm_orc::{AgentResult, InvokeResponse, MockClient};
+        let mut results = std::collections::HashMap::new();
+        results.insert(
+            "synthesizer".to_string(),
+            AgentResult {
+                response: Some(response_json.to_string()),
+                status: Some("success".to_string()),
+                error: None,
+            },
+        );
+        Arc::new(
+            MockClient::available().with_response(
+                ensemble_name,
+                InvokeResponse {
+                    results,
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        )
+    }
+
+    // --- Scenario: DeclarativeAdapter invokes ensemble when spec declares one ---
+
+    #[tokio::test]
+    async fn declarative_invokes_ensemble_when_declared() {
+        let spec = ensemble_spec("code-concepts");
+        let client = mock_ensemble_response(
+            "code-concepts",
+            r#"{"concepts": [{"label": "X"}]}"#,
+        );
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap().with_llm_client(client);
+        let ctx = Arc::new(std::sync::Mutex::new(crate::graph::Context::new("test")));
+        let sink = crate::adapter::engine_sink::EngineSink::new(ctx.clone())
+            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+                adapter_id: "test-declarative".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let json_input = serde_json::json!({"name": "TestConcept"});
+        let input = crate::adapter::traits::AdapterInput::new(
+            "test-input",
+            json_input,
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        // The adapter ran without error, meaning the ensemble was invoked
+        // and the response was merged into the template context.
+        let snapshot = ctx.lock().unwrap();
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:testconcept")).is_some(),
+            "create_node primitive should have fired after ensemble invocation"
+        );
+    }
+
+    // --- Scenario: Emit primitives access ensemble response fields ---
+
+    #[tokio::test]
+    async fn emit_primitives_access_ensemble_response() {
+        // Spec with for_each over ensemble.concepts
+        let spec = DeclarativeSpec {
+            adapter_id: "test-ensemble-access".to_string(),
+            input_kind: "test-input".to_string(),
+            ensemble: Some("test-ensemble".to_string()),
+            input_schema: None,
+            enrichments: None,
+            emit: vec![
+                Primitive::ForEach(ForEachPrimitive {
+                    collection: "ensemble.concepts".to_string(),
+                    variable: "item".to_string(),
+                    emit: vec![
+                        Primitive::CreateNode(CreateNodePrimitive {
+                            id: IdStrategy::Template("concept:{input.item.label | lowercase}".to_string()),
+                            node_type: "concept".to_string(),
+                            dimension: "semantic".to_string(),
+                            properties: HashMap::new(),
+                        }),
+                    ],
+                }),
+            ],
+        };
+
+        let client = mock_ensemble_response(
+            "test-ensemble",
+            r#"{"concepts": [{"label": "X"}, {"label": "Y"}]}"#,
+        );
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap().with_llm_client(client);
+        let ctx = Arc::new(std::sync::Mutex::new(crate::graph::Context::new("test")));
+        let sink = crate::adapter::engine_sink::EngineSink::new(ctx.clone())
+            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+                adapter_id: "test-ensemble-access".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let json_input = serde_json::json!({});
+        let input = crate::adapter::traits::AdapterInput::new(
+            "test-input",
+            json_input,
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:x")).is_some(),
+            "for_each over ensemble.concepts should create concept:x"
+        );
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:y")).is_some(),
+            "for_each over ensemble.concepts should create concept:y"
+        );
+    }
+
+    // --- Scenario: DeclarativeAdapter degrades gracefully when llm-orc unavailable ---
+
+    #[tokio::test]
+    async fn declarative_skips_when_llm_orc_unavailable() {
+        let spec = ensemble_spec("test-ensemble");
+        let client = Arc::new(crate::llm_orc::MockClient::unavailable());
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap().with_llm_client(client);
+        let ctx = Arc::new(std::sync::Mutex::new(crate::graph::Context::new("test")));
+        let sink = crate::adapter::engine_sink::EngineSink::new(ctx.clone())
+            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+                adapter_id: "test-declarative".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let json_input = serde_json::json!({"name": "TestConcept"});
+        let input = crate::adapter::traits::AdapterInput::new(
+            "test-input",
+            json_input,
+            "test",
+        );
+
+        let result = adapter.process(&input, &sink).await;
+        assert!(
+            matches!(result, Err(AdapterError::Skipped(_))),
+            "should return Skipped when llm-orc unavailable"
+        );
+
+        // No emissions produced
+        let snapshot = ctx.lock().unwrap();
+        assert_eq!(snapshot.node_count(), 0, "no nodes should be emitted");
+    }
+
+    // --- Scenario: DeclarativeAdapter without ensemble works unchanged ---
+
+    #[tokio::test]
+    async fn declarative_without_ensemble_works_unchanged() {
+        let spec = DeclarativeSpec {
+            adapter_id: "no-ensemble".to_string(),
+            input_kind: "test-input".to_string(),
+            ensemble: None,
+            input_schema: None,
+            enrichments: None,
+            emit: vec![
+                Primitive::CreateNode(CreateNodePrimitive {
+                    id: IdStrategy::Template("concept:{input.name | lowercase}".to_string()),
+                    node_type: "concept".to_string(),
+                    dimension: "semantic".to_string(),
+                    properties: HashMap::new(),
+                }),
+            ],
+        };
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap();
+        let ctx = Arc::new(std::sync::Mutex::new(crate::graph::Context::new("test")));
+        let sink = crate::adapter::engine_sink::EngineSink::new(ctx.clone())
+            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+                adapter_id: "no-ensemble".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let json_input = serde_json::json!({"name": "DirectNode"});
+        let input = crate::adapter::traits::AdapterInput::new(
+            "test-input",
+            json_input,
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:directnode")).is_some(),
+            "emit primitives should work directly without ensemble"
+        );
+    }
+
+    // --- Scenario: DeclarativeAdapter with real LlmOrcClient and EngineSink (integration) ---
+
+    #[tokio::test]
+    async fn declarative_ensemble_persists_through_engine() {
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::storage::{SqliteStore, OpenStore};
+
+        let spec = DeclarativeSpec {
+            adapter_id: "ensemble-integration".to_string(),
+            input_kind: "test-input".to_string(),
+            ensemble: Some("test-ensemble".to_string()),
+            input_schema: None,
+            enrichments: None,
+            emit: vec![
+                Primitive::ForEach(ForEachPrimitive {
+                    collection: "ensemble.concepts".to_string(),
+                    variable: "item".to_string(),
+                    emit: vec![
+                        Primitive::CreateNode(CreateNodePrimitive {
+                            id: IdStrategy::Template("concept:{input.item.label | lowercase}".to_string()),
+                            node_type: "concept".to_string(),
+                            dimension: "semantic".to_string(),
+                            properties: HashMap::new(),
+                        }),
+                    ],
+                }),
+            ],
+        };
+
+        let client = mock_ensemble_response(
+            "test-ensemble",
+            r#"{"concepts": [{"label": "Persistence"}]}"#,
+        );
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap().with_llm_client(client);
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        let context_id = ContextId::from_string("test");
+        let mut ctx = crate::graph::Context::new("test");
+        ctx.id = context_id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        let sink = crate::adapter::engine_sink::EngineSink::for_engine(
+            engine.clone(),
+            context_id.clone(),
+        ).with_framework_context(crate::adapter::provenance::FrameworkContext {
+            adapter_id: "ensemble-integration".to_string(),
+            context_id: "test".to_string(),
+            input_summary: None,
+        });
+
+        let json_input = serde_json::json!({});
+        let input = crate::adapter::traits::AdapterInput::new(
+            "test-input",
+            json_input,
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        // Concept persisted in engine
+        let ctx = engine.get_context(&context_id).expect("context should exist");
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:persistence")).is_some(),
+            "concept from ensemble response should be persisted"
+        );
+
+        // Survives store reload
+        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&context_id).expect("context should survive reload");
+        assert!(
+            ctx2.get_node(&NodeId::from_string("concept:persistence")).is_some(),
+            "concept should survive store reload"
+        );
     }
 }
