@@ -4340,4 +4340,160 @@ mod tests {
             );
         }
     }
+
+    // ================================================================
+    // Integration Debt: ADR-003/005 — Normalization Pipeline End-to-End
+    // ================================================================
+
+    // === Scenario: Normalized weight is correct after full persist/reload pipeline ===
+    #[tokio::test]
+    async fn normalization_pipeline_end_to_end_through_persistence() {
+        use crate::query::{OutgoingDivisive, NormalizationStrategy};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("norm-pipeline-test");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "norm-pipeline-test")).unwrap();
+
+        // Pre-populate nodes
+        {
+            let mut ctx = engine.get_context(&ctx_id).unwrap();
+            ctx.add_node(node("A"));
+            ctx.add_node(node("B"));
+            ctx.add_node(node("C"));
+            engine.upsert_context(ctx).unwrap();
+        }
+
+        // Emit two edges from a real adapter with different raw weights
+        let sink = make_engine_sink(&engine, &ctx_id, "adapter-1");
+        let mut e1 = edge("A", "B");
+        e1.raw_weight = 5.0;
+        let mut e2 = edge("A", "C");
+        e2.raw_weight = 10.0;
+        sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
+
+        // Capture in-memory query-time normalized weights
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let strategy = OutgoingDivisive;
+        let in_memory = strategy.normalize(&NodeId::from_string("A"), &ctx);
+        let mem_ab = in_memory.iter().find(|ne| ne.edge.target == NodeId::from_string("B")).unwrap().normalized_weight;
+        let mem_ac = in_memory.iter().find(|ne| ne.edge.target == NodeId::from_string("C")).unwrap().normalized_weight;
+
+        // Restart from storage
+        drop(engine);
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+
+        // Query-time normalization on reloaded data — no manual recompute_raw_weights() call
+        let reloaded = strategy.normalize(&NodeId::from_string("A"), &ctx2);
+        let reload_ab = reloaded.iter().find(|ne| ne.edge.target == NodeId::from_string("B")).unwrap().normalized_weight;
+        let reload_ac = reloaded.iter().find(|ne| ne.edge.target == NodeId::from_string("C")).unwrap().normalized_weight;
+
+        assert!(
+            (mem_ab - reload_ab).abs() < 1e-6,
+            "A→B normalized weight should match after reload: {} vs {}", mem_ab, reload_ab
+        );
+        assert!(
+            (mem_ac - reload_ac).abs() < 1e-6,
+            "A→C normalized weight should match after reload: {} vs {}", mem_ac, reload_ac
+        );
+
+        // Verify the values are actually what divisive normalization should produce
+        // raw_weight values are scale-normalized by emit_inner, so we check the ratio
+        let sum = reload_ab + reload_ac;
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "divisive normalized weights should sum to 1.0, got {}", sum
+        );
+    }
+
+    // ================================================================
+    // Integration Debt: ADR-009/015 — Tag Bridging with # Prefix
+    // ================================================================
+
+    // === Scenario: annotate() with #-prefixed tags bridges correctly ===
+    #[tokio::test]
+    async fn annotate_with_hash_prefixed_tags_bridges_to_concepts() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::ProvenanceAdapter;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::api::PlexusApi;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        engine.upsert_context(Context::new("research")).unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(FragmentAdapter::new("annotate")));
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![Arc::new(TagConceptBridger::new())],
+        );
+        let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
+
+        // Call annotate with #-prefixed tags — exercises the # stripping in api.rs:77
+        api.annotate(
+            "research", "notes", "src/main.rs", 1, "travel observations",
+            None, None, Some(vec!["#travel".into(), "#avignon".into()]),
+        ).await.unwrap();
+
+        // Resolve context by name (api.resolve is private, so use engine directly)
+        let ctx_id = engine.list_contexts().into_iter()
+            .find(|id| engine.get_context(id).map(|c| c.name == "research").unwrap_or(false))
+            .expect("research context should exist");
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // FragmentAdapter should create concepts WITHOUT the # prefix
+        assert!(
+            ctx.get_node(&NodeId::from("concept:travel")).is_some(),
+            "concept:travel should exist (# stripped before FragmentAdapter)"
+        );
+        assert!(
+            ctx.get_node(&NodeId::from("concept:avignon")).is_some(),
+            "concept:avignon should exist (# stripped before FragmentAdapter)"
+        );
+        // Concepts with # should NOT exist
+        assert!(
+            ctx.get_node(&NodeId::from("concept:#travel")).is_none(),
+            "concept:#travel should NOT exist"
+        );
+
+        // annotate() creates two marks: one from FragmentAdapter (provenance for the
+        // fragment) and one from ProvenanceAdapter (the user's annotation mark).
+        // Both should exist; TagConceptBridger should bridge tags from both to concepts.
+        let marks: Vec<_> = ctx.nodes()
+            .filter(|n| n.node_type == "mark")
+            .collect();
+        assert_eq!(marks.len(), 2, "should have 2 mark nodes (fragment + provenance)");
+
+        // The provenance mark (from ProvenanceAdapter) has the #-prefixed tags.
+        // TagConceptBridger strips # and bridges to concepts created by FragmentAdapter.
+        // Verify references edges exist from marks to concept nodes.
+        let all_refs: Vec<_> = ctx.edges()
+            .filter(|e| e.relationship == "references")
+            .collect();
+        // Both marks should bridge to concepts (FragmentAdapter mark has lowercased tags,
+        // ProvenanceAdapter mark has #-prefixed tags — both should bridge)
+        let ref_targets: std::collections::HashSet<String> = all_refs.iter()
+            .map(|e| e.target.to_string()).collect();
+        assert!(ref_targets.contains("concept:travel"), "should reference concept:travel");
+        assert!(ref_targets.contains("concept:avignon"), "should reference concept:avignon");
+
+        // Verify persistence round-trip
+        drop(engine);
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+
+        let refs2: Vec<_> = ctx2.edges()
+            .filter(|e| e.relationship == "references")
+            .collect();
+        assert!(refs2.len() >= 2, "references edges should survive persistence, got {}", refs2.len());
+        let targets2: std::collections::HashSet<String> = refs2.iter()
+            .map(|e| e.target.to_string()).collect();
+        assert!(targets2.contains("concept:travel"), "concept:travel ref should survive persistence");
+        assert!(targets2.contains("concept:avignon"), "concept:avignon ref should survive persistence");
+    }
 }
