@@ -72,6 +72,16 @@ If implementation reveals a design flaw, loop back to the appropriate earlier ph
 
 **Exit criteria:** All BDD scenarios pass. Code is minimal — no speculative features, no premature abstraction.
 
+### Phase 5.5: Integration Verification
+
+After acceptance tests pass, verify the new component against its real neighbors. Replace test doubles with real implementations for at least one boundary crossing. If integration fails, the failures become new scenarios — loop back to Phase 4 or 5.
+
+This phase exists because components tested in isolation can satisfy all acceptance criteria while violating integration invariants. Type mismatches, persistence path divergence, and missing cross-component contracts are invisible to unit and acceptance tests that use stubs.
+
+**Artifact:** Integration test(s) that exercise real component boundaries.
+
+**Exit criteria:** The new component accepts real input from its upstream neighbor and produces output that its downstream neighbor can consume, through the production path (not the test path).
+
 ### Phase 6: Essay
 
 Write a reflective essay about the process. What did we learn? What surprised us? Where did the research-to-implementation path hold, and where did it break down? What would we do differently?
@@ -91,6 +101,7 @@ The phases are not a waterfall. Common loops:
 - **BDD reveals design gaps** → return to Phase 2 or 3. This is expected and healthy. Writing precise scenarios is the fastest way to find imprecision in design.
 - **TDD reveals a flaw** → return to the phase where the flaw originates. A failing test that can't be fixed without changing the trait interface is a Phase 2 problem, not a Phase 5 problem.
 - **Implementation informs research** → discovering a library or paper during TDD that changes the approach. Return to Phase 1, update the research, propagate forward.
+- **Integration reveals gaps** → the gaps become new scenarios in Phase 4 or new tests in Phase 5. This is the most common late-stage loop — two components designed in parallel pass their own tests but fail when wired together.
 - **Essay clarifies thinking** → writing about the process may reveal that a design decision was poorly motivated. Update the ADR.
 
 The cost of looping back is low because each phase produces a written artifact. Revising a design doc is cheaper than debugging a wrong abstraction.
