@@ -53,8 +53,12 @@ pub struct ExtractionCoordinator {
     phase2_adapters: Vec<Phase2Registration>,
     /// Phase 3 (semantic) adapter — runs sequentially after Phase 2
     phase3_adapter: Option<Arc<dyn Adapter>>,
-    /// Shared context for creating background phase sinks
+    /// Shared context for creating background phase sinks (test path, no persistence)
     shared_context: Option<Arc<std::sync::Mutex<Context>>>,
+    /// Engine for creating background phase sinks (production path, persist-per-emission)
+    engine: Option<Arc<crate::graph::PlexusEngine>>,
+    /// Context ID for engine-backed background sinks
+    engine_context_id: Option<crate::graph::ContextId>,
     /// Concurrency semaphore for Phase 2 tasks
     analysis_semaphore: Arc<tokio::sync::Semaphore>,
     /// Concurrency semaphore for Phase 3 tasks
@@ -69,15 +73,31 @@ impl ExtractionCoordinator {
             phase2_adapters: Vec::new(),
             phase3_adapter: None,
             shared_context: None,
+            engine: None,
+            engine_context_id: None,
             analysis_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
             semantic_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
             background_tasks: Arc::new(TokioMutex::new(Vec::new())),
         }
     }
 
-    /// Set the shared context for background phase sinks.
+    /// Set the shared context for background phase sinks (test path, no persistence).
     pub fn with_context(mut self, context: Arc<std::sync::Mutex<Context>>) -> Self {
         self.shared_context = Some(context);
+        self
+    }
+
+    /// Set the engine for background phase sinks (production path, persist-per-emission).
+    ///
+    /// Background phases use `EngineSink::for_engine()` which persists each emission
+    /// through PlexusEngine (Invariant 30). Preferred over `with_context()`.
+    pub fn with_engine(
+        mut self,
+        engine: Arc<crate::graph::PlexusEngine>,
+        context_id: crate::graph::ContextId,
+    ) -> Self {
+        self.engine = Some(engine);
+        self.engine_context_id = Some(context_id);
         self
     }
 
@@ -339,7 +359,7 @@ fn run_phase1(
     Ok((emission, mime_type.to_string(), metadata_warning))
 }
 
-/// Update a phase status on the extraction status node.
+/// Update a phase status on the extraction status node (Mutex path).
 fn update_extraction_status(
     ctx: &Arc<std::sync::Mutex<Context>>,
     file_path: &str,
@@ -354,6 +374,25 @@ fn update_extraction_status(
             PropertyValue::String(status.to_string()),
         );
     }
+}
+
+/// Update a phase status on the extraction status node (Engine path).
+fn update_extraction_status_via_engine(
+    engine: &crate::graph::PlexusEngine,
+    context_id: &crate::graph::ContextId,
+    file_path: &str,
+    phase_key: &str,
+    status: &str,
+) {
+    let _ = engine.with_context_mut(context_id, |ctx| {
+        let status_id = NodeId::from_string(format!("extraction-status:{}", file_path));
+        if let Some(node) = ctx.get_node_mut(&status_id) {
+            node.properties.insert(
+                phase_key.to_string(),
+                PropertyValue::String(status.to_string()),
+            );
+        }
+    });
 }
 
 #[async_trait]
@@ -384,11 +423,16 @@ impl Adapter for ExtractionCoordinator {
 
         sink.emit(emission).await?;
 
-        // Phase 2+3: spawn background task if we have a context and matching adapter
-        if let Some(ref shared_ctx) = self.shared_context {
-            if let Some(phase2_adapter) = self.find_phase2_adapter(&mime_type) {
+        // Phase 2+3: spawn background task if we have a backend and matching adapter
+        if let Some(phase2_adapter) = self.find_phase2_adapter(&mime_type) {
+            // Determine background backend: engine path (persist-per-emission) preferred
+            let bg_engine = self.engine.clone();
+            let bg_context_id = self.engine_context_id.clone();
+            let bg_mutex = self.shared_context.clone();
+
+            let has_backend = bg_engine.is_some() || bg_mutex.is_some();
+            if has_backend {
                 let adapter = phase2_adapter.clone();
-                let ctx = shared_ctx.clone();
                 let semaphore = self.analysis_semaphore.clone();
                 let sem_semantic = self.semantic_semaphore.clone();
                 let tasks = self.background_tasks.clone();
@@ -402,7 +446,12 @@ impl Adapter for ExtractionCoordinator {
                         AdapterError::Internal(format!("semaphore closed: {}", e))
                     })?;
 
-                    let sink = EngineSink::new(ctx.clone()).with_framework_context(
+                    // Create sink: engine path or mutex path
+                    let sink = if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
+                        EngineSink::for_engine(engine.clone(), ctx_id.clone())
+                    } else {
+                        EngineSink::new(bg_mutex.clone().unwrap())
+                    }.with_framework_context(
                         FrameworkContext {
                             adapter_id: adapter.id().to_string(),
                             context_id: context_id_bg.clone(),
@@ -424,7 +473,11 @@ impl Adapter for ExtractionCoordinator {
                         Ok(()) => "complete".to_string(),
                         Err(e) => format!("failed: {}", e),
                     };
-                    update_extraction_status(&ctx, &file_path_bg, "phase2", &status_str);
+                    if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
+                        update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "phase2", &status_str);
+                    } else if let Some(ref ctx) = bg_mutex {
+                        update_extraction_status(ctx, &file_path_bg, "phase2", &status_str);
+                    }
 
                     // Release analysis permit before Phase 3
                     drop(_permit);
@@ -436,7 +489,11 @@ impl Adapter for ExtractionCoordinator {
                                 AdapterError::Internal(format!("semaphore closed: {}", e))
                             })?;
 
-                            let sink3 = EngineSink::new(ctx.clone()).with_framework_context(
+                            let sink3 = if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
+                                EngineSink::for_engine(engine.clone(), ctx_id.clone())
+                            } else {
+                                EngineSink::new(bg_mutex.clone().unwrap())
+                            }.with_framework_context(
                                 FrameworkContext {
                                     adapter_id: phase3.id().to_string(),
                                     context_id: context_id_bg.clone(),
@@ -461,12 +518,11 @@ impl Adapter for ExtractionCoordinator {
                                 }
                                 Err(ref e) => format!("failed: {}", e),
                             };
-                            update_extraction_status(
-                                &ctx,
-                                &file_path_bg,
-                                "phase3",
-                                &status3_str,
-                            );
+                            if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
+                                update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "phase3", &status3_str);
+                            } else if let Some(ref ctx) = bg_mutex {
+                                update_extraction_status(ctx, &file_path_bg, "phase3", &status3_str);
+                            }
 
                             // Skipped is not a failure — return Ok
                             return match result3 {
@@ -1359,5 +1415,203 @@ mod tests {
         // fire after each emission, seeing incremental graph state.
         // Phase 1's concepts trigger TagConceptBridger.
         // Phase 2's concepts trigger CoOccurrenceEnrichment with cross-phase pairs.
+    }
+
+    // ================================================================
+    // Essay 22 Item 3: Background Phase Persistence Scenarios
+    // ================================================================
+
+    // --- Scenario: Phase 2 emissions persist through the engine ---
+
+    #[tokio::test]
+    async fn phase2_emissions_persist_through_engine() {
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::storage::{SqliteStore, OpenStore};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        let context_id = ContextId::from_string("test");
+        let mut ctx = Context::new("test");
+        ctx.id = context_id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        let mut coordinator = ExtractionCoordinator::new()
+            .with_engine(engine.clone(), context_id.clone());
+
+        let emitting = Arc::new(EmittingAdapter::new(
+            "extract-analysis-text",
+            "extract-analysis-text",
+            "concept:engine-phase2",
+        ));
+        coordinator.register_phase2("text/", emitting);
+
+        // Primary sink is also engine-backed (Phase 1 goes through here)
+        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: "extract-coordinator".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let dir = create_temp_file("engine-test.md", "# Engine persistence test\n\nContent.");
+        let file_path = dir.path().join("engine-test.md");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput {
+                file_path: file_path_str.clone(),
+            },
+            "test",
+        );
+
+        coordinator.process(&input, &primary_sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(results.iter().all(|r| r.is_ok()), "Phase 2 should succeed");
+
+        // Phase 2 concept should exist in the engine's context
+        let ctx = engine.get_context(&context_id).expect("context should exist");
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:engine-phase2")).is_some(),
+            "Phase 2 concept node should be persisted in engine context"
+        );
+
+        // Verify persistence: reload from store
+        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&context_id).expect("context should survive reload");
+        assert!(
+            ctx2.get_node(&NodeId::from_string("concept:engine-phase2")).is_some(),
+            "Phase 2 concept node should survive engine reload from store"
+        );
+    }
+
+    // --- Scenario: Phase 3 emissions persist through the engine ---
+
+    #[tokio::test]
+    async fn phase3_emissions_persist_through_engine() {
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::storage::{SqliteStore, OpenStore};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        let context_id = ContextId::from_string("test");
+        let mut ctx = Context::new("test");
+        ctx.id = context_id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        let mut coordinator = ExtractionCoordinator::new()
+            .with_engine(engine.clone(), context_id.clone());
+
+        let phase2 = Arc::new(EmittingAdapter::new(
+            "extract-analysis-text",
+            "extract-analysis-text",
+            "concept:engine-p2",
+        ));
+        coordinator.register_phase2("text/", phase2);
+
+        let phase3 = Arc::new(EmittingAdapter::new(
+            "extract-semantic",
+            "extract-semantic",
+            "concept:engine-p3",
+        ));
+        coordinator.register_phase3(phase3);
+
+        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: "extract-coordinator".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let dir = create_temp_file("engine-p3.md", "# Phase 3 engine test\n\nContent.");
+        let file_path = dir.path().join("engine-p3.md");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path_str.clone() },
+            "test",
+        );
+
+        coordinator.process(&input, &primary_sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(results.iter().all(|r| r.is_ok()), "Both phases should succeed");
+
+        // Both phases' concepts exist after reload
+        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
+        engine2.load_all().unwrap();
+        let ctx = engine2.get_context(&context_id).expect("context should survive reload");
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:engine-p2")).is_some(),
+            "Phase 2 concept should survive reload"
+        );
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:engine-p3")).is_some(),
+            "Phase 3 concept should survive reload"
+        );
+    }
+
+    // --- Scenario: Phase 2 failure does not affect Phase 1 persistence ---
+
+    #[tokio::test]
+    async fn phase2_failure_preserves_phase1_in_engine() {
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::storage::{SqliteStore, OpenStore};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        let context_id = ContextId::from_string("test");
+        let mut ctx = Context::new("test");
+        ctx.id = context_id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        let mut coordinator = ExtractionCoordinator::new()
+            .with_engine(engine.clone(), context_id.clone());
+
+        let failing = Arc::new(FailingAdapter::new(
+            "extract-analysis-text",
+            "extract-analysis-text",
+        ));
+        coordinator.register_phase2("text/", failing);
+
+        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: "extract-coordinator".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let dir = create_temp_file(
+            "fail-engine.md",
+            "---\ntags: [resilience]\n---\n\n# Failure isolation test",
+        );
+        let file_path = dir.path().join("fail-engine.md");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path_str.clone() },
+            "test",
+        );
+
+        coordinator.process(&input, &primary_sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(results.iter().any(|r| r.is_err()), "Phase 2 should fail");
+
+        // Phase 1 results survive in store despite Phase 2 failure
+        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
+        engine2.load_all().unwrap();
+        let ctx = engine2.get_context(&context_id).expect("context should survive");
+
+        let file_id = NodeId::from_string(format!("file:{}", file_path_str));
+        assert!(
+            ctx.get_node(&file_id).is_some(),
+            "Phase 1 file node should persist despite Phase 2 failure"
+        );
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:resilience")).is_some(),
+            "Phase 1 frontmatter concept should persist despite Phase 2 failure"
+        );
     }
 }
