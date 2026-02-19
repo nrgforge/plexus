@@ -14,6 +14,7 @@
 
 use crate::adapter::engine_sink::EngineSink;
 use crate::adapter::provenance::FrameworkContext;
+use crate::adapter::semantic::SemanticInput;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
 use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission};
@@ -503,9 +504,7 @@ impl Adapter for ExtractionCoordinator {
 
                             let phase3_input = AdapterInput::new(
                                 phase3.input_kind(),
-                                ExtractFileInput {
-                                    file_path: file_path_bg.clone(),
-                                },
+                                SemanticInput::for_file(file_path_bg.clone()),
                                 &context_id_bg,
                             );
 
@@ -1612,6 +1611,269 @@ mod tests {
         assert!(
             ctx.get_node(&NodeId::from_string("concept:resilience")).is_some(),
             "Phase 1 frontmatter concept should persist despite Phase 2 failure"
+        );
+    }
+
+    // ================================================================
+    // Essay 22 Item 1: Coordinator-to-Phase 3 Type Alignment Scenarios
+    // ================================================================
+
+    /// A Phase 3 adapter that verifies it receives SemanticInput (not ExtractFileInput).
+    struct SemanticInputVerifyingAdapter {
+        adapter_id: String,
+        input_kind: String,
+        /// Records whether the input was successfully downcast to SemanticInput.
+        received_semantic_input: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl SemanticInputVerifyingAdapter {
+        fn new(received: Arc<std::sync::atomic::AtomicBool>) -> Self {
+            Self {
+                adapter_id: "extract-semantic".to_string(),
+                input_kind: "extract-semantic".to_string(),
+                received_semantic_input: received,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Adapter for SemanticInputVerifyingAdapter {
+        fn id(&self) -> &str {
+            &self.adapter_id
+        }
+
+        fn input_kind(&self) -> &str {
+            &self.input_kind
+        }
+
+        async fn process(
+            &self,
+            input: &AdapterInput,
+            sink: &dyn AdapterSink,
+        ) -> Result<(), AdapterError> {
+            use crate::adapter::semantic::SemanticInput;
+
+            // Try to downcast to SemanticInput — this is the assertion
+            let semantic_input = input
+                .downcast_data::<SemanticInput>()
+                .ok_or(AdapterError::InvalidInput)?;
+
+            self.received_semantic_input
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+
+            // Emit a concept to prove we ran
+            let mut concept = Node::new_in_dimension(
+                "concept",
+                ContentType::Concept,
+                dimension::SEMANTIC,
+            );
+            concept.id = NodeId::from_string(format!(
+                "concept:semantic-verified-{}",
+                semantic_input.file_path.split('/').last().unwrap_or("unknown")
+            ));
+            sink.emit(Emission::new().with_node(AnnotatedNode::new(concept))).await?;
+            Ok(())
+        }
+    }
+
+    // --- Scenario: Coordinator constructs SemanticInput for Phase 3 ---
+
+    #[tokio::test]
+    async fn coordinator_sends_semantic_input_to_phase3() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone(), "extract-coordinator");
+
+        let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
+
+        let phase2 = Arc::new(EmittingAdapter::new(
+            "extract-analysis-text",
+            "extract-analysis-text",
+            "concept:p2-output",
+        ));
+        coordinator.register_phase2("text/", phase2);
+
+        let received = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let phase3 = Arc::new(SemanticInputVerifyingAdapter::new(received.clone()));
+        coordinator.register_phase3(phase3);
+
+        let dir = create_temp_file("type-align.md", "# Type alignment test\n\nContent.");
+        let file_path = dir.path().join("type-align.md");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path_str },
+            "test",
+        );
+
+        coordinator.process(&input, &sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(
+            results.iter().all(|r| r.is_ok()),
+            "Phase 3 should succeed — got: {:?}",
+            results
+        );
+
+        assert!(
+            received.load(std::sync::atomic::Ordering::SeqCst),
+            "Phase 3 adapter should have received SemanticInput (not ExtractFileInput)"
+        );
+    }
+
+    // --- Scenario: Phase 3 runs without section boundaries when Phase 2 produces none ---
+
+    #[tokio::test]
+    async fn phase3_receives_empty_sections_when_phase2_has_none() {
+        use crate::adapter::semantic::SemanticInput;
+
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone(), "extract-coordinator");
+
+        // Phase 2 that doesn't produce section boundaries (just emits a concept)
+        let phase2 = Arc::new(EmittingAdapter::new(
+            "extract-analysis-text",
+            "extract-analysis-text",
+            "concept:no-sections",
+        ));
+
+        // Phase 3 that checks sections are empty
+        let sections_empty = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sections_flag = sections_empty.clone();
+
+        /// Adapter that verifies SemanticInput has empty sections.
+        struct EmptySectionsVerifier {
+            flag: Arc<std::sync::atomic::AtomicBool>,
+        }
+
+        #[async_trait]
+        impl Adapter for EmptySectionsVerifier {
+            fn id(&self) -> &str { "extract-semantic" }
+            fn input_kind(&self) -> &str { "extract-semantic" }
+            async fn process(
+                &self,
+                input: &AdapterInput,
+                _sink: &dyn AdapterSink,
+            ) -> Result<(), AdapterError> {
+                let semantic = input.downcast_data::<SemanticInput>()
+                    .ok_or(AdapterError::InvalidInput)?;
+                if semantic.sections.is_empty() {
+                    self.flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                Ok(())
+            }
+        }
+
+        let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
+        coordinator.register_phase2("text/", phase2);
+        coordinator.register_phase3(Arc::new(EmptySectionsVerifier { flag: sections_flag }));
+
+        let dir = create_temp_file("no-sections.md", "# No sections\n\nPlain content.");
+        let file_path = dir.path().join("no-sections.md");
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path.to_str().unwrap().to_string() },
+            "test",
+        );
+
+        coordinator.process(&input, &sink).await.unwrap();
+        coordinator.wait_for_background().await;
+
+        assert!(
+            sections_empty.load(std::sync::atomic::Ordering::SeqCst),
+            "Phase 3 should receive SemanticInput with empty sections"
+        );
+    }
+
+    // --- Scenario: Coordinator dispatches to real SemanticAdapter (integration) ---
+
+    #[tokio::test]
+    async fn coordinator_dispatches_to_real_semantic_adapter() {
+        use crate::adapter::semantic::SemanticAdapter;
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::llm_orc::{AgentResult, InvokeResponse, MockClient};
+        use crate::storage::{SqliteStore, OpenStore};
+        use std::collections::HashMap;
+
+        // Build a MockClient that returns concepts
+        let mut results = HashMap::new();
+        results.insert(
+            "synthesizer".to_string(),
+            AgentResult {
+                response: Some(r#"{"concepts": [{"label": "Integration", "confidence": 0.95}]}"#.to_string()),
+                status: Some("success".to_string()),
+                error: None,
+            },
+        );
+        let response = InvokeResponse {
+            results,
+            status: "completed".to_string(),
+            metadata: serde_json::Value::Null,
+        };
+        let mock_client = Arc::new(
+            MockClient::available().with_response("extract-semantic", response),
+        );
+
+        // Real SemanticAdapter (not a stub)
+        let semantic = Arc::new(SemanticAdapter::new(mock_client, "extract-semantic"));
+
+        // Real engine + store
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        let context_id = ContextId::from_string("test");
+        let mut ctx = Context::new("test");
+        ctx.id = context_id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        // Coordinator with engine path — Phase 2 needed because Phase 3 chains after it
+        let mut coordinator = ExtractionCoordinator::new()
+            .with_engine(engine.clone(), context_id.clone());
+        let phase2 = Arc::new(EmittingAdapter::new(
+            "extract-analysis-text",
+            "extract-analysis-text",
+            "concept:p2-stub",
+        ));
+        coordinator.register_phase2("text/", phase2);
+        coordinator.register_phase3(semantic);
+
+        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: "extract-coordinator".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let dir = create_temp_file("integration.md", "# Integration test\n\nContent about integration.");
+        let file_path = dir.path().join("integration.md");
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path.to_str().unwrap().to_string() },
+            "test",
+        );
+
+        coordinator.process(&input, &primary_sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(
+            results.iter().all(|r| r.is_ok()),
+            "Real SemanticAdapter should succeed — got: {:?}",
+            results
+        );
+
+        // Concept from ensemble response should be persisted
+        let ctx = engine.get_context(&context_id).expect("context should exist");
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:integration")).is_some(),
+            "Concept node from real SemanticAdapter should be persisted in engine context"
+        );
+
+        // Verify round-trip through store
+        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&context_id).expect("context should survive reload");
+        assert!(
+            ctx2.get_node(&NodeId::from_string("concept:integration")).is_some(),
+            "Concept node should survive store reload"
         );
     }
 }
