@@ -365,13 +365,156 @@ impl Adapter for SemanticAdapter {
             })?;
 
         // Parse response into emission
-        let emission = self.parse_response(response_text, file_path)?;
+        let mut emission = self.parse_response(response_text, file_path)?;
 
+        // Add provenance trail (Invariant 7 — dual obligation)
         if !emission.is_empty() {
+            self.add_provenance(&mut emission, semantic_input);
             sink.emit(emission).await?;
         }
 
         Ok(())
+    }
+}
+
+impl SemanticAdapter {
+    /// Add provenance trail to emission: chain + marks + contains edges.
+    ///
+    /// Invariant 7 (dual obligation): every adapter emits both semantic content
+    /// AND provenance. The chain scopes all marks to this adapter run. Marks
+    /// record where concepts were found, with concept labels as tags for
+    /// TagConceptBridger to bridge.
+    fn add_provenance(&self, emission: &mut Emission, input: &SemanticInput) {
+        let file_path = &input.file_path;
+        let adapter_id = "extract-semantic";
+
+        // Chain node — one per adapter run per file
+        let chain_id = NodeId::from_string(format!("chain:{}:{}", adapter_id, file_path));
+        let mut chain_node = Node::new_in_dimension(
+            "chain",
+            ContentType::Provenance,
+            dimension::PROVENANCE,
+        );
+        chain_node.id = chain_id.clone();
+        chain_node.properties.insert(
+            "name".to_string(),
+            PropertyValue::String(format!("{} — {}", adapter_id, file_path)),
+        );
+        chain_node.properties.insert(
+            "status".to_string(),
+            PropertyValue::String("active".to_string()),
+        );
+        *emission = std::mem::take(emission).with_node(AnnotatedNode::new(chain_node));
+
+        // Collect concept labels from emission for tags
+        let concept_labels: Vec<String> = emission
+            .nodes
+            .iter()
+            .filter(|n| n.node.node_type == "concept")
+            .filter_map(|n| match n.node.properties.get("label") {
+                Some(PropertyValue::String(s)) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+
+        // Mark nodes — one per section (or one for whole file)
+        let marks: Vec<(String, NodeId, Node)> = if input.sections.is_empty() {
+            // No sections: one mark for the whole file
+            let mark_id = NodeId::from_string(format!("mark:{}:{}", adapter_id, file_path));
+            let mut mark = Node::new_in_dimension(
+                "mark",
+                ContentType::Provenance,
+                dimension::PROVENANCE,
+            );
+            mark.id = mark_id.clone();
+            mark.properties.insert(
+                "file_path".to_string(),
+                PropertyValue::String(file_path.clone()),
+            );
+            mark.properties.insert(
+                "annotation".to_string(),
+                PropertyValue::String(format!("semantic extraction of {}", file_path)),
+            );
+            if !concept_labels.is_empty() {
+                mark.properties.insert(
+                    "tags".to_string(),
+                    PropertyValue::Array(
+                        concept_labels.iter().map(|l| PropertyValue::String(l.clone())).collect(),
+                    ),
+                );
+            }
+            vec![("whole-file".to_string(), mark_id, mark)]
+        } else {
+            // One mark per section
+            input
+                .sections
+                .iter()
+                .map(|section| {
+                    let slug = section.label.to_lowercase().replace(' ', "-");
+                    let mark_id = NodeId::from_string(format!(
+                        "mark:{}:{}:{}",
+                        adapter_id, file_path, slug
+                    ));
+                    let mut mark = Node::new_in_dimension(
+                        "mark",
+                        ContentType::Provenance,
+                        dimension::PROVENANCE,
+                    );
+                    mark.id = mark_id.clone();
+                    mark.properties.insert(
+                        "file_path".to_string(),
+                        PropertyValue::String(file_path.clone()),
+                    );
+                    mark.properties.insert(
+                        "section".to_string(),
+                        PropertyValue::String(section.label.clone()),
+                    );
+                    mark.properties.insert(
+                        "start_line".to_string(),
+                        PropertyValue::Int(section.start_line as i64),
+                    );
+                    mark.properties.insert(
+                        "end_line".to_string(),
+                        PropertyValue::Int(section.end_line as i64),
+                    );
+                    mark.properties.insert(
+                        "annotation".to_string(),
+                        PropertyValue::String(format!(
+                            "semantic extraction of {} [{}]",
+                            file_path, section.label
+                        )),
+                    );
+                    if !concept_labels.is_empty() {
+                        mark.properties.insert(
+                            "tags".to_string(),
+                            PropertyValue::Array(
+                                concept_labels
+                                    .iter()
+                                    .map(|l| PropertyValue::String(l.clone()))
+                                    .collect(),
+                            ),
+                        );
+                    }
+                    (slug, mark_id, mark)
+                })
+                .collect()
+        };
+
+        // Add marks and contains edges to emission
+        for (_slug, mark_id, mark) in marks {
+            *emission = std::mem::take(emission).with_node(AnnotatedNode::new(mark));
+
+            let mut contains_edge = Edge::new_in_dimension(
+                chain_id.clone(),
+                mark_id,
+                "contains",
+                dimension::PROVENANCE,
+            );
+            contains_edge
+                .contributions
+                .insert(adapter_id.to_string(), 1.0);
+            *emission = std::mem::take(emission).with_edge(AnnotatedEdge::new(contains_edge));
+        }
     }
 }
 
@@ -1128,5 +1271,216 @@ Cargo is the build system and package manager for Rust projects.
             concept_count,
             edge_count
         );
+    }
+
+    // ================================================================
+    // Essay 22 Item 4: SemanticAdapter Provenance Trail Scenarios
+    // ================================================================
+
+    /// Build a mock client + adapter that returns the given concepts.
+    fn provenance_test_adapter(concepts_json: &str) -> SemanticAdapter {
+        let mock_client = Arc::new(
+            MockClient::available().with_response(
+                "semantic-extraction",
+                crate::llm_orc::InvokeResponse {
+                    results: {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert(
+                            "synthesizer".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(concepts_json.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m
+                    },
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        );
+        SemanticAdapter::new(mock_client, "semantic-extraction")
+    }
+
+    // --- Scenario: SemanticAdapter produces chain node ---
+
+    #[tokio::test]
+    async fn semantic_adapter_produces_chain_node() {
+        let adapter = provenance_test_adapter(
+            r#"{"concepts": [{"label": "testing", "confidence": 0.9}], "relationships": []}"#,
+        );
+
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone());
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::for_file("test.txt"),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        let chain = snapshot
+            .get_node(&NodeId::from_string("chain:extract-semantic:test.txt"))
+            .expect("chain node should exist");
+        assert_eq!(chain.dimension, dimension::PROVENANCE);
+        assert_eq!(chain.content_type, ContentType::Provenance);
+    }
+
+    // --- Scenario: SemanticAdapter produces mark per extracted passage ---
+
+    #[tokio::test]
+    async fn semantic_adapter_produces_mark_per_passage() {
+        let adapter = provenance_test_adapter(
+            r#"{"concepts": [{"label": "revenge", "confidence": 0.9}, {"label": "madness", "confidence": 0.85}], "relationships": []}"#,
+        );
+
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone());
+
+        // Two sections → two marks
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::with_sections(
+                "/docs/hamlet.txt",
+                vec![
+                    SectionBoundary { label: "Act I".to_string(), start_line: 1, end_line: 500 },
+                    SectionBoundary { label: "Act II".to_string(), start_line: 501, end_line: 1000 },
+                ],
+            ),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        // Two mark nodes (one per section)
+        let marks: Vec<_> = snapshot
+            .nodes()
+            .filter(|n| n.node_type == "mark")
+            .collect();
+        assert_eq!(marks.len(), 2, "should have two mark nodes (one per section)");
+
+        // Each mark has concept labels as tags
+        for mark in &marks {
+            let tags = match mark.properties.get("tags") {
+                Some(PropertyValue::Array(arr)) => arr,
+                _ => panic!("mark should have tags array"),
+            };
+            assert!(tags.len() >= 2, "each mark should carry concept labels as tags");
+            assert_eq!(mark.dimension, dimension::PROVENANCE);
+
+            // Each mark has file_path and passage location
+            assert!(mark.properties.contains_key("file_path"));
+            assert!(mark.properties.contains_key("start_line"));
+            assert!(mark.properties.contains_key("end_line"));
+        }
+    }
+
+    // --- Scenario: SemanticAdapter produces contains edges ---
+
+    #[tokio::test]
+    async fn semantic_adapter_produces_contains_edges() {
+        let adapter = provenance_test_adapter(
+            r#"{"concepts": [{"label": "testing", "confidence": 0.9}], "relationships": []}"#,
+        );
+
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone());
+
+        // Two sections → two marks → two contains edges
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::with_sections(
+                "/docs/test.txt",
+                vec![
+                    SectionBoundary { label: "Section A".to_string(), start_line: 1, end_line: 50 },
+                    SectionBoundary { label: "Section B".to_string(), start_line: 51, end_line: 100 },
+                ],
+            ),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        let chain_id = NodeId::from_string("chain:extract-semantic:/docs/test.txt");
+
+        let contains_edges: Vec<_> = snapshot
+            .edges()
+            .filter(|e| e.relationship == "contains" && e.source == chain_id)
+            .collect();
+        assert_eq!(contains_edges.len(), 2, "two contains edges (chain → mark)");
+
+        // Each contains edge has contribution from extract-semantic
+        for edge in &contains_edges {
+            assert_eq!(
+                edge.contributions.get("extract-semantic"),
+                Some(&1.0),
+                "contains edge should have contribution of 1.0 from extract-semantic"
+            );
+        }
+    }
+
+    // --- Scenario: SemanticAdapter provenance triggers tag-to-concept bridging (integration) ---
+
+    #[tokio::test]
+    async fn semantic_provenance_triggers_tag_concept_bridging() {
+        use crate::adapter::enrichment::{Enrichment, EnrichmentRegistry};
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::storage::{SqliteStore, OpenStore};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        let context_id = ContextId::from_string("test");
+        let mut ctx_init = Context::new("test");
+        ctx_init.id = context_id.clone();
+        engine.upsert_context(ctx_init).unwrap();
+
+        let adapter = provenance_test_adapter(
+            r#"{"concepts": [{"label": "provenance", "confidence": 0.95}], "relationships": []}"#,
+        );
+
+        // Engine-backed sink with TagConceptBridger enrichment
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
+        ]));
+        let sink = EngineSink::for_engine(engine.clone(), context_id.clone())
+            .with_enrichments(registry)
+            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+                adapter_id: "extract-semantic".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::for_file("test.txt"),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        // Check that TagConceptBridger created references edges
+        let ctx = engine.get_context(&context_id).expect("context should exist");
+        let references_edges: Vec<_> = ctx
+            .edges()
+            .filter(|e| e.relationship == "references")
+            .collect();
+
+        assert!(
+            !references_edges.is_empty(),
+            "TagConceptBridger should create references edges from marks to concepts"
+        );
+
+        // references edges are cross-dimensional: provenance → semantic
+        for edge in &references_edges {
+            assert_eq!(edge.source_dimension, dimension::PROVENANCE);
+            assert_eq!(edge.target_dimension, dimension::SEMANTIC);
+        }
     }
 }
