@@ -24,6 +24,7 @@ mod router;
 pub mod semantic;
 mod sink;
 mod tag_bridger;
+pub mod text_analysis;
 mod traits;
 mod types;
 
@@ -52,3 +53,4 @@ pub use fragment::{FragmentAdapter, FragmentInput};
 pub use ingest::IngestPipeline;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 pub use tag_bridger::TagConceptBridger;
+pub use text_analysis::TextAnalysisAdapter;
