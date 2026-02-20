@@ -33,7 +33,7 @@ pub use engine_sink::EngineSink;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use events::GraphEvent;
 pub use provenance::{FrameworkContext, ProvenanceEntry};
-pub use router::{InputRouter, RouteResult};
+pub use router::{InputRouter, RouteResult, classify_input, ClassifyError};
 pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 pub use types::{
