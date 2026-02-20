@@ -172,7 +172,7 @@ async fn spike_00_tag_extraction_diagnostic() {
 async fn spike_01_full_ingestion_with_enrichments() {
     use plexus::adapter::{
         CoOccurrenceEnrichment, DiscoveryGapEnrichment, EmbeddingSimilarityEnrichment,
-        FastEmbedEmbedder, FragmentAdapter, FragmentInput, IngestPipeline, TagConceptBridger,
+        FastEmbedEmbedder, ContentAdapter, FragmentInput, IngestPipeline, TagConceptBridger,
     };
     use plexus::adapter::Enrichment;
     use plexus::{Context, ContextId, PlexusEngine, dimension};
@@ -200,7 +200,7 @@ async fn spike_01_full_ingestion_with_enrichments() {
 
     let mut pipeline = IngestPipeline::new(engine.clone());
     pipeline.register_integration(
-        Arc::new(FragmentAdapter::new("spike-06-self")),
+        Arc::new(ContentAdapter::new("spike-06-self")),
         vec![
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
             Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
@@ -238,7 +238,7 @@ async fn spike_01_full_ingestion_with_enrichments() {
             .with_source(&rel_path.to_string_lossy().to_string());
 
         pipeline
-            .ingest("spike-06-self", "fragment", Box::new(input))
+            .ingest("spike-06-self", "content", Box::new(input))
             .await
             .unwrap();
         ingested += 1;
@@ -384,7 +384,7 @@ async fn spike_01_full_ingestion_with_enrichments() {
 async fn spike_02_persistent_graph_for_mcp() {
     use plexus::adapter::{
         CoOccurrenceEnrichment, DiscoveryGapEnrichment, EmbeddingSimilarityEnrichment,
-        FastEmbedEmbedder, FragmentAdapter, FragmentInput, IngestPipeline, TagConceptBridger,
+        FastEmbedEmbedder, ContentAdapter, FragmentInput, IngestPipeline, TagConceptBridger,
     };
     use plexus::adapter::Enrichment;
     use plexus::storage::{OpenStore, SqliteStore, SqliteVecStore, DEFAULT_EMBEDDING_DIMENSIONS};
@@ -429,7 +429,7 @@ async fn spike_02_persistent_graph_for_mcp() {
 
     let mut pipeline = IngestPipeline::new(engine.clone());
     pipeline.register_integration(
-        Arc::new(FragmentAdapter::new("spike-06-self")),
+        Arc::new(ContentAdapter::new("spike-06-self")),
         vec![
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
             Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
@@ -466,7 +466,7 @@ async fn spike_02_persistent_graph_for_mcp() {
             .with_source(&rel_path.to_string_lossy().to_string());
 
         pipeline
-            .ingest("plexus-self", "fragment", Box::new(input))
+            .ingest("plexus-self", "content", Box::new(input))
             .await
             .unwrap();
         ingested += 1;

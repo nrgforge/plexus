@@ -83,7 +83,7 @@ impl PlexusApi {
             .with_source(file);
         let fragment_events = self
             .pipeline
-            .ingest(&resolved, "fragment", Box::new(fragment_input))
+            .ingest(&resolved, "content", Box::new(fragment_input))
             .await
             .map_err(AnnotateError::Adapter)?;
         all_events.extend(fragment_events);
@@ -770,12 +770,12 @@ mod tests {
 
     // --- Annotate workflow (ADR-015) ---
 
-    use crate::adapter::{FragmentAdapter, ProvenanceAdapter};
+    use crate::adapter::{ContentAdapter, ProvenanceAdapter};
 
     fn setup_with_provenance() -> (Arc<PlexusEngine>, PlexusApi) {
         let engine = Arc::new(PlexusEngine::new());
         let mut pipeline = IngestPipeline::new(engine.clone());
-        pipeline.register_adapter(Arc::new(FragmentAdapter::new("annotate")));
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
         pipeline.register_adapter(Arc::new(ProvenanceAdapter::new()));
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
         (engine, api)
@@ -839,7 +839,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Still only one user chain (FragmentAdapter's internal chains are separate)
+        // Still only one user chain (ContentAdapter's internal chains are separate)
         let chains = api.list_chains("research", None).unwrap();
         let user_chains: Vec<_> = chains.iter()
             .filter(|c| c.id.starts_with("chain:provenance:"))
@@ -881,7 +881,7 @@ mod tests {
 
         // Set up pipeline with both adapters and enrichments
         let mut pipeline = IngestPipeline::new(engine.clone());
-        pipeline.register_adapter(Arc::new(FragmentAdapter::new("annotate")));
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             vec![Arc::new(crate::adapter::TagConceptBridger::new())],
@@ -892,7 +892,7 @@ mod tests {
             .await
             .unwrap();
 
-        // FragmentAdapter creates concept:refactor from the tag.
+        // ContentAdapter creates concept:refactor from the tag.
         // TagConceptBridger creates a references edge from the mark to the concept.
         let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
         assert!(ctx.get_node(&NodeId::from("concept:refactor")).is_some(),

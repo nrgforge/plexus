@@ -161,18 +161,18 @@ fn output_edge_exists(context: &Context, source: &NodeId, target: &NodeId, relat
 mod tests {
     use super::*;
     use crate::adapter::engine_sink::EngineSink;
-    use crate::adapter::fragment::{FragmentAdapter, FragmentInput};
+    use crate::adapter::fragment::{ContentAdapter, FragmentInput};
     use crate::adapter::provenance::FrameworkContext;
     use crate::adapter::traits::{Adapter, AdapterInput};
     use crate::graph::{EdgeId, Node};
     use std::sync::{Arc, Mutex};
 
-    /// Helper: create a graph with fragments and tags via the FragmentAdapter.
+    /// Helper: create a graph with fragments and tags via the ContentAdapter.
     async fn build_fragment_graph(
         fragments: Vec<(&str, Vec<&str>)>,
     ) -> Arc<Mutex<Context>> {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
-        let adapter = FragmentAdapter::new("manual-fragment");
+        let adapter = ContentAdapter::new("manual-fragment");
         let sink = EngineSink::new(ctx.clone()).with_framework_context(FrameworkContext {
             adapter_id: "manual-fragment".to_string(),
             context_id: "test".to_string(),
@@ -181,7 +181,7 @@ mod tests {
 
         for (text, tags) in fragments {
             let input = AdapterInput::new(
-                "fragment",
+                "content",
                 FragmentInput::new(text, tags.into_iter().map(|s| s.to_string()).collect()),
                 "test",
             );
@@ -569,7 +569,7 @@ mod tests {
         let enrichment = CoOccurrenceEnrichment::new();
         let mut ctx = Context::new("test");
 
-        // Document source node (e.g., from FragmentAdapter)
+        // Document source node (e.g., from ContentAdapter)
         let mut doc = Node::new("fragment", ContentType::Document);
         doc.id = NodeId::from_string("doc-1");
         ctx.add_node(doc);

@@ -1,6 +1,6 @@
-//! FragmentAdapter — external adapter for tagged writing fragments (ADR-004)
+//! ContentAdapter — direct content ingestion adapter (ADR-028)
 //!
-//! Maps a fragment (text + tags) to graph structure:
+//! Maps content (text + tags) to graph structure:
 //! - A fragment node (Document, structure dimension) — deterministic ID via content hash
 //! - A concept node per tag (Concept, semantic dimension) — deterministic ID via tag label
 //! - A tagged_with edge per tag (fragment → concept, contribution 1.0)
@@ -19,7 +19,7 @@ use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, Property
 use async_trait::async_trait;
 use uuid::Uuid;
 
-/// Input data for the FragmentAdapter.
+/// Input data for the ContentAdapter.
 ///
 /// A fragment carries text and tags — applied manually by a human
 /// or extracted by an LLM. Tags are expected to be single words
@@ -57,15 +57,16 @@ impl FragmentInput {
     }
 }
 
-/// External adapter that maps tagged fragments to graph structure.
+/// Direct content ingestion adapter (ADR-028).
 ///
+/// Always produces fragment + provenance (Invariant 7 dual obligation).
 /// One adapter type serves multiple evidence sources via configurable
-/// adapter ID. See ADR-004 Decision 1.
-pub struct FragmentAdapter {
+/// adapter ID.
+pub struct ContentAdapter {
     adapter_id: String,
 }
 
-impl FragmentAdapter {
+impl ContentAdapter {
     pub fn new(adapter_id: impl Into<String>) -> Self {
         Self {
             adapter_id: adapter_id.into(),
@@ -74,13 +75,13 @@ impl FragmentAdapter {
 }
 
 #[async_trait]
-impl Adapter for FragmentAdapter {
+impl Adapter for ContentAdapter {
     fn id(&self) -> &str {
         &self.adapter_id
     }
 
     fn input_kind(&self) -> &str {
-        "fragment"
+        "content"
     }
 
     async fn process(
@@ -290,11 +291,11 @@ mod tests {
     // === Scenario: Single fragment with tags produces fragment node, concept nodes, and edges ===
     #[tokio::test]
     async fn single_fragment_with_tags() {
-        let adapter = FragmentAdapter::new("manual-fragment");
+        let adapter = ContentAdapter::new("manual-fragment");
         let (sink, ctx) = make_sink("manual-fragment");
 
         let input = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new(
                 "Walked through Avignon",
                 vec!["travel".to_string(), "avignon".to_string()],
@@ -359,16 +360,16 @@ mod tests {
     // === Scenario: Two fragments sharing a tag converge on the same concept node ===
     #[tokio::test]
     async fn two_fragments_sharing_tag_converge() {
-        let adapter = FragmentAdapter::new("manual-fragment");
+        let adapter = ContentAdapter::new("manual-fragment");
         let (sink, ctx) = make_sink("manual-fragment");
 
         let input1 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("Fragment 1", vec!["travel".to_string(), "avignon".to_string()]),
             "test",
         );
         let input2 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("Fragment 2", vec!["travel".to_string(), "paris".to_string()]),
             "test",
         );
@@ -397,16 +398,16 @@ mod tests {
     // === Scenario: Tag case normalization ensures convergence ===
     #[tokio::test]
     async fn tag_case_normalization() {
-        let adapter = FragmentAdapter::new("manual-fragment");
+        let adapter = ContentAdapter::new("manual-fragment");
         let (sink, ctx) = make_sink("manual-fragment");
 
         let input1 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("F1", vec!["Travel".to_string()]),
             "test",
         );
         let input2 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("F2", vec!["travel".to_string()]),
             "test",
         );
@@ -428,11 +429,11 @@ mod tests {
     // === Scenario: Fragment with no tags produces only the fragment node ===
     #[tokio::test]
     async fn fragment_with_no_tags() {
-        let adapter = FragmentAdapter::new("manual-fragment");
+        let adapter = ContentAdapter::new("manual-fragment");
         let (sink, ctx) = make_sink("manual-fragment");
 
         let input = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("A thought", vec![]),
             "test",
         );
@@ -467,11 +468,11 @@ mod tests {
     async fn single_emission_per_fragment() {
         // We verify this indirectly: if edges reference nodes in the same emission
         // and commit without rejection, it was a single emission.
-        let adapter = FragmentAdapter::new("manual-fragment");
+        let adapter = ContentAdapter::new("manual-fragment");
         let (sink, ctx) = make_sink("manual-fragment");
 
         let input = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new(
                 "Test",
                 vec!["travel".to_string(), "avignon".to_string()],
@@ -492,11 +493,11 @@ mod tests {
     // === Scenario: Re-ingesting the same fragment produces the same node (upsert, not duplicate) ===
     #[tokio::test]
     async fn idempotent_reingest() {
-        let adapter = FragmentAdapter::new("manual-fragment");
+        let adapter = ContentAdapter::new("manual-fragment");
         let (sink, ctx) = make_sink("manual-fragment");
 
         let input = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new(
                 "Walked through Avignon",
                 vec!["travel".to_string(), "avignon".to_string()],
@@ -519,16 +520,16 @@ mod tests {
     // === Scenario: Different text with same tags produces different fragment nodes ===
     #[tokio::test]
     async fn different_text_different_fragment_id() {
-        let adapter = FragmentAdapter::new("manual-fragment");
+        let adapter = ContentAdapter::new("manual-fragment");
         let (sink, ctx) = make_sink("manual-fragment");
 
         let input1 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("Fragment A", vec!["travel".to_string()]),
             "test",
         );
         let input2 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("Fragment B", vec!["travel".to_string()]),
             "test",
         );
@@ -553,8 +554,8 @@ mod tests {
     // === Scenario: Two adapter instances produce separate contribution slots ===
     #[tokio::test]
     async fn two_instances_separate_contributions() {
-        let manual = FragmentAdapter::new("manual-fragment");
-        let llm = FragmentAdapter::new("llm-fragment");
+        let manual = ContentAdapter::new("manual-fragment");
+        let llm = ContentAdapter::new("llm-fragment");
 
         // Both adapters share the same graph
         let ctx = Arc::new(Mutex::new(Context::new("test")));
@@ -570,12 +571,12 @@ mod tests {
         });
 
         let input1 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("F1", vec!["travel".to_string()]),
             "test",
         );
         let input2 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("F2", vec!["travel".to_string()]),
             "test",
         );
@@ -618,8 +619,8 @@ mod tests {
     // === Scenario: Same concept from different sources shows evidence diversity ===
     #[tokio::test]
     async fn same_concept_different_sources_evidence_diversity() {
-        let manual = FragmentAdapter::new("manual-fragment");
-        let llm = FragmentAdapter::new("llm-fragment");
+        let manual = ContentAdapter::new("manual-fragment");
+        let llm = ContentAdapter::new("llm-fragment");
 
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let manual_sink = EngineSink::new(ctx.clone()).with_framework_context(FrameworkContext {
@@ -634,12 +635,12 @@ mod tests {
         });
 
         let input1 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("F1", vec!["travel".to_string()]),
             "test",
         );
         let input2 = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new("F2", vec!["travel".to_string()]),
             "test",
         );

@@ -123,7 +123,7 @@ async fn spike_00_pairwise_similarity_diagnostic() {
 async fn spike_real_embedder_in_memory_store() {
     use plexus::adapter::{
         CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment, FastEmbedEmbedder,
-        FragmentAdapter, FragmentInput, IngestPipeline, TagConceptBridger,
+        ContentAdapter, FragmentInput, IngestPipeline, TagConceptBridger,
     };
     use plexus::adapter::Enrichment;
     use plexus::{Context, ContextId, PlexusEngine, dimension};
@@ -152,7 +152,7 @@ async fn spike_real_embedder_in_memory_store() {
 
     let mut pipeline = IngestPipeline::new(engine.clone());
     pipeline.register_integration(
-        Arc::new(FragmentAdapter::new("spike-05")),
+        Arc::new(ContentAdapter::new("spike-05")),
         vec![
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
             Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
@@ -178,7 +178,7 @@ async fn spike_real_embedder_in_memory_store() {
             tags.iter().map(|t| t.to_string()).collect(),
         );
         pipeline
-            .ingest("spike-05-inmemory", "fragment", Box::new(input))
+            .ingest("spike-05-inmemory", "content", Box::new(input))
             .await
             .unwrap();
     }
@@ -233,7 +233,7 @@ async fn spike_real_embedder_in_memory_store() {
 #[ignore = "requires embeddings feature and model download"]
 async fn spike_real_embedder_sqlite_vec_store() {
     use plexus::adapter::{
-        EmbeddingSimilarityEnrichment, FastEmbedEmbedder, FragmentAdapter,
+        EmbeddingSimilarityEnrichment, FastEmbedEmbedder, ContentAdapter,
         FragmentInput, IngestPipeline, TagConceptBridger,
     };
     use plexus::adapter::{Enrichment, VectorStore};
@@ -269,7 +269,7 @@ async fn spike_real_embedder_sqlite_vec_store() {
 
     let mut pipeline = IngestPipeline::new(engine.clone());
     pipeline.register_integration(
-        Arc::new(FragmentAdapter::new("spike-05-sqlite")),
+        Arc::new(ContentAdapter::new("spike-05-sqlite")),
         vec![
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
             embedding_enrichment as Arc<dyn Enrichment>,
@@ -289,7 +289,7 @@ async fn spike_real_embedder_sqlite_vec_store() {
             tags.iter().map(|t| t.to_string()).collect(),
         );
         pipeline
-            .ingest("spike-05-sqlite-vec", "fragment", Box::new(input))
+            .ingest("spike-05-sqlite-vec", "content", Box::new(input))
             .await
             .unwrap();
     }
@@ -337,7 +337,7 @@ async fn spike_real_embedder_sqlite_vec_store() {
 async fn spike_full_pipeline_with_graph_analysis() {
     use plexus::adapter::{
         CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment, FastEmbedEmbedder,
-        FragmentAdapter, FragmentInput, GraphAnalysisAdapter, IngestPipeline,
+        ContentAdapter, FragmentInput, GraphAnalysisAdapter, IngestPipeline,
         TagConceptBridger, EngineSink, FrameworkContext,
         run_analysis,
     };
@@ -375,7 +375,7 @@ async fn spike_full_pipeline_with_graph_analysis() {
 
     let mut pipeline = IngestPipeline::new(engine.clone());
     pipeline.register_integration(
-        Arc::new(FragmentAdapter::new("spike-05-full")),
+        Arc::new(ContentAdapter::new("spike-05-full")),
         vec![
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
             Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
@@ -398,7 +398,7 @@ async fn spike_full_pipeline_with_graph_analysis() {
             tags.iter().map(|t| t.to_string()).collect(),
         );
         pipeline
-            .ingest("spike-05-full", "fragment", Box::new(input))
+            .ingest("spike-05-full", "content", Box::new(input))
             .await
             .unwrap();
     }
@@ -531,7 +531,7 @@ async fn spike_corpus_pkm_webdev_embeddings() {
     use common::corpus::TestCorpus;
     use plexus::adapter::{
         CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment, FastEmbedEmbedder,
-        FragmentAdapter, FragmentInput, IngestPipeline, TagConceptBridger,
+        ContentAdapter, FragmentInput, IngestPipeline, TagConceptBridger,
     };
     use plexus::adapter::Enrichment;
     use plexus::{Context, ContextId, PlexusEngine, dimension};
@@ -563,7 +563,7 @@ async fn spike_corpus_pkm_webdev_embeddings() {
 
     let mut pipeline = IngestPipeline::new(engine.clone());
     pipeline.register_integration(
-        Arc::new(FragmentAdapter::new("corpus-ingest")),
+        Arc::new(ContentAdapter::new("corpus-ingest")),
         vec![
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
             Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
@@ -627,7 +627,7 @@ async fn spike_corpus_pkm_webdev_embeddings() {
             .with_source(&path_str);
 
         pipeline
-            .ingest("spike-05-corpus", "fragment", Box::new(input))
+            .ingest("spike-05-corpus", "content", Box::new(input))
             .await
             .unwrap();
         ingested += 1;

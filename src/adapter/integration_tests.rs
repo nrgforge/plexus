@@ -7,7 +7,7 @@ mod tests {
     use crate::adapter::engine_sink::EngineSink;
     use crate::adapter::enrichment::{Enrichment, EnrichmentRegistry};
     use crate::adapter::events::GraphEvent;
-    use crate::adapter::fragment::{FragmentAdapter, FragmentInput};
+    use crate::adapter::fragment::{ContentAdapter, FragmentInput};
     use crate::adapter::provenance::FrameworkContext;
     use crate::adapter::sink::{AdapterError, AdapterSink};
     use crate::adapter::traits::{Adapter, AdapterInput};
@@ -398,12 +398,12 @@ mod tests {
         let ctx_id = ContextId::from("provence-research");
         engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
 
-        // Step 1: FragmentAdapter processes a fragment
-        let adapter = FragmentAdapter::new("manual-fragment");
+        // Step 1: ContentAdapter processes a fragment
+        let adapter = ContentAdapter::new("manual-fragment");
         let sink = make_engine_sink(&engine, &ctx_id, "manual-fragment");
 
         let input = AdapterInput::new(
-            "fragment",
+            "content",
             FragmentInput::new(
                 "Morning walk in Avignon",
                 vec!["travel".to_string(), "avignon".to_string()],
@@ -1861,8 +1861,8 @@ mod tests {
             .upsert_context(Context::with_id(ctx_id.clone(), "provence-research"))
             .unwrap();
 
-        // Use the real FragmentAdapter to create structure + semantic nodes
-        let fragment_adapter = Arc::new(FragmentAdapter::new("trellis-fragment"));
+        // Use the real ContentAdapter to create structure + semantic nodes
+        let fragment_adapter = Arc::new(ContentAdapter::new("trellis-fragment"));
         let enrichment = Arc::new(CoOccurrenceEnrichment::new());
         let registry = Arc::new(EnrichmentRegistry::new(vec![
             enrichment as Arc<dyn Enrichment>,
@@ -1878,7 +1878,7 @@ mod tests {
             vec!["travel".to_string(), "avignon".to_string()],
         ));
         pipeline
-            .ingest("provence-research", "fragment", data)
+            .ingest("provence-research", "content", data)
             .await
             .unwrap();
 
@@ -1902,7 +1902,7 @@ mod tests {
     }
 
     // NOTE: The Essay 11 spike test (spike_two_consumer_cross_dimensional_validation)
-    // was removed here. Essay 12 changed the architecture (FragmentAdapter now produces
+    // was removed here. Essay 12 changed the architecture (ContentAdapter now produces
     // provenance alongside semantics), making the Essay 11 test's framing incorrect.
     // Its scenarios are covered at larger scale by the Essay 13 spikes below.
     // See docs/research/semantic/essays/11-two-consumer-validation.md for history.
@@ -1911,7 +1911,7 @@ mod tests {
     // Spike: Provenance as Epistemological Infrastructure (Essay 12)
     // ================================================================
     //
-    // Validates that FragmentAdapter automatically produces provenance
+    // Validates that ContentAdapter automatically produces provenance
     // marks alongside semantic output, and TagConceptBridger bridges
     // those marks to concepts — making every concept's origin
     // graph-traversable.
@@ -1932,7 +1932,7 @@ mod tests {
 
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
-            Arc::new(FragmentAdapter::new("journal")),
+            Arc::new(ContentAdapter::new("journal")),
             vec![
                 Arc::new(TagConceptBridger::new()),
                 Arc::new(CoOccurrenceEnrichment::new()),
@@ -1947,7 +1947,7 @@ mod tests {
         .with_source("journal-2026-02");
 
         pipeline
-            .ingest("provenance-spike", "fragment", Box::new(input))
+            .ingest("provenance-spike", "content", Box::new(input))
             .await
             .unwrap();
 
@@ -2048,7 +2048,7 @@ mod tests {
 
         // Two adapter instances: manual (L1) and LLM-extracted (L4)
         // Same source, different processing phases.
-        // Separate pipelines because both share input_kind="fragment" —
+        // Separate pipelines because both share input_kind="content" —
         // in production each phase would run independently.
         let enrichments: Vec<Arc<dyn crate::adapter::enrichment::Enrichment>> = vec![
             Arc::new(TagConceptBridger::new()),
@@ -2057,13 +2057,13 @@ mod tests {
 
         let mut manual_pipeline = IngestPipeline::new(engine.clone());
         manual_pipeline.register_integration(
-            Arc::new(FragmentAdapter::new("manual-journal")),
+            Arc::new(ContentAdapter::new("manual-journal")),
             enrichments.clone(),
         );
 
         let mut llm_pipeline = IngestPipeline::new(engine.clone());
         llm_pipeline.register_integration(
-            Arc::new(FragmentAdapter::new("llm-extract")),
+            Arc::new(ContentAdapter::new("llm-extract")),
             enrichments,
         );
 
@@ -2075,7 +2075,7 @@ mod tests {
         .with_source("paper-chen-2025");
 
         manual_pipeline
-            .ingest("multi-phase", "fragment", Box::new(manual_input))
+            .ingest("multi-phase", "content", Box::new(manual_input))
             .await
             .unwrap();
 
@@ -2091,7 +2091,7 @@ mod tests {
         .with_source("paper-chen-2025");
 
         llm_pipeline
-            .ingest("multi-phase", "fragment", Box::new(llm_input))
+            .ingest("multi-phase", "content", Box::new(llm_input))
             .await
             .unwrap();
 
@@ -2229,13 +2229,13 @@ mod tests {
         // Three separate pipelines (one per consumer) sharing the same engine
         let mut trellis_pipeline = IngestPipeline::new(engine.clone());
         trellis_pipeline.register_integration(
-            Arc::new(FragmentAdapter::new("trellis-fragment")),
+            Arc::new(ContentAdapter::new("trellis-fragment")),
             enrichments.clone(),
         );
 
         let mut carrel_llm_pipeline = IngestPipeline::new(engine.clone());
         carrel_llm_pipeline.register_integration(
-            Arc::new(FragmentAdapter::new("carrel-llm")),
+            Arc::new(ContentAdapter::new("carrel-llm")),
             enrichments.clone(),
         );
 
@@ -2307,7 +2307,7 @@ mod tests {
             )
             .with_source(*source);
             trellis_pipeline
-                .ingest("research-workspace", "fragment", Box::new(input))
+                .ingest("research-workspace", "content", Box::new(input))
                 .await
                 .unwrap();
         }
@@ -2395,7 +2395,7 @@ mod tests {
             )
             .with_source(*source);
             carrel_llm_pipeline
-                .ingest("research-workspace", "fragment", Box::new(input))
+                .ingest("research-workspace", "content", Box::new(input))
                 .await
                 .unwrap();
         }
@@ -3060,13 +3060,13 @@ mod tests {
 
         let mut trellis = IngestPipeline::new(engine.clone());
         trellis.register_integration(
-            Arc::new(FragmentAdapter::new("trellis")),
+            Arc::new(ContentAdapter::new("trellis")),
             enrichments.clone(),
         );
 
         let mut carrel_llm = IngestPipeline::new(engine.clone());
         carrel_llm.register_integration(
-            Arc::new(FragmentAdapter::new("carrel-llm")),
+            Arc::new(ContentAdapter::new("carrel-llm")),
             enrichments.clone(),
         );
 
@@ -3194,7 +3194,7 @@ mod tests {
             )
             .with_source("journal");
             trellis
-                .ingest("coastal-novel", "fragment", Box::new(input))
+                .ingest("coastal-novel", "content", Box::new(input))
                 .await
                 .unwrap();
         }
@@ -3323,7 +3323,7 @@ mod tests {
             )
             .with_source(*source);
             carrel_llm
-                .ingest("coastal-novel", "fragment", Box::new(input))
+                .ingest("coastal-novel", "content", Box::new(input))
                 .await
                 .unwrap();
         }
@@ -3791,9 +3791,9 @@ mod tests {
             .upsert_context(Context::with_id(ctx_id.clone(), "embedding-integration"))
             .unwrap();
 
-        // Pipeline with FragmentAdapter + 3 enrichments:
+        // Pipeline with ContentAdapter + 3 enrichments:
         // TagConceptBridger, CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment
-        let fragment_adapter = Arc::new(FragmentAdapter::new("test-fragment"));
+        let fragment_adapter = Arc::new(ContentAdapter::new("test-fragment"));
         let embedding_enrichment = Arc::new(EmbeddingSimilarityEnrichment::new(
             "mock-model",
             0.7,
@@ -3817,7 +3817,7 @@ mod tests {
         pipeline
             .ingest(
                 "embedding-integration",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "Sailing voyage across the Mediterranean",
                     vec!["travel".to_string(), "voyage".to_string()],
@@ -3832,7 +3832,7 @@ mod tests {
         pipeline
             .ingest(
                 "embedding-integration",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "Journey through democratic institutions",
                     vec!["journey".to_string(), "democracy".to_string()],
@@ -3969,7 +3969,7 @@ mod tests {
 
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
-            Arc::new(FragmentAdapter::new("multi-model")),
+            Arc::new(ContentAdapter::new("multi-model")),
             vec![
                 Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 enrichment_a as Arc<dyn Enrichment>,
@@ -3981,7 +3981,7 @@ mod tests {
         pipeline
             .ingest(
                 "multi-model",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "A journey through travel",
                     vec!["travel".to_string(), "journey".to_string()],
@@ -4035,7 +4035,7 @@ mod tests {
 
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
-            Arc::new(FragmentAdapter::new("embed-gap")),
+            Arc::new(ContentAdapter::new("embed-gap")),
             vec![
                 Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 Arc::new(EmbeddingSimilarityEnrichment::new(
@@ -4053,7 +4053,7 @@ mod tests {
         pipeline
             .ingest(
                 "embed-gap",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "Planning a trip",
                     vec!["travel".to_string()],
@@ -4069,7 +4069,7 @@ mod tests {
         pipeline
             .ingest(
                 "embed-gap",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "A long journey",
                     vec!["journey".to_string()],
@@ -4126,7 +4126,7 @@ mod tests {
 
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
-            Arc::new(FragmentAdapter::new("retract-gap")),
+            Arc::new(ContentAdapter::new("retract-gap")),
             vec![
                 Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 Arc::new(EmbeddingSimilarityEnrichment::new(
@@ -4144,7 +4144,7 @@ mod tests {
         pipeline
             .ingest(
                 "retract-gap",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "Planning a trip",
                     vec!["travel".to_string()],
@@ -4155,7 +4155,7 @@ mod tests {
         pipeline
             .ingest(
                 "retract-gap",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "A long journey",
                     vec!["journey".to_string()],
@@ -4234,7 +4234,7 @@ mod tests {
 
         let mut pipeline_v1 = IngestPipeline::new(engine.clone());
         pipeline_v1.register_integration(
-            Arc::new(FragmentAdapter::new("model-replace")),
+            Arc::new(ContentAdapter::new("model-replace")),
             vec![
                 Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 enrichment_v1 as Arc<dyn Enrichment>,
@@ -4244,7 +4244,7 @@ mod tests {
         pipeline_v1
             .ingest(
                 "model-replace",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "Sailing voyage",
                     vec!["travel".to_string(), "voyage".to_string()],
@@ -4297,7 +4297,7 @@ mod tests {
 
         let mut pipeline_v2 = IngestPipeline::new(engine.clone());
         pipeline_v2.register_integration(
-            Arc::new(FragmentAdapter::new("model-replace")),
+            Arc::new(ContentAdapter::new("model-replace")),
             vec![
                 Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 enrichment_v2 as Arc<dyn Enrichment>,
@@ -4309,7 +4309,7 @@ mod tests {
         pipeline_v2
             .ingest(
                 "model-replace",
-                "fragment",
+                "content",
                 Box::new(FragmentInput::new(
                     "Sailing voyage",
                     vec!["travel".to_string(), "voyage".to_string()],
@@ -4426,7 +4426,7 @@ mod tests {
         engine.upsert_context(Context::new("research")).unwrap();
 
         let mut pipeline = IngestPipeline::new(engine.clone());
-        pipeline.register_adapter(Arc::new(FragmentAdapter::new("annotate")));
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             vec![Arc::new(TagConceptBridger::new())],
@@ -4445,14 +4445,14 @@ mod tests {
             .expect("research context should exist");
         let ctx = engine.get_context(&ctx_id).unwrap();
 
-        // FragmentAdapter should create concepts WITHOUT the # prefix
+        // ContentAdapter should create concepts WITHOUT the # prefix
         assert!(
             ctx.get_node(&NodeId::from("concept:travel")).is_some(),
-            "concept:travel should exist (# stripped before FragmentAdapter)"
+            "concept:travel should exist (# stripped before ContentAdapter)"
         );
         assert!(
             ctx.get_node(&NodeId::from("concept:avignon")).is_some(),
-            "concept:avignon should exist (# stripped before FragmentAdapter)"
+            "concept:avignon should exist (# stripped before ContentAdapter)"
         );
         // Concepts with # should NOT exist
         assert!(
@@ -4460,7 +4460,7 @@ mod tests {
             "concept:#travel should NOT exist"
         );
 
-        // annotate() creates two marks: one from FragmentAdapter (provenance for the
+        // annotate() creates two marks: one from ContentAdapter (provenance for the
         // fragment) and one from ProvenanceAdapter (the user's annotation mark).
         // Both should exist; TagConceptBridger should bridge tags from both to concepts.
         let marks: Vec<_> = ctx.nodes()
@@ -4469,12 +4469,12 @@ mod tests {
         assert_eq!(marks.len(), 2, "should have 2 mark nodes (fragment + provenance)");
 
         // The provenance mark (from ProvenanceAdapter) has the #-prefixed tags.
-        // TagConceptBridger strips # and bridges to concepts created by FragmentAdapter.
+        // TagConceptBridger strips # and bridges to concepts created by ContentAdapter.
         // Verify references edges exist from marks to concept nodes.
         let all_refs: Vec<_> = ctx.edges()
             .filter(|e| e.relationship == "references")
             .collect();
-        // Both marks should bridge to concepts (FragmentAdapter mark has lowercased tags,
+        // Both marks should bridge to concepts (ContentAdapter mark has lowercased tags,
         // ProvenanceAdapter mark has #-prefixed tags — both should bridge)
         let ref_targets: std::collections::HashSet<String> = all_refs.iter()
             .map(|e| e.target.to_string()).collect();
