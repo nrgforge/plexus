@@ -4496,4 +4496,180 @@ mod tests {
         assert!(targets2.contains("concept:travel"), "concept:travel ref should survive persistence");
         assert!(targets2.contains("concept:avignon"), "concept:avignon ref should survive persistence");
     }
+
+    // ================================================================
+    // Feature: Core Pipeline Registration (ADR-028, Gap 3)
+    // ================================================================
+
+    // === Scenario: Pipeline includes ContentAdapter and ExtractionCoordinator ===
+    #[tokio::test]
+    async fn pipeline_routes_content_and_extract_file() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::extraction::ExtractionCoordinator;
+        use crate::adapter::provenance_adapter::ProvenanceAdapter;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
+        pipeline.register_adapter(Arc::new(ExtractionCoordinator::new()));
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![Arc::new(TagConceptBridger::new())],
+        );
+
+        // Content route works
+        let content_data = serde_json::json!({
+            "text": "core pipeline test",
+            "tags": ["test"],
+            "source": "integration"
+        });
+        let events = pipeline.ingest(ctx_id.as_str(), "content", Box::new(content_data)).await.unwrap();
+        assert!(!events.is_empty(), "content route should produce events");
+
+        // Extract-file route works (needs a real file)
+        let tmp = std::env::temp_dir().join("plexus_pipeline_test.txt");
+        std::fs::write(&tmp, "test file content").unwrap();
+        let extract_data = serde_json::json!({ "file_path": tmp.to_str().unwrap() });
+        pipeline.ingest(ctx_id.as_str(), "extract-file", Box::new(extract_data)).await.unwrap();
+
+        // Phase 1 creates a file node in the graph
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let file_node_id = NodeId::from_string(format!("file:{}", tmp.to_str().unwrap()));
+        assert!(ctx.get_node(&file_node_id).is_some(), "extract-file should create a file node");
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    // === Scenario: Pipeline includes all core enrichments ===
+    #[tokio::test]
+    async fn pipeline_registers_all_core_enrichments() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::ProvenanceAdapter;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::adapter::cooccurrence::CoOccurrenceEnrichment;
+        use crate::adapter::discovery_gap::DiscoveryGapEnrichment;
+        use crate::adapter::temporal_proximity::TemporalProximityEnrichment;
+
+        let engine = Arc::new(PlexusEngine::new());
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![
+                Arc::new(TagConceptBridger::new()),
+                Arc::new(CoOccurrenceEnrichment::new()),
+                Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap")),
+                Arc::new(TemporalProximityEnrichment::new("created_at", 86400000, "temporal_proximity")),
+            ],
+        );
+
+        let registry = pipeline.enrichment_registry();
+        let enrichment_ids: Vec<&str> = registry.enrichments().iter()
+            .map(|e| e.id())
+            .collect();
+
+        assert!(enrichment_ids.iter().any(|id| id.starts_with("tag_bridger:")), "should have TagConceptBridger");
+        assert!(enrichment_ids.iter().any(|id| id.starts_with("co_occurrence:")), "should have CoOccurrenceEnrichment");
+        assert!(enrichment_ids.iter().any(|id| id.starts_with("discovery_gap:")), "should have DiscoveryGapEnrichment");
+        assert!(enrichment_ids.iter().any(|id| id.starts_with("temporal:")), "should have TemporalProximityEnrichment");
+    }
+
+    // === Scenario: File extraction reachable from transport (JSON wire format) ===
+    #[tokio::test]
+    async fn file_extraction_reachable_via_json() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::extraction::ExtractionCoordinator;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ExtractionCoordinator::new()));
+
+        // Simulate MCP transport: data arrives as serde_json::Value
+        let tmp = std::env::temp_dir().join("plexus_extract_json_test.txt");
+        std::fs::write(&tmp, "hello world").unwrap();
+
+        let json_data = serde_json::json!({ "file_path": tmp.to_str().unwrap() });
+        let events = pipeline.ingest(ctx_id.as_str(), "extract-file", Box::new(json_data)).await.unwrap();
+
+        // Phase 1 should create a file node
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        let file_node_id = NodeId::from_string(format!("file:{}", tmp.to_str().unwrap()));
+        let file_node = ctx.get_node(&file_node_id);
+        assert!(file_node.is_some(), "Phase 1 should create a file node");
+        assert_eq!(file_node.unwrap().node_type, "file");
+        // Note: ExtractionCoordinator doesn't implement transform_events,
+        // so outbound events may be empty. The file node in the graph is the proof.
+        let _ = events;
+
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    // === Scenario: Full pipeline round-trip with persistence (integration) ===
+    #[tokio::test]
+    async fn full_pipeline_round_trip_with_persistence() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::ProvenanceAdapter;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![Arc::new(TagConceptBridger::new())],
+        );
+
+        // Ingest content with tags
+        let data = serde_json::json!({
+            "text": "persistent content test",
+            "tags": ["persistence"],
+            "source": "integration-test"
+        });
+        let events = pipeline.ingest(ctx_id.as_str(), "content", Box::new(data)).await.unwrap();
+        assert!(!events.is_empty(), "should produce outbound events");
+
+        // Verify in-memory state
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        let fragments: Vec<_> = ctx.nodes().filter(|n| n.node_type == "fragment").collect();
+        assert!(!fragments.is_empty(), "should have fragment node");
+
+        let chains: Vec<_> = ctx.nodes().filter(|n| n.node_type == "chain").collect();
+        assert!(!chains.is_empty(), "should have chain node (provenance)");
+
+        let marks: Vec<_> = ctx.nodes().filter(|n| n.node_type == "mark").collect();
+        assert!(!marks.is_empty(), "should have mark node (provenance)");
+
+        let concepts: Vec<_> = ctx.nodes().filter(|n| n.node_type == "concept").collect();
+        assert!(concepts.iter().any(|c| c.id == NodeId::from("concept:persistence")),
+            "TagConceptBridger should create concept:persistence");
+
+        // Verify persistence: load from same store
+        drop(engine);
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+
+        let fragments2: Vec<_> = ctx2.nodes().filter(|n| n.node_type == "fragment").collect();
+        assert!(!fragments2.is_empty(), "fragment should survive persistence");
+
+        let chains2: Vec<_> = ctx2.nodes().filter(|n| n.node_type == "chain").collect();
+        assert!(!chains2.is_empty(), "chain should survive persistence");
+
+        let marks2: Vec<_> = ctx2.nodes().filter(|n| n.node_type == "mark").collect();
+        assert!(!marks2.is_empty(), "mark should survive persistence");
+
+        assert!(ctx2.get_node(&NodeId::from("concept:persistence")).is_some(),
+            "concept should survive persistence");
+    }
 }

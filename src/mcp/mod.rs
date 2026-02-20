@@ -12,9 +12,13 @@ pub mod params;
 use params::*;
 use crate::api::PlexusApi;
 use crate::adapter::{
-    CoOccurrenceEnrichment, ContentAdapter, IngestPipeline,
-    ProvenanceAdapter, TagConceptBridger, classify_input,
+    CoOccurrenceEnrichment, ContentAdapter, DiscoveryGapEnrichment,
+    Enrichment, ExtractionCoordinator, IngestPipeline,
+    ProvenanceAdapter, TagConceptBridger, TemporalProximityEnrichment,
+    classify_input,
 };
+#[cfg(feature = "embeddings")]
+use crate::adapter::{EmbeddingSimilarityEnrichment, FastEmbedEmbedder};
 use crate::graph::Source;
 use crate::{OpenStore, PlexusEngine, SqliteStore};
 use rmcp::{
@@ -52,13 +56,35 @@ pub struct PlexusMcpServer {
 impl PlexusMcpServer {
     pub fn new(engine: Arc<PlexusEngine>) -> Self {
         let mut pipeline = IngestPipeline::new(engine.clone());
-        pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
+
+        // Core adapters (ADR-028)
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
+        pipeline.register_adapter(Arc::new(ExtractionCoordinator::new()));
+
+        // Core enrichments
+        #[allow(unused_mut)]
+        let mut enrichments: Vec<Arc<dyn Enrichment>> = vec![
+            Arc::new(TagConceptBridger::new()),
+            Arc::new(CoOccurrenceEnrichment::new()),
+            Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap")),
+            Arc::new(TemporalProximityEnrichment::new("created_at", 86400000, "temporal_proximity")),
+        ];
+
+        #[cfg(feature = "embeddings")]
+        {
+            if let Ok(embedder) = FastEmbedEmbedder::default_model() {
+                enrichments.push(Arc::new(EmbeddingSimilarityEnrichment::new(
+                    "nomic-embed-text-v1.5",
+                    0.7,
+                    "similar_to",
+                    Box::new(embedder),
+                )));
+            }
+        }
+
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
-            vec![
-                Arc::new(TagConceptBridger::new()),
-                Arc::new(CoOccurrenceEnrichment::new()),
-            ],
+            enrichments,
         );
 
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));

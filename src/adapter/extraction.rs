@@ -31,6 +31,20 @@ pub struct ExtractFileInput {
     pub file_path: String,
 }
 
+impl ExtractFileInput {
+    /// Parse from JSON wire format: `{"file_path": "..."}`.
+    pub fn from_json(json: &serde_json::Value) -> Result<Self, AdapterError> {
+        let file_path = json
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                AdapterError::Internal("extract-file input requires 'file_path' field".into())
+            })?
+            .to_string();
+        Ok(Self { file_path })
+    }
+}
+
 /// Phase completion status for tracking.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PhaseStatus {
@@ -411,9 +425,16 @@ impl Adapter for ExtractionCoordinator {
         input: &AdapterInput,
         sink: &dyn AdapterSink,
     ) -> Result<(), AdapterError> {
-        let file_input = input
-            .downcast_data::<ExtractFileInput>()
-            .ok_or(AdapterError::InvalidInput)?;
+        let owned_input: ExtractFileInput;
+        let file_input: &ExtractFileInput =
+            if let Some(fi) = input.downcast_data::<ExtractFileInput>() {
+                fi
+            } else if let Some(json) = input.downcast_data::<serde_json::Value>() {
+                owned_input = ExtractFileInput::from_json(json)?;
+                &owned_input
+            } else {
+                return Err(AdapterError::InvalidInput);
+            };
 
         let file_path = file_input.file_path.clone();
         let context_id = input.context_id.clone();
