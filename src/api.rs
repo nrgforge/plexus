@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::adapter::{AdapterError, FragmentInput, IngestPipeline, OutboundEvent, ProvenanceInput};
+use crate::adapter::{AdapterError, FragmentInput, IngestPipeline, OutboundEvent, ProvenanceInput, normalize_chain_name};
 use crate::graph::{
     Context, ContextId, NodeId, PlexusEngine, PlexusError, PlexusResult, Source,
 };
@@ -619,26 +619,7 @@ pub struct ContextInfo {
     pub sources: Vec<Source>,
 }
 
-/// Normalize a chain name to a deterministic chain ID.
-///
-/// Rules (ADR-015):
-/// - Lowercased
-/// - Whitespace replaced by hyphens
-/// - `:` and `/` replaced by hyphens (conflict with ID format separators)
-/// - Non-ASCII characters preserved
-/// - Prefix: `chain:provenance:`
-pub fn normalize_chain_name(name: &str) -> String {
-    let normalized: String = name
-        .to_lowercase()
-        .chars()
-        .map(|c| match c {
-            ' ' | '\t' | '\n' | '\r' => '-',
-            ':' | '/' => '-',
-            _ => c,
-        })
-        .collect();
-    format!("chain:provenance:{}", normalized)
-}
+// normalize_chain_name moved to adapter::fragment (ADR-028)
 
 #[cfg(test)]
 mod tests {

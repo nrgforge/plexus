@@ -34,6 +34,16 @@ pub struct FragmentInput {
     pub source: Option<String>,
     /// Optional date string
     pub date: Option<String>,
+    /// Optional chain name for location-specific provenance.
+    /// When present, produces a normalized chain ID (chain:provenance:{name}).
+    /// When absent, chain ID is auto-generated from adapter_id + source.
+    pub chain_name: Option<String>,
+    /// Optional file path for location-specific provenance
+    pub file: Option<String>,
+    /// Optional line number for location-specific provenance
+    pub line: Option<u32>,
+    /// Optional column number for location-specific provenance
+    pub column: Option<u32>,
 }
 
 impl FragmentInput {
@@ -43,6 +53,10 @@ impl FragmentInput {
             tags,
             source: None,
             date: None,
+            chain_name: None,
+            file: None,
+            line: None,
+            column: None,
         }
     }
 
@@ -53,6 +67,22 @@ impl FragmentInput {
 
     pub fn with_date(mut self, date: impl Into<String>) -> Self {
         self.date = Some(date.into());
+        self
+    }
+
+    pub fn with_location(mut self, file: impl Into<String>, line: u32) -> Self {
+        self.file = Some(file.into());
+        self.line = Some(line);
+        self
+    }
+
+    pub fn with_column(mut self, column: u32) -> Self {
+        self.column = Some(column);
+        self
+    }
+
+    pub fn with_chain_name(mut self, name: impl Into<String>) -> Self {
+        self.chain_name = Some(name.into());
         self
     }
 }
@@ -161,14 +191,27 @@ impl Adapter for ContentAdapter {
             emission = emission.with_node(concept_node).with_edge(edge);
         }
 
-        // Build provenance chain + mark (source evidence)
+        // Build provenance chain + mark (Invariant 7: content is always
+        // fragment + provenance).
         //
-        // The chain groups all marks from this adapter for this source.
-        // Deterministic ID ensures idempotent upsert across ingest calls.
-        // The mark records where this fragment's knowledge came from,
-        // with tags that TagConceptBridger will bridge to concept nodes.
+        // Two provenance paths:
+        // 1. Location-specific: caller provides chain_name, file, line →
+        //    chain ID from normalize_chain_name(), mark with file/line.
+        // 2. Source-level: auto-generated chain from adapter_id + source,
+        //    mark with source as file and line 1.
         let source = fragment.source.as_deref().unwrap_or("default");
-        let chain_id = NodeId::from_string(format!("chain:{}:{}", self.adapter_id, source));
+
+        let (chain_id, chain_name) = if let Some(ref name) = fragment.chain_name {
+            // Location-specific: normalized chain ID from user-provided name
+            let id = normalize_chain_name(name);
+            (NodeId::from_string(id), name.clone())
+        } else {
+            // Source-level: auto-generated from adapter_id + source
+            let id = format!("chain:{}:{}", self.adapter_id, source);
+            let name = format!("{} — {}", self.adapter_id, source);
+            (NodeId::from_string(id), name)
+        };
+
         let mut chain_node = Node::new_in_dimension(
             "chain",
             ContentType::Provenance,
@@ -177,7 +220,7 @@ impl Adapter for ContentAdapter {
         chain_node.id = chain_id.clone();
         chain_node.properties.insert(
             "name".to_string(),
-            PropertyValue::String(format!("{} — {}", self.adapter_id, source)),
+            PropertyValue::String(chain_name),
         );
         chain_node.properties.insert(
             "status".to_string(),
@@ -199,14 +242,24 @@ impl Adapter for ContentAdapter {
             "annotation".to_string(),
             PropertyValue::String(fragment.text.clone()),
         );
+
+        // Location-specific or source-level provenance on the mark
+        let mark_file = fragment.file.as_deref().unwrap_or(source);
+        let mark_line = fragment.line.unwrap_or(1);
         mark_node.properties.insert(
             "file".to_string(),
-            PropertyValue::String(source.to_string()),
+            PropertyValue::String(mark_file.to_string()),
         );
         mark_node.properties.insert(
             "line".to_string(),
-            PropertyValue::Int(1),
+            PropertyValue::Int(mark_line as i64),
         );
+        if let Some(col) = fragment.column {
+            mark_node.properties.insert(
+                "column".to_string(),
+                PropertyValue::Int(col as i64),
+            );
+        }
         if !fragment.tags.is_empty() {
             let tag_vals: Vec<PropertyValue> = fragment
                 .tags
@@ -267,6 +320,27 @@ impl Adapter for ContentAdapter {
         }
         outbound
     }
+}
+
+/// Normalize a chain name to a deterministic chain ID.
+///
+/// Rules (ADR-015, ADR-028):
+/// - Lowercased
+/// - Whitespace replaced by hyphens
+/// - `:` and `/` replaced by hyphens (conflict with ID format separators)
+/// - Non-ASCII characters preserved
+/// - Prefix: `chain:provenance:`
+pub fn normalize_chain_name(name: &str) -> String {
+    let normalized: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            ' ' | '\t' | '\n' | '\r' => '-',
+            ':' | '/' => '-',
+            _ => c,
+        })
+        .collect();
+    format!("chain:provenance:{}", normalized)
 }
 
 #[cfg(test)]
@@ -670,5 +744,164 @@ mod tests {
         assert_eq!(adapter_ids.len(), 2);
         assert!(adapter_ids.contains("manual-fragment"));
         assert!(adapter_ids.contains("llm-fragment"));
+    }
+
+    // ================================================================
+    // Location-Specific Provenance (ADR-028 Scenario Group)
+    // ================================================================
+
+    // === Scenario: Content with location creates fragment, chain, and mark ===
+    #[tokio::test]
+    async fn content_with_location_creates_fragment_chain_and_mark() {
+        let adapter = ContentAdapter::new("content");
+        let (sink, ctx) = make_sink("content");
+
+        let input = AdapterInput::new(
+            "content",
+            FragmentInput::new(
+                "interesting pattern",
+                vec!["architecture".to_string()],
+            )
+            .with_chain_name("field-notes")
+            .with_location("src/lib.rs", 15),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+
+        // Fragment node created
+        let fragments: Vec<_> = ctx
+            .nodes
+            .values()
+            .filter(|n| n.node_type == "fragment")
+            .collect();
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(
+            fragments[0].properties.get("text"),
+            Some(&PropertyValue::String("interesting pattern".into()))
+        );
+
+        // Concept node for tag
+        assert!(ctx.get_node(&NodeId::from_string("concept:architecture")).is_some());
+
+        // Chain uses normalized chain name, not auto-generated
+        let chain = ctx.get_node(&NodeId::from_string("chain:provenance:field-notes"));
+        assert!(chain.is_some(), "chain should use normalized chain name");
+        let chain = chain.unwrap();
+        assert_eq!(chain.dimension, dimension::PROVENANCE);
+
+        // Mark has location-specific file and line
+        let marks: Vec<_> = ctx
+            .nodes
+            .values()
+            .filter(|n| n.node_type == "mark")
+            .collect();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(
+            marks[0].properties.get("file"),
+            Some(&PropertyValue::String("src/lib.rs".into()))
+        );
+        assert_eq!(
+            marks[0].properties.get("line"),
+            Some(&PropertyValue::Int(15))
+        );
+
+        // Contains edge connects chain to mark
+        let contains: Vec<_> = ctx
+            .edges
+            .iter()
+            .filter(|e| e.relationship == "contains")
+            .collect();
+        assert_eq!(contains.len(), 1);
+        assert_eq!(contains[0].source, NodeId::from_string("chain:provenance:field-notes"));
+    }
+
+    // === Scenario: Content without location creates source-level provenance ===
+    #[tokio::test]
+    async fn content_without_location_creates_source_level_provenance() {
+        let adapter = ContentAdapter::new("trellis");
+        let (sink, ctx) = make_sink("trellis");
+
+        let input = AdapterInput::new(
+            "content",
+            FragmentInput::new(
+                "The interplay of structure and meaning",
+                vec!["architecture".to_string(), "semantics".to_string()],
+            )
+            .with_source("trellis"),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+
+        // Chain uses auto-generated ID from adapter_id + source
+        let chain = ctx.get_node(&NodeId::from_string("chain:trellis:trellis"));
+        assert!(chain.is_some(), "chain should use auto-generated ID");
+
+        // Mark has source as file, line 1 (default)
+        let marks: Vec<_> = ctx
+            .nodes
+            .values()
+            .filter(|n| n.node_type == "mark")
+            .collect();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(
+            marks[0].properties.get("file"),
+            Some(&PropertyValue::String("trellis".into()))
+        );
+        assert_eq!(
+            marks[0].properties.get("line"),
+            Some(&PropertyValue::Int(1))
+        );
+    }
+
+    // === Scenario: Chain name normalization in ContentAdapter ===
+    #[tokio::test]
+    async fn chain_name_normalization_in_adapter() {
+        let adapter = ContentAdapter::new("content");
+        let (sink, ctx) = make_sink("content");
+
+        // First input with "Field Notes"
+        let input1 = AdapterInput::new(
+            "content",
+            FragmentInput::new("first", vec![])
+                .with_chain_name("Field Notes")
+                .with_location("f.rs", 1),
+            "test",
+        );
+        adapter.process(&input1, &sink).await.unwrap();
+
+        // Second input with "field notes" — same chain
+        let input2 = AdapterInput::new(
+            "content",
+            FragmentInput::new("second", vec![])
+                .with_chain_name("field notes")
+                .with_location("f.rs", 2),
+            "test",
+        );
+        adapter.process(&input2, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+
+        // Only one chain — both normalized to chain:provenance:field-notes
+        let chains: Vec<_> = ctx
+            .nodes
+            .values()
+            .filter(|n| n.node_type == "chain")
+            .collect();
+        assert_eq!(chains.len(), 1);
+        assert_eq!(chains[0].id, NodeId::from_string("chain:provenance:field-notes"));
+
+        // Two marks in that chain
+        let contains: Vec<_> = ctx
+            .edges
+            .iter()
+            .filter(|e| e.relationship == "contains")
+            .collect();
+        assert_eq!(contains.len(), 2);
     }
 }
