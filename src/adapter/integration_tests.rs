@@ -4672,4 +4672,133 @@ mod tests {
         assert!(ctx2.get_node(&NodeId::from("concept:persistence")).is_some(),
             "concept should survive persistence");
     }
+
+    // ================================================================
+    // Feature: Layered Provenance (ADR-028)
+    // ================================================================
+
+    // === Scenario: Location-specific provenance (Carrel annotation) ===
+    #[tokio::test]
+    async fn layered_provenance_location_specific() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::ProvenanceAdapter;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![Arc::new(TagConceptBridger::new())],
+        );
+
+        // Carrel-style annotation: text with file, line, and chain_name
+        let data = serde_json::json!({
+            "text": "pattern here",
+            "line": 42,
+            "file": "src/main.rs",
+            "chain_name": "review"
+        });
+        pipeline.ingest(ctx_id.as_str(), "content", Box::new(data)).await.unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // Fragment created (Invariant 7: content side)
+        let fragments: Vec<_> = ctx.nodes().filter(|n| n.node_type == "fragment").collect();
+        assert!(!fragments.is_empty(), "fragment should exist (Invariant 7)");
+
+        // Chain uses normalized name: chain:provenance:review
+        let chain_id = NodeId::from("chain:provenance:review");
+        let chain = ctx.get_node(&chain_id);
+        assert!(chain.is_some(), "chain:provenance:review should exist");
+
+        // Mark has file and line from caller
+        let marks: Vec<_> = ctx.nodes().filter(|n| n.node_type == "mark").collect();
+        assert!(!marks.is_empty(), "mark should exist (Invariant 7)");
+        use crate::graph::PropertyValue;
+        let mark = &marks[0];
+        assert_eq!(
+            mark.properties.get("file"),
+            Some(&PropertyValue::String("src/main.rs".into())),
+            "mark should have caller-provided file"
+        );
+        assert_eq!(
+            mark.properties.get("line"),
+            Some(&PropertyValue::Int(42)),
+            "mark should have caller-provided line"
+        );
+
+        // Contains edge: chain → mark
+        let contains: Vec<_> = ctx.edges()
+            .filter(|e| e.source == chain_id && e.relationship == "contains")
+            .collect();
+        assert!(!contains.is_empty(), "chain should contain the mark");
+    }
+
+    // === Scenario: Source-level provenance (Trellis text) ===
+    #[tokio::test]
+    async fn layered_provenance_source_level() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::provenance_adapter::ProvenanceAdapter;
+        use crate::adapter::tag_bridger::TagConceptBridger;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
+        pipeline.register_integration(
+            Arc::new(ProvenanceAdapter::new()),
+            vec![Arc::new(TagConceptBridger::new())],
+        );
+
+        // Trellis-style text: no file/line, just source
+        let data = serde_json::json!({
+            "text": "a thought about code",
+            "tags": ["reflection"],
+            "source": "trellis"
+        });
+        pipeline.ingest(ctx_id.as_str(), "content", Box::new(data)).await.unwrap();
+
+        let ctx = engine.get_context(&ctx_id).unwrap();
+
+        // Fragment created (Invariant 7: content side)
+        let fragments: Vec<_> = ctx.nodes().filter(|n| n.node_type == "fragment").collect();
+        assert!(!fragments.is_empty(), "fragment should exist (Invariant 7)");
+
+        // Source-level chain: auto-generated from adapter_id + source
+        let chain_id = NodeId::from_string("chain:content:trellis");
+        let chain = ctx.get_node(&chain_id);
+        assert!(chain.is_some(), "source-level chain should exist");
+
+        // Mark with source as file, line 1 (source-level granularity)
+        let marks: Vec<_> = ctx.nodes().filter(|n| n.node_type == "mark").collect();
+        assert!(!marks.is_empty(), "mark should exist (Invariant 7)");
+        use crate::graph::PropertyValue;
+        let mark = &marks[0];
+        assert_eq!(
+            mark.properties.get("file"),
+            Some(&PropertyValue::String("trellis".into())),
+            "source-level mark should use source as file"
+        );
+        assert_eq!(
+            mark.properties.get("line"),
+            Some(&PropertyValue::Int(1)),
+            "source-level mark should default to line 1"
+        );
+
+        // Contains edge: chain → mark
+        let contains: Vec<_> = ctx.edges()
+            .filter(|e| e.source == chain_id && e.relationship == "contains")
+            .collect();
+        assert!(!contains.is_empty(), "chain should contain the mark");
+
+        // Concept created via tag (TagConceptBridger)
+        assert!(ctx.get_node(&NodeId::from("concept:reflection")).is_some(),
+            "concept:reflection should be created from tag");
+    }
 }
