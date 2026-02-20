@@ -1,6 +1,6 @@
 # ADR-020: Declarative Adapter Specs and Two-Layer Extraction
 
-**Status:** Accepted
+**Status:** Accepted (naming superseded by [ADR-028](028-universal-mcp-ingest.md) — `DeclarativeAdapter` renamed to `SemanticAdapter`; architectural decisions remain valid)
 
 **Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
 
