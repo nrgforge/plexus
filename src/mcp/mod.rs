@@ -2,11 +2,10 @@
 //!
 //! Tools: 8 total (1 write + 6 context + 1 graph read).
 //!
-//! The single write path is `annotate`, which goes through the full ingest
-//! pipeline (FragmentAdapter + ProvenanceAdapter → enrichment loop), enforcing
-//! Invariant 7: all knowledge carries both semantic content and provenance.
-//! There are no tools for direct mark/chain/link manipulation — those are
-//! internal graph structures managed by the pipeline.
+//! The single write path is `ingest` (ADR-028), which routes to adapters by
+//! input_kind (explicit or auto-classified from JSON shape). All writes go
+//! through the full pipeline enforcing Invariant 7: all knowledge carries
+//! both semantic content and provenance.
 
 pub mod params;
 
@@ -14,7 +13,7 @@ use params::*;
 use crate::api::PlexusApi;
 use crate::adapter::{
     CoOccurrenceEnrichment, ContentAdapter, IngestPipeline,
-    ProvenanceAdapter, TagConceptBridger,
+    ProvenanceAdapter, TagConceptBridger, classify_input,
 };
 use crate::graph::Source;
 use crate::{OpenStore, PlexusEngine, SqliteStore};
@@ -100,32 +99,36 @@ impl PlexusMcpServer {
         ok_text(format!("active context set to '{}'", p.name))
     }
 
-    // ── Annotate (single write path — Invariant 7) ──────────────────────
+    // ── Ingest (single write path — ADR-028, Invariant 7) ────────────────
 
-    #[tool(description = "Add an annotated mark to a location in a file or artifact")]
-    async fn annotate(
+    #[tool(description = "Ingest data into the knowledge graph. Accepts JSON data and optional input_kind for routing. When input_kind is omitted, auto-detected from data shape: {\"text\": ...} → content, {\"file_path\": ...} → file extraction.")]
+    async fn ingest(
         &self,
-        Parameters(p): Parameters<AnnotateParams>,
+        Parameters(p): Parameters<IngestParams>,
     ) -> Result<CallToolResult, McpError> {
+        let context_id = self.context()?;
+
+        // Resolve input_kind: explicit or classified from JSON
+        let input_kind = match p.input_kind {
+            Some(ref kind) => kind.clone(),
+            None => classify_input(&p.data)
+                .map(|k| k.to_string())
+                .map_err(|e| McpError {
+                    code: rmcp::model::ErrorCode::INVALID_PARAMS,
+                    message: e.to_string().into(),
+                    data: None,
+                })?,
+        };
+
         match self
             .api
-            .annotate(
-                &self.context()?,
-                &p.chain_name,
-                &p.file,
-                p.line,
-                &p.annotation,
-                p.column,
-                p.r#type.as_deref(),
-                p.tags,
-            )
+            .ingest(&context_id, &input_kind, Box::new(p.data))
             .await
         {
-            Ok(_events) => ok_text(
+            Ok(events) => ok_text(
                 serde_json::to_string_pretty(&serde_json::json!({
-                    "chain": p.chain_name,
-                    "file": p.file,
-                    "line": p.line,
+                    "input_kind": input_kind,
+                    "events": events.len(),
                 }))
                 .unwrap(),
             ),

@@ -3,24 +3,14 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-// ── Annotate params ────────────────────────────────────────────────────
+// ── Ingest params (ADR-028) ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AnnotateParams {
-    #[schemars(description = "Name of the chain (auto-created if it doesn't exist)")]
-    pub chain_name: String,
-    #[schemars(description = "Path to the file or artifact")]
-    pub file: String,
-    #[schemars(description = "Line number (1-indexed)")]
-    pub line: u32,
-    #[schemars(description = "Description of why this location is significant")]
-    pub annotation: String,
-    #[schemars(description = "Column number (optional)")]
-    pub column: Option<u32>,
-    #[schemars(description = "Freeform type label (user-defined ontology)")]
-    pub r#type: Option<String>,
-    #[schemars(description = "Tags for categorization")]
-    pub tags: Option<Vec<String>>,
+pub struct IngestParams {
+    #[schemars(description = "Input data as a JSON object. For content: {\"text\": \"...\", \"tags\": [...], \"source\": \"...\"}. For file extraction: {\"file_path\": \"...\"}. For annotations: include \"chain_name\", \"file\", \"line\".")]
+    pub data: serde_json::Value,
+    #[schemars(description = "Optional input kind for direct routing (e.g. \"content\", \"extract-file\"). When omitted, auto-detected from data shape.")]
+    pub input_kind: Option<String>,
 }
 
 // ── Session params ─────────────────────────────────────────────────────
