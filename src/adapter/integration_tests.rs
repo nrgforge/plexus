@@ -4801,4 +4801,136 @@ mod tests {
         assert!(ctx.get_node(&NodeId::from("concept:reflection")).is_some(),
             "concept:reflection should be created from tag");
     }
+
+    // ================================================================
+    // Feature: SemanticAdapter Spec Registration (ADR-028)
+    // ================================================================
+
+    // === Scenario: Registered spec declares input_kind and ensemble ===
+    #[tokio::test]
+    async fn registered_spec_routes_by_declared_input_kind() {
+        use crate::adapter::declarative::DeclarativeAdapter;
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::llm_orc::{AgentResult, InvokeResponse, MockClient};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
+
+        // Mock llm-orc client that returns a concept from the ensemble
+        let mut results = std::collections::HashMap::new();
+        results.insert(
+            "synthesizer".to_string(),
+            AgentResult {
+                response: Some(r#"{"concepts": [{"label": "widget"}]}"#.to_string()),
+                status: Some("success".to_string()),
+                error: None,
+            },
+        );
+        let client = Arc::new(
+            MockClient::available().with_response(
+                "sketchbin-extraction",
+                InvokeResponse {
+                    results,
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        );
+
+        // YAML spec: declares input_kind and ensemble
+        let yaml = r#"
+adapter_id: sketchbin-asset-adapter
+input_kind: sketchbin-asset
+ensemble: sketchbin-extraction
+emit:
+  - for_each:
+      collection: ensemble.concepts
+      variable: item
+      emit:
+        - create_node:
+            id: "concept:{input.item.label | lowercase}"
+            type: concept
+            dimension: semantic
+"#;
+
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap()
+            .with_llm_client(client);
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(adapter));
+
+        // Verify input_kind is registered
+        assert!(
+            pipeline.registered_input_kinds().contains(&"sketchbin-asset"),
+            "spec's input_kind should be registered in pipeline"
+        );
+
+        // Ingest data routed by the spec's input_kind
+        let data = serde_json::json!({"name": "TestAsset"});
+        pipeline.ingest(ctx_id.as_str(), "sketchbin-asset", Box::new(data)).await.unwrap();
+
+        // Ensemble was invoked, for_each over ensemble.concepts created concept:widget
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        assert!(
+            ctx.get_node(&NodeId::from_string("concept:widget")).is_some(),
+            "ensemble response should be mapped to graph nodes via spec"
+        );
+    }
+
+    // === Scenario: Spec validated at registration time ===
+    #[test]
+    fn spec_validated_at_registration_time() {
+        use crate::adapter::declarative::DeclarativeAdapter;
+
+        // This spec violates dual obligation: provenance without semantic node
+        let bad_yaml = r#"
+adapter_id: bad-spec
+input_kind: bad-input
+emit:
+  - create_provenance:
+      chain_id: "chain:{adapter_id}"
+      mark_annotation: "note"
+"#;
+        let result = DeclarativeAdapter::from_yaml(bad_yaml);
+        assert!(result.is_err(), "spec should be validated (dual obligation) at registration time");
+    }
+
+    // === Scenario: Specs loaded from directory ===
+    #[tokio::test]
+    async fn specs_loaded_from_directory() {
+        use crate::adapter::ingest::IngestPipeline;
+        use crate::llm_orc::MockClient;
+
+        let engine = Arc::new(PlexusEngine::new());
+
+        // Write a valid spec to a temp directory
+        let tmp_dir = std::env::temp_dir().join("plexus_spec_test");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let spec_file = tmp_dir.join("test-domain.yaml");
+        std::fs::write(&spec_file, r#"
+adapter_id: test-domain-adapter
+input_kind: test-domain
+emit:
+  - create_node:
+      id: "concept:{input.tag | lowercase}"
+      type: concept
+      dimension: semantic
+"#).unwrap();
+
+        let client: Arc<dyn crate::llm_orc::LlmOrcClient> =
+            Arc::new(MockClient::available());
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        let count = pipeline.register_specs_from_dir(&tmp_dir, Some(client));
+
+        assert_eq!(count, 1, "should load 1 spec from directory");
+        assert!(
+            pipeline.registered_input_kinds().contains(&"test-domain"),
+            "loaded spec's input_kind should be in pipeline"
+        );
+
+        // Cleanup
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
 }

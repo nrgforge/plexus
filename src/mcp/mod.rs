@@ -17,6 +17,7 @@ use crate::adapter::{
     ProvenanceAdapter, TagConceptBridger, TemporalProximityEnrichment,
     classify_input,
 };
+use crate::llm_orc::SubprocessClient;
 #[cfg(feature = "embeddings")]
 use crate::adapter::{EmbeddingSimilarityEnrichment, FastEmbedEmbedder};
 use crate::graph::Source;
@@ -55,6 +56,13 @@ pub struct PlexusMcpServer {
 #[tool_router]
 impl PlexusMcpServer {
     pub fn new(engine: Arc<PlexusEngine>) -> Self {
+        Self::with_project_dir(engine, None)
+    }
+
+    pub fn with_project_dir(
+        engine: Arc<PlexusEngine>,
+        project_dir: Option<&std::path::Path>,
+    ) -> Self {
         let mut pipeline = IngestPipeline::new(engine.clone());
 
         // Core adapters (ADR-028)
@@ -86,6 +94,21 @@ impl PlexusMcpServer {
             Arc::new(ProvenanceAdapter::new()),
             enrichments,
         );
+
+        // Load adapter specs from adapter-specs/ directory (ADR-028)
+        if let Some(dir) = project_dir {
+            let specs_dir = dir.join("adapter-specs");
+            if specs_dir.is_dir() {
+                let client: Arc<dyn crate::llm_orc::LlmOrcClient> = Arc::new(
+                    SubprocessClient::new()
+                        .with_project_dir(dir.to_string_lossy().to_string()),
+                );
+                let n = pipeline.register_specs_from_dir(&specs_dir, Some(client));
+                if n > 0 {
+                    eprintln!("adapter-specs: loaded {} spec(s)", n);
+                }
+            }
+        }
 
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
@@ -310,7 +333,11 @@ pub fn run_mcp_server(db_path: PathBuf) -> i32 {
             eng
         };
 
-        let server = PlexusMcpServer::new(Arc::new(engine));
+        let project_dir = db_path.parent().unwrap_or(std::path::Path::new("."));
+        let server = PlexusMcpServer::with_project_dir(
+            Arc::new(engine),
+            Some(project_dir),
+        );
 
         eprintln!("plexus mcp server starting on stdio...");
 

@@ -17,6 +17,7 @@ use super::sink::AdapterError;
 use super::traits::{Adapter, AdapterInput};
 use super::types::OutboundEvent;
 use crate::graph::{ContextId, PlexusEngine};
+use std::path::Path;
 use std::sync::Arc;
 
 /// The unified ingest pipeline.
@@ -68,6 +69,73 @@ impl IngestPipeline {
     /// Get the enrichment registry (for running enrichment loop outside ingest).
     pub fn enrichment_registry(&self) -> &Arc<EnrichmentRegistry> {
         &self.enrichments
+    }
+
+    /// List the input kinds handled by registered adapters.
+    pub fn registered_input_kinds(&self) -> Vec<&str> {
+        self.adapters.iter().map(|a| a.input_kind()).collect()
+    }
+
+    /// Load adapter specs from a directory and register each (ADR-028).
+    ///
+    /// Scans `dir` for `*.yaml` files, parses each as a `DeclarativeSpec`,
+    /// validates it, optionally attaches the llm-orc client, and registers
+    /// the resulting adapter. Returns the count of successfully loaded specs.
+    /// Invalid specs are logged to stderr and skipped.
+    pub fn register_specs_from_dir(
+        &mut self,
+        dir: &Path,
+        llm_client: Option<Arc<dyn crate::llm_orc::LlmOrcClient>>,
+    ) -> usize {
+        use super::declarative::DeclarativeAdapter;
+
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("adapter-specs: cannot read {}: {}", dir.display(), e);
+                return 0;
+            }
+        };
+
+        let mut count = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+
+            let yaml = match std::fs::read_to_string(&path) {
+                Ok(y) => y,
+                Err(e) => {
+                    eprintln!("adapter-specs: cannot read {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+
+            let adapter = match DeclarativeAdapter::from_yaml(&yaml) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("adapter-specs: invalid spec {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+
+            let adapter = if let Some(ref client) = llm_client {
+                adapter.with_llm_client(client.clone())
+            } else {
+                adapter
+            };
+
+            eprintln!(
+                "adapter-specs: registered {} (input_kind={})",
+                path.display(),
+                adapter.input_kind()
+            );
+            self.register_adapter(Arc::new(adapter));
+            count += 1;
+        }
+
+        count
     }
 
     /// The single write endpoint (ADR-012).
