@@ -85,6 +85,36 @@ impl FragmentInput {
         self.chain_name = Some(name.into());
         self
     }
+
+    /// Parse from a JSON value (ADR-028 JSON wire format).
+    ///
+    /// Required: `text` (string)
+    /// Optional: `tags` (array of strings), `source` (string), `date` (string),
+    ///           `chain_name` (string), `file` (string), `line` (u32), `column` (u32)
+    pub fn from_json(json: &serde_json::Value) -> Result<Self, AdapterError> {
+        let text = json.get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AdapterError::Internal("content input requires 'text' field".into()))?
+            .to_string();
+
+        let tags = json.get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let source = json.get("source").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let date = json.get("date").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let chain_name = json.get("chain_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let file = json.get("file").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let line = json.get("line").and_then(|v| v.as_u64()).map(|n| n as u32);
+        let column = json.get("column").and_then(|v| v.as_u64()).map(|n| n as u32);
+
+        Ok(Self { text, tags, source, date, chain_name, file, line, column })
+    }
 }
 
 /// Direct content ingestion adapter (ADR-028).
@@ -119,9 +149,16 @@ impl Adapter for ContentAdapter {
         input: &AdapterInput,
         sink: &dyn AdapterSink,
     ) -> Result<(), AdapterError> {
-        let fragment = input
-            .downcast_data::<FragmentInput>()
-            .ok_or(AdapterError::InvalidInput)?;
+        // Accept both typed FragmentInput and raw JSON (ADR-028 JSON wire format)
+        let owned_fragment: FragmentInput;
+        let fragment: &FragmentInput = if let Some(f) = input.downcast_data::<FragmentInput>() {
+            f
+        } else if let Some(json) = input.downcast_data::<serde_json::Value>() {
+            owned_fragment = FragmentInput::from_json(json)?;
+            &owned_fragment
+        } else {
+            return Err(AdapterError::InvalidInput);
+        };
 
         // Build the fragment node (Document, structure dimension)
         // Deterministic ID: content-hash of adapter_id + text + sorted tags.
@@ -903,5 +940,99 @@ mod tests {
             .filter(|e| e.relationship == "contains")
             .collect();
         assert_eq!(contains.len(), 2);
+    }
+
+    // ================================================================
+    // JSON Wire Format (ADR-028 Scenario Group)
+    // ================================================================
+
+    // === Scenario: ContentAdapter accepts JSON input ===
+    #[tokio::test]
+    async fn content_adapter_accepts_json_input() {
+        let adapter = ContentAdapter::new("content");
+        let (sink, ctx) = make_sink("content");
+
+        let json = serde_json::json!({
+            "text": "hello",
+            "tags": ["a", "b"],
+            "source": "trellis"
+        });
+
+        let input = AdapterInput::new("content", json, "test");
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+
+        // Fragment created
+        let fragments: Vec<_> = ctx
+            .nodes
+            .values()
+            .filter(|n| n.node_type == "fragment")
+            .collect();
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(
+            fragments[0].properties.get("text"),
+            Some(&PropertyValue::String("hello".into()))
+        );
+
+        // Concepts from tags
+        assert!(ctx.get_node(&NodeId::from_string("concept:a")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("concept:b")).is_some());
+
+        // Provenance: chain + mark + contains
+        let chains: Vec<_> = ctx.nodes.values().filter(|n| n.node_type == "chain").collect();
+        assert_eq!(chains.len(), 1);
+        let marks: Vec<_> = ctx.nodes.values().filter(|n| n.node_type == "mark").collect();
+        assert_eq!(marks.len(), 1);
+        let contains: Vec<_> = ctx.edges.iter().filter(|e| e.relationship == "contains").collect();
+        assert_eq!(contains.len(), 1);
+    }
+
+    // === Scenario: JSON input with location fields ===
+    #[tokio::test]
+    async fn json_input_with_location_fields() {
+        let adapter = ContentAdapter::new("content");
+        let (sink, ctx) = make_sink("content");
+
+        let json = serde_json::json!({
+            "text": "pattern here",
+            "line": 42,
+            "file": "src/main.rs",
+            "chain_name": "review",
+            "tags": ["refactor"]
+        });
+
+        let input = AdapterInput::new("content", json, "test");
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+
+        // Chain uses normalized chain name
+        let chain = ctx.get_node(&NodeId::from_string("chain:provenance:review"));
+        assert!(chain.is_some());
+
+        // Mark has location
+        let marks: Vec<_> = ctx.nodes.values().filter(|n| n.node_type == "mark").collect();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].properties.get("file"), Some(&PropertyValue::String("src/main.rs".into())));
+        assert_eq!(marks[0].properties.get("line"), Some(&PropertyValue::Int(42)));
+    }
+
+    // === Scenario: JSON input missing required text field returns error ===
+    #[tokio::test]
+    async fn json_input_missing_text_returns_error() {
+        let adapter = ContentAdapter::new("content");
+        let (sink, _ctx) = make_sink("content");
+
+        let json = serde_json::json!({
+            "tags": ["a"],
+            "source": "trellis"
+        });
+
+        let input = AdapterInput::new("content", json, "test");
+        let result = adapter.process(&input, &sink).await;
+        assert!(result.is_err());
     }
 }
