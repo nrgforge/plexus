@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-24
 **Phase:** RDD Research (precedes model, decide, build)
-**Goal:** Determine the right extraction decomposition and ensemble topology for Plexus's general-purpose text/document semantic adapter.
+**Goal:** Determine the right extraction decomposition and ensemble topology for Plexus's general-purpose text/document semantic adapter. This unblocks Trellis and Carrel — the applications that produce content for the graph.
 
 ## Context
 
@@ -82,6 +82,14 @@ Adopt the conductor's `config.yaml` profile set as plexus's `.llm-orc/` foundati
 - Enrichment interactions (TagConceptBridger, CoOccurrence, etc.)
 - Reflexive adapter patterns
 - Schedule monitor / background triggering
+
+## Strategic Context
+
+This research spike is the last open question before Plexus shifts from infrastructure to product. The extraction ensemble unblocks:
+- **Trellis** — note-taking app whose content flows through the graph
+- **Carrel** — annotation/research tool that produces structured knowledge
+
+Once extraction works reliably, the RDD cycle for core infrastructure is largely complete. Future work becomes product iteration: writing adapter specs, tuning ensembles, measuring quality. The system can also eventually ingest its own documentation (ADRs, essays) to bootstrap a self-model, but that's a side effect of general extraction capability, not a separate goal.
 
 ## What Follows
 
