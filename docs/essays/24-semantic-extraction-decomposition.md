@@ -26,6 +26,40 @@ An initial run on llm-orc 0.15.8 produced results that appeared reasonable but w
 
 A second optimization pass applied evidence-based parameter tuning: Qwen3's vendor-recommended temperature of 0.6 (we had used 0.2), Mistral's vendor-recommended 0.15, and critically, expanding Ollama's context window from the default 2048 tokens to 8192. The essays are 2500-3800 tokens. At 2048, the models were reading truncated text.
 
+### Materials
+
+All experiment materials are preserved in the repository for reproducibility.
+
+**Source texts:**
+- `docs/essays/02-opacity-problem.md` — Essay 02, *The Opacity Problem* (117 lines, conceptual/philosophical)
+- `docs/essays/12-provenance-as-epistemological-infrastructure.md` — Essay 12, *Provenance as Epistemological Infrastructure* (104 lines, domain theory)
+
+**Gold standard:** `docs/research/gold-standards/24-semantic-extraction-decomposition.md` — Claude-produced reference extractions (13 entities, 10 relationships, 5 themes for Essay 02; 13 entities, 8 relationships, 5 themes for Essay 12). Corrected during research: "zone of proximal development" removed from Essay 02 (appears in Essay 04, not Essay 02).
+
+**Ensembles (llm-orc 0.15.10):**
+
+| Ensemble | Question | Description |
+|---|---|---|
+| `spike-entities` | Q1 | Qwen3:8b entity extraction, single agent |
+| `spike-entities-mistral` | Q1 | Mistral:7b entity extraction, single agent |
+| `spike-themes` | Q1 | Qwen3:8b theme extraction, single agent |
+| `spike-relationships` | Q1 | Qwen3:8b relationship extraction, single agent |
+| `spike-sequential` | Q2 | Entities + themes parallel → relationships with entity context |
+| `spike-synthesized` | Q2 | Specialists → Qwen3:14b synthesizer |
+| `spike-primed` | Q3 | TextRank script → Qwen3:8b entity extraction with vocabulary hints |
+
+**Model profiles:**
+
+| Profile | Model | Temperature | Context window | Notes |
+|---|---|---|---|---|
+| `analyst-qwen` | qwen3:8b | 0.6 | 8192 | `/no_think` in system prompt, top_k=20, top_p=0.8 |
+| `analyst-mistral` | mistral:7b | 0.15 | 8192 | Anti-hallucination system prompt |
+| `synthesizer-local` | qwen3:14b | 0.3 | 8192 | `/no_think` in system prompt |
+
+**Scripts:** `textrank-extract.py` — TextRank/TF-IDF key phrase extraction (CPU, <1s). Known bug: llm-orc's JSON serialization corrupts newlines in input, producing ghost tokens.
+
+Ensemble files are in `.llm-orc/ensembles/research/24-semantic-extraction-decomposition/`. Profile files are in `.llm-orc/profiles/`.
+
 ## Results
 
 ### Isolated subtasks (Q1)
