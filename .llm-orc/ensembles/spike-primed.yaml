@@ -1,0 +1,40 @@
+name: spike-primed
+description: "Spike Q3: TextRank vocabulary priming before SLM entity extraction. Tests whether classical ML pre-extraction improves SLM recall."
+
+agents:
+  - name: textrank-extractor
+    script: scripts/extraction/textrank-extract.py
+
+  - name: entity-extractor-primed
+    model_profile: analyst-qwen
+    timeout_seconds: 120
+    depends_on: [textrank-extractor]
+    system_prompt: |
+      You are given a text and a list of CANDIDATE TERMS identified by statistical analysis.
+      Your job is to extract the key entities and concepts from the text.
+
+      The candidate terms are a starting point — they capture statistically significant
+      phrases but may include noise and miss abstract concepts. Use them as vocabulary
+      hints, not as your complete answer.
+
+      For each concept you identify, provide:
+      - label: normalized name (lowercase, 1-3 words)
+      - type: one of [technology, pattern, theory, system, role, domain_term, principle]
+
+      Return ONLY valid JSON:
+      {
+        "concepts": [
+          {"label": "concept name", "type": "theory"}
+        ]
+      }
+
+      Guidelines:
+      - Extract 8-15 concepts
+      - USE the candidate terms as vocabulary — if a candidate term is a real concept, include it
+      - ADD concepts the statistical analysis missed (abstract ideas, proper names, domain neologisms)
+      - REMOVE candidate terms that are generic or not meaningful concepts
+      - Focus on domain-specific, meaningful concepts
+      - Exclude generic terms (data, information, system, process)
+      - Normalize to lowercase
+      - Return ONLY JSON
+    output_format: json

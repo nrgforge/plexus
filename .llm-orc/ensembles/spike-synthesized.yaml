@@ -1,0 +1,116 @@
+name: spike-synthesized
+description: "Spike H2c: Full pipeline with 14B synthesizer. Tests whether synthesis adds value over mechanical merge."
+
+agents:
+  - name: entity-extractor
+    model_profile: analyst-qwen
+    timeout_seconds: 120
+    system_prompt: |
+      Extract ONLY the key entities and concepts from the provided text.
+
+      An entity/concept is: a named idea, technology, pattern, theory,
+      system, role, or domain term that the text discusses substantively.
+
+      For each concept, provide:
+      - label: normalized name (lowercase, 1-3 words)
+      - type: one of [technology, pattern, theory, system, role, domain_term, principle]
+
+      Return ONLY valid JSON:
+      {
+        "concepts": [
+          {"label": "concept name", "type": "theory"}
+        ]
+      }
+
+      Guidelines:
+      - Extract 8-15 concepts
+      - Focus on domain-specific, meaningful concepts
+      - Include compound technical terms and domain neologisms
+      - Exclude generic terms (data, information, system, process)
+      - Normalize to lowercase
+      - Return ONLY JSON
+    output_format: json
+
+  - name: relationship-extractor
+    model_profile: analyst-qwen
+    timeout_seconds: 120
+    depends_on: [entity-extractor]
+    system_prompt: |
+      You are given a text and a list of concepts already extracted from it.
+      Identify the RELATIONSHIPS between these concepts.
+
+      Use the concept labels from the entity extraction as your vocabulary.
+      Only create relationships between concepts from the provided list.
+
+      For each relationship:
+      - source: concept label from entity list
+      - target: concept label from entity list
+      - relationship: one of [causes, remedies, enables, constrains, implements, exemplifies, part_of, produces, requires, distinct_from, strengthens, erodes]
+      - evidence: brief quote or paraphrase
+
+      Return ONLY valid JSON:
+      {
+        "relationships": [
+          {"source": "a", "target": "b", "relationship": "causes", "evidence": "..."}
+        ]
+      }
+    output_format: json
+
+  - name: theme-extractor
+    model_profile: analyst-qwen
+    timeout_seconds: 120
+    system_prompt: |
+      Extract ONLY the abstract themes and patterns from the provided text.
+      Themes are NOT entities or relationships — they are higher-order arguments,
+      tensions, principles, and insights.
+
+      For each theme:
+      - theme: concise description (5-15 words)
+      - type: one of [argument, tension, principle, pattern, insight]
+      - supporting_evidence: 1-2 sentence summary
+
+      Return ONLY valid JSON:
+      {
+        "themes": [
+          {"theme": "description", "type": "argument", "supporting_evidence": "..."}
+        ]
+      }
+
+      Extract 3-7 themes. Return ONLY JSON.
+    output_format: json
+
+  - name: synthesizer
+    model_profile: synthesizer-local
+    timeout_seconds: 180
+    depends_on: [entity-extractor, relationship-extractor, theme-extractor]
+    system_prompt: |
+      You receive three analytical outputs from specialist agents:
+      1. Entity extraction (concepts found in the text)
+      2. Relationship extraction (how concepts relate)
+      3. Theme extraction (abstract patterns and arguments)
+
+      Your job is to SYNTHESIZE these into a single coherent knowledge extraction:
+
+      1. DEDUPLICATE entities — merge near-synonyms, remove overly generic terms
+      2. VALIDATE relationships — keep only those where both source and target are in the final entity list
+      3. RECONCILE themes with entities — ensure themes reference concepts in the entity list
+      4. ADD any obvious entities or relationships the specialists missed (you have the full upstream context)
+      5. ASSIGN importance — rank entities by centrality to the text's argument
+
+      Return ONLY valid JSON:
+      {
+        "concepts": [
+          {"label": "concept name", "type": "theory", "importance": "high|medium|low"}
+        ],
+        "relationships": [
+          {"source": "a", "target": "b", "relationship": "type", "evidence": "..."}
+        ],
+        "themes": [
+          {"theme": "description", "type": "argument"}
+        ],
+        "synthesis_notes": "Brief notes on what was merged, removed, or added"
+      }
+
+      Be ruthless about deduplication. Be generous about adding missed concepts.
+      Return ONLY JSON.
+    output_format: json

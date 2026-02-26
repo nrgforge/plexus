@@ -1,0 +1,110 @@
+name: spike-sequential
+description: "Spike H2a: Entities first, then relationships with entity context. Tests whether sequential improves relationship quality."
+
+agents:
+  - name: entity-extractor
+    model_profile: analyst-qwen
+    timeout_seconds: 120
+    system_prompt: |
+      Extract ONLY the key entities and concepts from the provided text.
+      Do NOT identify relationships or themes — just the things.
+
+      An entity/concept is: a named idea, technology, pattern, theory,
+      system, role, or domain term that the text discusses substantively.
+
+      For each concept, provide:
+      - label: normalized name (lowercase, 1-3 words)
+      - type: one of [technology, pattern, theory, system, role, domain_term, principle]
+      - confidence: 0.0-1.0 based on how central this concept is to the text
+
+      Return ONLY valid JSON:
+      {
+        "concepts": [
+          {"label": "concept name", "type": "theory", "confidence": 0.9}
+        ]
+      }
+
+      Guidelines:
+      - Extract 8-15 concepts depending on text length
+      - Focus on domain-specific, meaningful concepts
+      - Exclude generic terms (data, information, system, process)
+      - Normalize to lowercase
+      - Return ONLY JSON, no explanation
+    output_format: json
+
+  - name: relationship-extractor
+    model_profile: analyst-qwen
+    timeout_seconds: 120
+    depends_on: [entity-extractor]
+    system_prompt: |
+      You are given a text and a list of concepts already extracted from it.
+      Your job is to identify the RELATIONSHIPS between these concepts.
+
+      Use the concept labels from the entity extraction as your vocabulary.
+      Only create relationships between concepts that appear in the provided list.
+
+      For each relationship, provide:
+      - source: concept label (from the entity list)
+      - target: concept label (from the entity list)
+      - relationship: one of [causes, remedies, enables, constrains, implements, exemplifies, part_of, produces, requires, distinct_from, strengthens, erodes]
+      - evidence: brief quote or paraphrase supporting this relationship
+      - confidence: 0.0-1.0
+
+      Return ONLY valid JSON:
+      {
+        "relationships": [
+          {
+            "source": "concept a",
+            "target": "concept b",
+            "relationship": "causes",
+            "evidence": "brief supporting text",
+            "confidence": 0.8
+          }
+        ]
+      }
+
+      Guidelines:
+      - Extract 5-12 relationships
+      - ONLY use concepts from the provided entity list as source/target
+      - Only include relationships with clear textual evidence
+      - Prefer specific relationship types over generic ones
+      - Return ONLY JSON, no explanation
+    output_format: json
+
+  - name: theme-extractor
+    model_profile: analyst-qwen
+    timeout_seconds: 120
+    system_prompt: |
+      Extract ONLY the abstract themes and patterns from the provided text.
+      Do NOT list specific entities or relationships — identify the higher-order
+      ideas, arguments, tensions, and principles.
+
+      A theme is: an abstract argument, recurring pattern, design principle,
+      tension, or insight that emerges from the text. Themes are not things
+      (those are entities) or connections (those are relationships) — they
+      are the ideas that organize entities and relationships.
+
+      For each theme, provide:
+      - theme: concise description (5-15 words)
+      - type: one of [argument, tension, principle, pattern, insight]
+      - importance: 0.0-1.0 based on how central this theme is
+      - supporting_evidence: 1-2 sentence summary of textual support
+
+      Return ONLY valid JSON:
+      {
+        "themes": [
+          {
+            "theme": "description of the theme",
+            "type": "argument",
+            "importance": 0.9,
+            "supporting_evidence": "The text argues that..."
+          }
+        ]
+      }
+
+      Guidelines:
+      - Extract 3-7 themes
+      - Themes should be at a higher abstraction level than entity labels
+      - Look for tensions, arguments, principles
+      - Return ONLY JSON, no explanation
+    output_format: json

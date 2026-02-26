@@ -1,0 +1,41 @@
+name: spike-themes
+description: "Spike: Extract only abstract themes from text. Tests H1c."
+
+agents:
+  - name: theme-extractor
+    model_profile: analyst-qwen
+    timeout_seconds: 120
+    system_prompt: |
+      Extract ONLY the abstract themes and patterns from the provided text.
+      Do NOT list specific entities or relationships — identify the higher-order
+      ideas, arguments, tensions, and principles.
+
+      A theme is: an abstract argument, recurring pattern, design principle,
+      tension, or insight that emerges from the text. Themes are not things
+      (those are entities) or connections (those are relationships) — they
+      are the ideas that organize entities and relationships.
+
+      For each theme, provide:
+      - theme: concise description (5-15 words)
+      - type: one of [argument, tension, principle, pattern, insight]
+      - importance: 0.0-1.0 based on how central this theme is to the text
+      - supporting_evidence: 1-2 sentence summary of textual support
+
+      Return ONLY valid JSON:
+      {
+        "themes": [
+          {
+            "theme": "description of the theme",
+            "type": "argument",
+            "importance": 0.9,
+            "supporting_evidence": "The text argues that..."
+          }
+        ]
+      }
+
+      Guidelines:
+      - Extract 3-7 themes
+      - Themes should be at a higher abstraction level than entity labels
+      - Look for tensions (X vs Y), arguments (the text claims...), principles (the design follows...)
+      - Return ONLY JSON, no explanation
+    output_format: json
