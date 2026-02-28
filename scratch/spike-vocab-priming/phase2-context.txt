@@ -1,0 +1,243 @@
+RELATIONSHIPS DETECTED BY SYNTACTIC ANALYSIS:
+- adapter produces provenance
+- edge related_to contribution
+- fragment produces provenance mark
+- provenance mark produce tag
+- pipeline add provenance
+- concept node have provenance trail
+- adapter produce provenance trail
+- adapter produce edge
+- pipeline wrap provenance
+- adapter produce provenance
+- adapter know tag
+- ingest upsert chain
+- fragment get mark
+- fragment get chain
+- enrichment create references
+- enrichment create concept node
+- graph consider fragment
+- graph produce hebbian contribution
+- provenance dimension contain edge
+- provenance dimension contain tagconceptbridger
+- references contain chain
+- chain tell adapter
+- tagged_with carry contribution
+- concept have contribution
+- fragment produce provenance mark
+- edge grow provenance
+- references grow provenance
+- graph grow enrichment
+- fragmentadapter register pipeline
+- adapter extract edge
+- tag create edge
+
+ENTITY PAIRS CO-OCCURRING IN SAME SENTENCE (209 pairs):
+- chain node <-> tagconceptbridger
+- concept <-> fragment
+- contribution <-> tagged_with
+- multi-phase processing <-> provenance
+- concept node <-> structure dimension
+- concept node <-> provenance
+- ingest <-> pipeline
+- contribution <-> edge
+- fragmentadapter <-> pipeline
+- concept node <-> hebbian contribution
+- concept node <-> mark node
+- fragment <-> provenance
+- chain node <-> concept node
+- dimension <-> references
+- chain node <-> semantic dimension
+- concept node <-> provenance mark
+- chain node <-> deterministic id
+- chain node <-> references
+- chain <-> tag
+- deterministic id <-> edge
+- adapter <-> multi-phase processing
+- dimension <-> node
+- adapter <-> ingest
+- fragment <-> tag
+- deterministic id <-> provenance dimension
+- references <-> tagged_with
+- edge <-> ingest
+- graph <-> ingest
+- adapter <-> node
+- concept node <-> provenance trail
+- provenance mark <-> tag
+- mark node <-> tagged_with
+- concept <-> contribution
+- fragment <-> provenance trail
+- deterministic id <-> mark node
+- adapter <-> tagged_with
+- concept node <-> tagconceptbridger
+- graph <-> node
+- edge <-> fragment node
+- mark <-> provenance
+- cross-dimensional <-> fragment node
+- concept node <-> fragmentadapter
+- concept <-> provenance mark
+- chain node <-> provenance dimension
+- fragment <-> tagconceptbridger
+- provenance dimension <-> tag
+- adapter <-> edge
+- mark node <-> provenance dimension
+- edge <-> tagged_with
+- concept <-> mark
+- cross-dimensional <-> tagged_with
+- enginesink <-> provenance
+- hebbian contribution <-> tagconceptbridger
+- references <-> structure dimension
+- graph <-> tagged_with
+- dimension <-> graph
+- adapter <-> provenance dimension
+- chain node <-> graph
+- fragment <-> multi-phase processing
+- concept node <-> semantic dimension
+- concept node <-> references
+- node <-> pipeline
+- cross-dimensional <-> edge
+- adapter <-> pipeline
+- chain <-> references
+- provenance mark <-> provenanceadapter
+- provenance mark <-> tagconceptbridger
+- fragment node <-> tagged_with
+- fragment <-> references
+- edge <-> provenance dimension
+- graph <-> provenance dimension
+- adapter <-> graph
+- ingest <-> provenance
+- hebbian contribution <-> semantic dimension
+- fragmentadapter <-> structure dimension
+- hebbian contribution <-> references
+- edge <-> pipeline
+- semantic dimension <-> tagconceptbridger
+- graph <-> pipeline
+- enrichment <-> graph
+- fragmentadapter <-> hebbian contribution
+- chain node <-> fragment node
+- provenance dimension <-> tagconceptbridger
+- edge <-> graph
+- ingest <-> tag
+- fragment node <-> provenance dimension
+- edge <-> epistemology
+- chain node <-> tagged_with
+- edge <-> enrichment
+- adapter <-> fragment
+- dimension <-> edge
+- structure dimension <-> tagconceptbridger
+- fragment node <-> graph
+- chain node <-> edge
+- provenance dimension <-> semantic dimension
+- provenance dimension <-> references
+- edge <-> mark
+- edge <-> fragment
+- mark <-> references
+- epistemology <-> graph
+- cross-dimensional <-> fragment
+- deterministic id <-> tag
+- hebbian contribution <-> provenance dimension
+- mark <-> tag
+- chain <-> ingest
+- adapter <-> chain node
+- fragment <-> graph
+- chain node <-> structure dimension
+- fragment <-> ingest
+- mark node <-> structure dimension
+- chain node <-> mark node
+- dimension <-> enrichment
+- concept node <-> fragment node
+- adapter <-> provenance
+- chain <-> fragment
+- fragmentadapter <-> semantic dimension
+- adapter <-> contribution
+- enrichment <-> provenance
+- adapter <-> mark node
+- ingest <-> node
+- concept node <-> tagged_with
+- edge <-> plexus
+- edge <-> structure dimension
+- edge <-> provenance
+- adapter <-> provenance mark
+- graph <-> plexus
+- cross-dimensional <-> structure dimension
+- graph <-> structure dimension
+- fragmentadapter <-> tag
+- fragment <-> tagged_with
+- edge <-> hebbian contribution
+- edge <-> mark node
+- cross-dimensional <-> hebbian contribution
+- concept node <-> edge
+- graph <-> hebbian contribution
+- graph <-> mark node
+- hebbian contribution <-> tagged_with
+- cross-dimensional <-> provenance mark
+- concept <-> references
+- pipeline <-> provenance
+- fragment node <-> structure dimension
+- concept node <-> provenance dimension
+- references <-> tagconceptbridger
+- adapter <-> provenance trail
+- concept <-> fragment node
+- fragment node <-> hebbian contribution
+- fragment node <-> mark node
+- mark node <-> tagconceptbridger
+- fragment node <-> provenance mark
+- concept node <-> graph
+- mark <-> node
+- concept node <-> cross-dimensional
+- concept node <-> dimension
+- concept <-> tagged_with
+- edge <-> provenance trail
+- semantic dimension <-> tagged_with
+- adapter <-> tagconceptbridger
+- graph <-> provenance trail
+- adapter <-> chain
+- chain <-> concept
+- references <-> semantic dimension
+- dimension <-> provenance
+- enrichment <-> tagconceptbridger
+- concept node <-> enrichment
+- provenance dimension <-> tagged_with
+- concept <-> edge
+- hebbian contribution <-> structure dimension
+- edge <-> tagconceptbridger
+- mark node <-> semantic dimension
+- chain node <-> hebbian contribution
+- fragment <-> provenance mark
+- pipeline <-> provenance trail
+- edge <-> fragmentadapter
+- tagconceptbridger <-> tagged_with
+- cross-dimensional <-> fragmentadapter
+- hebbian contribution <-> mark node
+- graph <-> tagconceptbridger
+- mark node <-> references
+- fragmentadapter <-> ingest
+- chain node <-> tag
+- chain <-> mark
+- provenance <-> tagconceptbridger
+- concept node <-> fragment
+- adapter <-> deterministic id
+- concept <-> pipeline
+- structure dimension <-> tagged_with
+- mark node <-> tag
+- fragment <-> mark
+- enrichment <-> references
+- fragment node <-> tagconceptbridger
+- fragment node <-> fragmentadapter
+- concept <-> graph
+- semantic dimension <-> structure dimension
+- edge <-> semantic dimension
+- adapter <-> tag
+- cross-dimensional <-> semantic dimension
+- edge <-> references
+- graph <-> semantic dimension
+- graph <-> references
+- provenance dimension <-> structure dimension
+- edge <-> node
+- provenance <-> references
+- fragmentadapter <-> tagged_with
+- edge <-> tag
+- cross-dimensional <-> tag
+- graph <-> tag
+- fragment node <-> semantic dimension
+- fragment node <-> references
+- dimension <-> tagconceptbridger

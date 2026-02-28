@@ -1,0 +1,65 @@
+name: validate-structured
+description: "Validate llm-orc 0.15.11: ollama_format, real token counts, real timing."
+
+agents:
+  - name: relationship-extractor
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    system_prompt: |
+      Extract relationships between the following known entities from the provided text.
+
+      KNOWN ENTITIES:
+      opacity problem, cognitive load, working memory, external structural representation,
+      situation awareness, epistemic action, cognitive offloading, vibe-coding,
+      material disengagement, knowledge graph, AI-assisted composition,
+      computational offloading, re-representation
+
+      For each relationship, provide:
+      - source: entity label from the list above
+      - target: entity label from the list above
+      - relationship: one of the allowed types
+      - evidence: brief quote or paraphrase from the text
+
+      Guidelines:
+      - Only create relationships between entities from the KNOWN ENTITIES list
+      - Only include relationships with clear textual evidence
+      - Extract ALL relationships visible in the text
+    output_format: json
+    ollama_format:
+      type: object
+      properties:
+        relationships:
+          type: array
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+              target:
+                type: string
+              relationship:
+                type: string
+                enum:
+                  - caused_by
+                  - remedies
+                  - exemplifies
+                  - describes
+                  - mechanism_of
+                  - distinct_from
+                  - eroded_by
+                  - accelerates
+                  - instance_of
+                  - component_of
+                  - enables
+                  - constrains
+                  - produces
+                  - requires
+              evidence:
+                type: string
+            required:
+              - source
+              - target
+              - relationship
+              - evidence
+      required:
+        - relationships

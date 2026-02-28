@@ -1,0 +1,38 @@
+name: spike-14b-section
+description: "Spike Q0: Single essay section → 14B relationship extraction with entity context. Run once per section to test chunked approach."
+
+agents:
+  - name: relationship-extractor
+    model_profile: synthesizer-local
+    timeout_seconds: 120
+    system_prompt: |
+      Extract relationships between the following known entities from the provided text section.
+
+      KNOWN ENTITIES:
+      opacity problem, cognitive load, working memory, external structural representation,
+      situation awareness, epistemic action, cognitive offloading, vibe-coding,
+      material disengagement, knowledge graph, AI-assisted composition,
+      computational offloading, re-representation
+
+      For each relationship found in this section, provide:
+      - source: entity label from the list above
+      - target: entity label from the list above
+      - relationship: one of [caused_by, remedies, exemplifies, describes, mechanism_of, distinct_from, eroded_by, accelerates, instance_of, component_of, enables, constrains, produces, requires]
+      - evidence: brief quote or paraphrase from the text
+
+      If no relationships between known entities are visible in this section, return:
+      {"relationships": []}
+
+      Return ONLY valid JSON:
+      {
+        "relationships": [
+          {"source": "concept a", "target": "concept b", "relationship": "caused_by", "evidence": "..."}
+        ]
+      }
+
+      Guidelines:
+      - Only create relationships between entities from the KNOWN ENTITIES list
+      - Only include relationships with clear evidence in THIS section
+      - Return ONLY JSON, no explanation
+      /no_think
+    output_format: json

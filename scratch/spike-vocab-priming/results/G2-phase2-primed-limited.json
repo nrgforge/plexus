@@ -1,0 +1,16 @@
+{
+  "model": "mistral:7b",
+  "created_at": "2026-02-28T02:30:35.727208Z",
+  "message": {
+    "role": "assistant",
+    "content": "{\n  \"relationships\": [\n    {\n      \"source\": \"FragmentAdapter\",\n      \"target\": \"provenance\",\n      \"relationship\": \"produces\",\n      \"evidence\": \"The adapter produces provenance\"\n    },\n    {\n      \"source\": \"Fragment\",\n      \"target\": \"provenance mark\",\n      \"relationship\": \"produces\",\n      \"evidence\": \"A fragment produces a provenance mark\"\n    },\n    {\n      \"source\": \"provenance mark\",\n      \"target\": \"tag\",\n      \"relationship\": \"produces\",\n      \"evidence\": \"A provenance mark produces a tag\"\n    },\n    {\n      \"source\": \"concept node\",\n      \"target\": \"provenance trail\",\n      \"relationship\": \"contains\",\n      \"evidence\": \"A concept node contains a provenance trail\"\n    },\n    {\n      \"source\": \"Adapter\",\n      \"target\": \"provenance trail\",\n      \"relationship\": \"produces\",\n      \"evidence\": \"An adapter produces a provenance trail\"\n    },\n    {\n      \"source\": \"ingest\",\n      \"target\": \"chain\",\n      \"relationship\": \"creates\",\n      \"evidence\": \"Ingest creates a chain\"\n    },\n    {\n      \"source\": \"Fragment\",\n      \"target\": \"mark\",\n      \"relationship\": \"contains\",\n      \"evidence\": \"A fragment contains a mark\"\n    },\n    {\n      \"source\": \"Fragment\",\n      \"target\": \"chain\",\n      \"relationship\": \"contains\",\n      \"evidence\": \"A fragment contains a chain\"\n    },\n    {\n      \"source\": \"enrichment\",\n      \"target\": \"references edges\",\n      \"relationship\": \"creates\",\n      \"evidence\": \"Enrichment creates references edges\"\n    },\n    {\n      \"source\": \"enrichment\",\n      \"target\": \"concept node\",\n      \"relationship\": \"creates\",\n      \"evidence\": \"Enrichment creates concept nodes\"\n    },\n    {\n      \"source\": \"graph\",\n      \"target\": \"hebbian contribution\",\n      \"relationship\": \"produces\",\n      \"evidence\": \"Graph produces hebbian contribution\"\n    },\n    {\n      \"source\": \"chain\",\n      \"target\": \"Adapter\",\n      \"relationship\": \"tracks\",\n      \"evidence\": \"Chain tells adapter\"\n    },\n    {\n      \"source\": \"tagged_with\",\n      \"target\": \"contribution\",\n      \"relationship\": \"carries\",\n      \"evidence\": \"Tagged_with carries contribution\"\n    },\n    {\n      \"source\": \"concept\",\n      \"target\": \"contribution\",\n      \"relationship\": \"contains\",\n      \"evidence\": \"Concept contains contribution\"\n    },\n    {\n      \"source\": \"FragmentAdapter\",\n      \"target\": \"pipeline\",\n      \"relationship\": \"uses\",\n      \"evidence\": \"FragmentAdapter registers pipeline\"\n    },\n    {\n      \"source\": \"ProvenanceAdapter\",\n      \"target\": \"pipeline\",\n      \"relationship\": \"uses\",\n      \"evidence\": \"ProvenanceAdapter registers pipeline\"\n    }\n  ]\n}"
+  },
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 41211771583,
+  "load_duration": 684367625,
+  "prompt_eval_count": 2607,
+  "prompt_eval_duration": 9967740167,
+  "eval_count": 781,
+  "eval_duration": 28754871318
+}
