@@ -225,6 +225,16 @@ impl Emission {
             && self.edge_removals.is_empty()
             && self.property_updates.is_empty()
     }
+
+    /// Merge another emission into this one by appending all vectors.
+    pub fn merge(mut self, other: Emission) -> Self {
+        self.nodes.extend(other.nodes);
+        self.edges.extend(other.edges);
+        self.removals.extend(other.removals);
+        self.edge_removals.extend(other.edge_removals);
+        self.property_updates.extend(other.property_updates);
+        self
+    }
 }
 
 impl Default for Emission {

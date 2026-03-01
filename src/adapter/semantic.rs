@@ -351,21 +351,19 @@ impl Adapter for SemanticAdapter {
             ));
         }
 
-        // Extract the synthesizer's response (fan-out pipeline convention).
-        // Try "synthesizer" key first, fall back to last agent response.
-        let response_text = response
-            .results
-            .get("synthesizer")
-            .and_then(|r| r.response.as_deref())
-            .or_else(|| {
-                response.results.values().filter_map(|r| r.response.as_deref()).last()
-            })
-            .ok_or_else(|| {
-                AdapterError::Internal("no agent responses in llm-orc result".to_string())
-            })?;
-
-        // Parse response into emission
-        let mut emission = self.parse_response(response_text, file_path)?;
+        // Multi-agent parsing: iterate all agent results, merge into single emission.
+        // Each agent's edges carry per-agent contribution keys (Invariant 45).
+        let mut emission = Emission::new();
+        for (agent_name, agent_result) in &response.results {
+            if let Some(ref text) = agent_result.response {
+                if let Some(parsed) = extract_json(text) {
+                    let contribution_key = format!("extract-phase3:{}", agent_name);
+                    let agent_emission =
+                        self.parse_agent_response(&parsed, file_path, &contribution_key);
+                    emission = emission.merge(agent_emission);
+                }
+            }
+        }
 
         // Add provenance trail (Invariant 7 — dual obligation)
         if !emission.is_empty() {
@@ -378,6 +376,322 @@ impl Adapter for SemanticAdapter {
 }
 
 impl SemanticAdapter {
+    /// Parse a single agent's JSON response into an emission with per-agent contribution keys.
+    ///
+    /// Dispatches to specialized parsers based on response shape:
+    /// - `"entities"` key → SpaCy script output (parse_spacy_response)
+    /// - `"themes"` key → theme extraction (parse_themes)
+    /// - `"concepts"` / `"relationships"` → standard LLM extraction (parse_response)
+    fn parse_agent_response(
+        &self,
+        parsed: &serde_json::Value,
+        file_path: &str,
+        contribution_key: &str,
+    ) -> Emission {
+        let file_node_id = NodeId::from_string(format!("file:{}", file_path));
+
+        // Dispatch by response shape
+        // SpaCy script wraps output in {"success": ..., "data": {"entities": ...}}
+        let has_entities = parsed.get("entities").is_some()
+            || parsed
+                .get("data")
+                .and_then(|d| d.get("entities"))
+                .is_some();
+        if has_entities {
+            return self.parse_spacy_response(parsed, &file_node_id, contribution_key);
+        }
+
+        if parsed.get("themes").is_some()
+            && parsed.get("concepts").is_none()
+            && parsed.get("relationships").is_none()
+        {
+            return self.parse_themes(parsed, &file_node_id, contribution_key);
+        }
+
+        // Standard: concepts + relationships
+        let mut emission = Emission::new();
+
+        if let Some(concepts) = parsed.get("concepts").and_then(|v| v.as_array()) {
+            for concept in concepts {
+                let label = concept
+                    .get("label")
+                    .or_else(|| concept.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if label.is_empty() {
+                    continue;
+                }
+
+                let normalized = label.to_lowercase();
+                let concept_id = NodeId::from_string(format!("concept:{}", normalized));
+
+                let mut node = Node::new_in_dimension(
+                    "concept",
+                    ContentType::Concept,
+                    dimension::SEMANTIC,
+                );
+                node.id = concept_id.clone();
+                node.properties.insert(
+                    "label".to_string(),
+                    PropertyValue::String(normalized.clone()),
+                );
+                if let Some(concept_type) = concept.get("type").and_then(|v| v.as_str()) {
+                    node.properties.insert(
+                        "concept_type".to_string(),
+                        PropertyValue::String(concept_type.to_string()),
+                    );
+                }
+                if let Some(confidence) = concept.get("confidence").and_then(|v| v.as_f64()) {
+                    node.properties.insert(
+                        "confidence".to_string(),
+                        PropertyValue::Float(confidence),
+                    );
+                }
+                emission = emission.with_node(AnnotatedNode::new(node));
+
+                let mut edge = Edge::new_cross_dimensional(
+                    file_node_id.clone(),
+                    dimension::STRUCTURE,
+                    concept_id,
+                    dimension::SEMANTIC,
+                    "tagged_with",
+                );
+                edge.raw_weight = 1.0;
+                edge.contributions
+                    .insert(contribution_key.to_string(), 1.0);
+                emission = emission.with_edge(AnnotatedEdge::new(edge));
+            }
+        }
+
+        if let Some(rels) = parsed.get("relationships").and_then(|v| v.as_array()) {
+            for rel in rels {
+                let source = rel.get("source").and_then(|v| v.as_str()).unwrap_or_default();
+                let target = rel.get("target").and_then(|v| v.as_str()).unwrap_or_default();
+                let relationship = rel
+                    .get("relationship")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("related_to");
+                let weight = rel
+                    .get("weight")
+                    .or_else(|| rel.get("confidence"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1.0);
+
+                if source.is_empty() || target.is_empty() {
+                    continue;
+                }
+
+                let source_id =
+                    NodeId::from_string(format!("concept:{}", source.to_lowercase()));
+                let target_id =
+                    NodeId::from_string(format!("concept:{}", target.to_lowercase()));
+
+                let mut edge = Edge::new(source_id, target_id, relationship);
+                edge.source_dimension = dimension::SEMANTIC.to_string();
+                edge.target_dimension = dimension::SEMANTIC.to_string();
+                edge.raw_weight = weight as f32;
+                edge.contributions
+                    .insert(contribution_key.to_string(), weight as f32);
+                emission = emission.with_edge(AnnotatedEdge::new(edge));
+            }
+        }
+
+        emission
+    }
+
+    /// Parse SpaCy script output: entities, relationships (SVO), and co-occurrences.
+    fn parse_spacy_response(
+        &self,
+        parsed: &serde_json::Value,
+        file_node_id: &NodeId,
+        contribution_key: &str,
+    ) -> Emission {
+        let mut emission = Emission::new();
+
+        // Use "data" wrapper if present (script agent protocol)
+        let data = parsed.get("data").unwrap_or(parsed);
+
+        // entities → concept nodes
+        if let Some(entities) = data.get("entities").and_then(|v| v.as_array()) {
+            for entity in entities {
+                let label = entity.get("label").and_then(|v| v.as_str()).unwrap_or_default();
+                if label.is_empty() {
+                    continue;
+                }
+                let normalized = label.to_lowercase();
+                let concept_id = NodeId::from_string(format!("concept:{}", normalized));
+
+                let mut node = Node::new_in_dimension(
+                    "concept",
+                    ContentType::Concept,
+                    dimension::SEMANTIC,
+                );
+                node.id = concept_id.clone();
+                node.properties.insert(
+                    "label".to_string(),
+                    PropertyValue::String(normalized.clone()),
+                );
+                if let Some(etype) = entity.get("type").and_then(|v| v.as_str()) {
+                    node.properties.insert(
+                        "concept_type".to_string(),
+                        PropertyValue::String(etype.to_string()),
+                    );
+                }
+                node.properties.insert(
+                    "source".to_string(),
+                    PropertyValue::String("spacy".to_string()),
+                );
+                emission = emission.with_node(AnnotatedNode::new(node));
+
+                let mut edge = Edge::new_cross_dimensional(
+                    file_node_id.clone(),
+                    dimension::STRUCTURE,
+                    concept_id,
+                    dimension::SEMANTIC,
+                    "tagged_with",
+                );
+                edge.raw_weight = 1.0;
+                edge.contributions
+                    .insert(contribution_key.to_string(), 1.0);
+                emission = emission.with_edge(AnnotatedEdge::new(edge));
+            }
+        }
+
+        // relationships (SVO triples) → typed directed edges
+        if let Some(rels) = data.get("relationships").and_then(|v| v.as_array()) {
+            for rel in rels {
+                let source = rel.get("source").and_then(|v| v.as_str()).unwrap_or_default();
+                let target = rel.get("target").and_then(|v| v.as_str()).unwrap_or_default();
+                let relationship = rel
+                    .get("relationship")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("related_to");
+
+                if source.is_empty() || target.is_empty() {
+                    continue;
+                }
+
+                let source_id =
+                    NodeId::from_string(format!("concept:{}", source.to_lowercase()));
+                let target_id =
+                    NodeId::from_string(format!("concept:{}", target.to_lowercase()));
+
+                let mut edge = Edge::new(source_id, target_id, relationship);
+                edge.source_dimension = dimension::SEMANTIC.to_string();
+                edge.target_dimension = dimension::SEMANTIC.to_string();
+                edge.raw_weight = 1.0;
+                edge.contributions
+                    .insert(contribution_key.to_string(), 1.0);
+                emission = emission.with_edge(AnnotatedEdge::new(edge));
+            }
+        }
+
+        // cooccurrences → symmetric may_be_related edge pairs
+        if let Some(coocs) = data.get("cooccurrences").and_then(|v| v.as_array()) {
+            for cooc in coocs {
+                let a = cooc.get("entity_a").and_then(|v| v.as_str()).unwrap_or_default();
+                let b = cooc.get("entity_b").and_then(|v| v.as_str()).unwrap_or_default();
+
+                if a.is_empty() || b.is_empty() {
+                    continue;
+                }
+
+                let a_id = NodeId::from_string(format!("concept:{}", a.to_lowercase()));
+                let b_id = NodeId::from_string(format!("concept:{}", b.to_lowercase()));
+
+                // A → B
+                let mut edge_ab = Edge::new(a_id.clone(), b_id.clone(), "may_be_related");
+                edge_ab.source_dimension = dimension::SEMANTIC.to_string();
+                edge_ab.target_dimension = dimension::SEMANTIC.to_string();
+                edge_ab.raw_weight = 1.0;
+                edge_ab
+                    .contributions
+                    .insert(contribution_key.to_string(), 1.0);
+                emission = emission.with_edge(AnnotatedEdge::new(edge_ab));
+
+                // B → A
+                let mut edge_ba = Edge::new(b_id, a_id, "may_be_related");
+                edge_ba.source_dimension = dimension::SEMANTIC.to_string();
+                edge_ba.target_dimension = dimension::SEMANTIC.to_string();
+                edge_ba.raw_weight = 1.0;
+                edge_ba
+                    .contributions
+                    .insert(contribution_key.to_string(), 1.0);
+                emission = emission.with_edge(AnnotatedEdge::new(edge_ba));
+            }
+        }
+
+        emission
+    }
+
+    /// Parse theme extraction response into concept nodes.
+    fn parse_themes(
+        &self,
+        parsed: &serde_json::Value,
+        file_node_id: &NodeId,
+        contribution_key: &str,
+    ) -> Emission {
+        let mut emission = Emission::new();
+
+        if let Some(themes) = parsed.get("themes").and_then(|v| v.as_array()) {
+            for theme in themes {
+                let description = theme
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if description.is_empty() {
+                    continue;
+                }
+
+                let normalized = description.to_lowercase();
+                let concept_id = NodeId::from_string(format!("concept:{}", normalized));
+
+                let mut node = Node::new_in_dimension(
+                    "concept",
+                    ContentType::Concept,
+                    dimension::SEMANTIC,
+                );
+                node.id = concept_id.clone();
+                node.properties.insert(
+                    "label".to_string(),
+                    PropertyValue::String(normalized.clone()),
+                );
+                node.properties.insert(
+                    "source".to_string(),
+                    PropertyValue::String("theme".to_string()),
+                );
+                if let Some(theme_type) = theme.get("type").and_then(|v| v.as_str()) {
+                    node.properties.insert(
+                        "concept_type".to_string(),
+                        PropertyValue::String(theme_type.to_string()),
+                    );
+                }
+                if let Some(evidence) = theme.get("supporting_evidence").and_then(|v| v.as_str()) {
+                    node.properties.insert(
+                        "evidence".to_string(),
+                        PropertyValue::String(evidence.to_string()),
+                    );
+                }
+                emission = emission.with_node(AnnotatedNode::new(node));
+
+                // tagged_with edge: file → theme concept
+                let mut edge = Edge::new_cross_dimensional(
+                    file_node_id.clone(),
+                    dimension::STRUCTURE,
+                    concept_id,
+                    dimension::SEMANTIC,
+                    "tagged_with",
+                );
+                edge.raw_weight = 1.0;
+                edge.contributions
+                    .insert(contribution_key.to_string(), 1.0);
+                emission = emission.with_edge(AnnotatedEdge::new(edge));
+            }
+        }
+
+        emission
+    }
+
     /// Add provenance trail to emission: chain + marks + contains edges.
     ///
     /// Invariant 7 (dual obligation): every adapter emits both semantic content
@@ -972,20 +1286,19 @@ mod tests {
         assert_eq!(uses_edges[0].target, NodeId::from_string("concept:async"));
     }
 
-    // --- Scenario: Fan-out pipeline extracts from synthesizer, not arbitrary agent ---
+    // --- Scenario: Multi-agent pipeline parses ALL agent results ---
 
     #[tokio::test]
-    async fn fan_out_pipeline_prefers_synthesizer_agent() {
-        // Simulate a fan-out pipeline with multiple agents.
-        // The synthesizer has the merged result; other agents have partial data.
-        let synth_response = r#"{
+    async fn multi_agent_results_all_parsed() {
+        // All agents' concepts should appear — multi-run union (Essay 25).
+        let agent_a_response = r#"{
             "concepts": [
                 { "label": "merged concept", "confidence": 0.95 }
             ],
             "relationships": []
         }"#;
 
-        let partial_response = r#"{
+        let agent_b_response = r#"{
             "concepts": [
                 { "label": "partial only", "confidence": 0.5 }
             ],
@@ -998,28 +1311,18 @@ mod tests {
                 crate::llm_orc::InvokeResponse {
                     results: {
                         let mut m = std::collections::HashMap::new();
-                        // Fan-out chunk agents (inserted first — HashMap order is arbitrary)
                         m.insert(
-                            "concept-extractor[0]".to_string(),
+                            "entity-primed-1".to_string(),
                             crate::llm_orc::AgentResult {
-                                response: Some(partial_response.to_string()),
+                                response: Some(agent_a_response.to_string()),
                                 status: Some("success".to_string()),
                                 error: None,
                             },
                         );
                         m.insert(
-                            "concept-extractor[1]".to_string(),
+                            "entity-primed-2".to_string(),
                             crate::llm_orc::AgentResult {
-                                response: Some(partial_response.to_string()),
-                                status: Some("success".to_string()),
-                                error: None,
-                            },
-                        );
-                        // Synthesizer — this is the one we want
-                        m.insert(
-                            "synthesizer".to_string(),
-                            crate::llm_orc::AgentResult {
-                                response: Some(synth_response.to_string()),
+                                response: Some(agent_b_response.to_string()),
                                 status: Some("success".to_string()),
                                 error: None,
                             },
@@ -1056,14 +1359,14 @@ mod tests {
 
         let snapshot = ctx.lock().unwrap();
 
-        // Should have the synthesizer's "merged concept", not the partial agents' "partial only"
+        // Both agents' concepts should be present (multi-run union)
         assert!(
             snapshot.get_node(&NodeId::from_string("concept:merged concept")).is_some(),
-            "should extract from synthesizer agent"
+            "should extract from agent A"
         );
         assert!(
-            snapshot.get_node(&NodeId::from_string("concept:partial only")).is_none(),
-            "should NOT extract from chunk agents"
+            snapshot.get_node(&NodeId::from_string("concept:partial only")).is_some(),
+            "should also extract from agent B (multi-run union)"
         );
     }
 
@@ -1481,6 +1784,293 @@ Cargo is the build system and package manager for Rust projects.
         for edge in &references_edges {
             assert_eq!(edge.source_dimension, dimension::PROVENANCE);
             assert_eq!(edge.target_dimension, dimension::SEMANTIC);
+        }
+    }
+
+    // --- Scenario: Per-agent contribution keys tracked ---
+
+    #[tokio::test]
+    async fn per_agent_contributions_tracked() {
+        let response_a = r#"{"concepts": [{"label": "alpha"}], "relationships": []}"#;
+        let response_b = r#"{"concepts": [{"label": "beta"}], "relationships": []}"#;
+
+        let mock_client = Arc::new(
+            MockClient::available().with_response(
+                "extract-semantic",
+                crate::llm_orc::InvokeResponse {
+                    results: {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert(
+                            "entity-primed-1".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(response_a.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m.insert(
+                            "relationship-1".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(response_b.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m
+                    },
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        );
+
+        let adapter = SemanticAdapter::new(mock_client, "extract-semantic");
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        {
+            let mut c = ctx.lock().unwrap();
+            let mut file_node = Node::new_in_dimension(
+                "file",
+                ContentType::Document,
+                dimension::STRUCTURE,
+            );
+            file_node.id = NodeId::from_string("file:test.md");
+            c.add_node(file_node);
+        }
+
+        let sink = test_sink(ctx.clone());
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::for_file("test.md"),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        // tagged_with edges should carry per-agent contribution keys
+        let tagged: Vec<_> = snapshot
+            .edges()
+            .filter(|e| e.relationship == "tagged_with")
+            .collect();
+
+        let has_primed = tagged.iter().any(|e| {
+            e.contributions
+                .contains_key("extract-phase3:entity-primed-1")
+        });
+        let has_rel = tagged.iter().any(|e| {
+            e.contributions
+                .contains_key("extract-phase3:relationship-1")
+        });
+
+        assert!(has_primed, "should have contribution from entity-primed-1");
+        assert!(has_rel, "should have contribution from relationship-1");
+    }
+
+    // --- Scenario: SpaCy response creates entities and relationships ---
+
+    #[tokio::test]
+    async fn spacy_response_creates_entities_and_relationships() {
+        let spacy_response = r#"{
+            "success": true,
+            "data": {
+                "entities": [
+                    {"label": "Plexus", "type": "component"},
+                    {"label": "knowledge graph", "type": "concept"}
+                ],
+                "relationships": [
+                    {"source": "Plexus", "target": "knowledge graph", "relationship": "implement", "evidence": "Plexus implements a knowledge graph"}
+                ],
+                "cooccurrences": [
+                    {"entity_a": "Plexus", "entity_b": "knowledge graph"}
+                ]
+            }
+        }"#;
+
+        let mock_client = Arc::new(
+            MockClient::available().with_response(
+                "extract-semantic",
+                crate::llm_orc::InvokeResponse {
+                    results: {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert(
+                            "spacy-extract".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(spacy_response.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m
+                    },
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        );
+
+        let adapter = SemanticAdapter::new(mock_client, "extract-semantic");
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        {
+            let mut c = ctx.lock().unwrap();
+            let mut file_node = Node::new_in_dimension(
+                "file",
+                ContentType::Document,
+                dimension::STRUCTURE,
+            );
+            file_node.id = NodeId::from_string("file:test.md");
+            c.add_node(file_node);
+        }
+
+        let sink = test_sink(ctx.clone());
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::for_file("test.md"),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        // Concept nodes from SpaCy entities
+        assert!(
+            snapshot
+                .get_node(&NodeId::from_string("concept:plexus"))
+                .is_some(),
+            "SpaCy entity should become concept node"
+        );
+        assert!(
+            snapshot
+                .get_node(&NodeId::from_string("concept:knowledge graph"))
+                .is_some(),
+            "SpaCy entity should become concept node"
+        );
+
+        // Typed relationship from SVO triple
+        let implement_edges: Vec<_> = snapshot
+            .edges()
+            .filter(|e| e.relationship == "implement")
+            .collect();
+        assert_eq!(implement_edges.len(), 1, "one typed relationship from SVO");
+
+        // Co-occurrence edges (symmetric pair)
+        let cooc_edges: Vec<_> = snapshot
+            .edges()
+            .filter(|e| e.relationship == "may_be_related")
+            .collect();
+        assert_eq!(cooc_edges.len(), 2, "co-occurrence produces symmetric pair");
+
+        // Contribution keys from SpaCy agent
+        for edge in &implement_edges {
+            assert!(
+                edge.contributions
+                    .contains_key("extract-phase3:spacy-extract"),
+                "SpaCy edges should carry spacy-extract contribution"
+            );
+        }
+    }
+
+    // --- Scenario: Theme response creates concept nodes ---
+
+    #[tokio::test]
+    async fn theme_response_creates_concept_nodes() {
+        let theme_response = r#"{
+            "themes": [
+                {
+                    "description": "cognitive offloading",
+                    "type": "concept",
+                    "supporting_evidence": "The paper argues that..."
+                },
+                {
+                    "description": "material disengagement",
+                    "type": "tension",
+                    "supporting_evidence": "When practitioners..."
+                }
+            ]
+        }"#;
+
+        let mock_client = Arc::new(
+            MockClient::available().with_response(
+                "extract-semantic",
+                crate::llm_orc::InvokeResponse {
+                    results: {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert(
+                            "theme".to_string(),
+                            crate::llm_orc::AgentResult {
+                                response: Some(theme_response.to_string()),
+                                status: Some("success".to_string()),
+                                error: None,
+                            },
+                        );
+                        m
+                    },
+                    status: "completed".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ),
+        );
+
+        let adapter = SemanticAdapter::new(mock_client, "extract-semantic");
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        {
+            let mut c = ctx.lock().unwrap();
+            let mut file_node = Node::new_in_dimension(
+                "file",
+                ContentType::Document,
+                dimension::STRUCTURE,
+            );
+            file_node.id = NodeId::from_string("file:test.md");
+            c.add_node(file_node);
+        }
+
+        let sink = test_sink(ctx.clone());
+        let input = AdapterInput::new(
+            "extract-semantic",
+            SemanticInput::for_file("test.md"),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        // Theme concept nodes
+        let cog = snapshot
+            .get_node(&NodeId::from_string("concept:cognitive offloading"))
+            .expect("theme should become concept node");
+        assert_eq!(
+            cog.properties.get("source"),
+            Some(&PropertyValue::String("theme".to_string())),
+            "theme concepts have source=theme"
+        );
+        assert_eq!(
+            cog.properties.get("concept_type"),
+            Some(&PropertyValue::String("concept".to_string())),
+        );
+
+        let mat = snapshot
+            .get_node(&NodeId::from_string("concept:material disengagement"))
+            .expect("second theme should become concept node");
+        assert_eq!(
+            mat.properties.get("concept_type"),
+            Some(&PropertyValue::String("tension".to_string())),
+        );
+
+        // tagged_with edges from file to theme concepts
+        let tagged: Vec<_> = snapshot
+            .edges()
+            .filter(|e| e.relationship == "tagged_with")
+            .collect();
+        assert_eq!(tagged.len(), 2, "two tagged_with edges for themes");
+
+        // Contribution key includes agent name
+        for edge in &tagged {
+            assert!(
+                edge.contributions.contains_key("extract-phase3:theme"),
+                "theme edges should carry theme contribution"
+            );
         }
     }
 }
