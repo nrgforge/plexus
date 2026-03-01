@@ -1,0 +1,421 @@
+# Production extraction ensemble (Essay 25 architecture)
+#
+# 1 SpaCy script agent + 8 LLM agents. Each agent operates independently —
+# no DAG dependencies. Multi-run union exploits run-to-run variation,
+# denoised by Invariant 45 (contribution-based reinforcement).
+#
+# Entity-primed agents receive dynamic vocabulary from SemanticAdapter.build_input()
+# (existing concepts from Phase 1 frontmatter + Phase 2 CamelCase/proper nouns).
+# The vocabulary is NOT hardcoded here — it arrives via input_data at runtime.
+
+name: extract-semantic
+description: >
+  Multi-agent semantic extraction pipeline. SpaCy (NER + dependency parsing)
+  runs alongside LLM agents for entity, relationship, and theme extraction.
+  Independent accumulation — Invariant 45 handles reinforcement across agents.
+
+max_concurrency: 1
+
+agents:
+  # --- Phase 2 complement: SpaCy NER + dependency parsing + co-occurrence ---
+
+  - name: spacy-extract
+    type: script
+    script: scripts/extraction/spacy-extract.py
+
+  # --- Entity extraction: primed (3 runs at temp 0.3 for variation) ---
+
+  - name: entity-primed-1
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    temperature: 0.3
+    system_prompt: |
+      Extract concepts and entities from the provided text.
+
+      KNOWN VOCABULARY (use as hints — look for these AND anything else):
+      The input may include an "existing_concepts" field with terms already
+      known to the knowledge graph. Prioritize confirming or refining these,
+      but also discover new entities not in the list.
+
+      For each concept, provide:
+      - label: canonical name (lowercase, 1-3 words)
+      - type: one of the allowed types
+
+      Guidelines:
+      - Extract 5-20 concepts depending on content length
+      - Include both named entities and important abstract concepts
+      - Normalize labels (lowercase, consistent naming)
+    output_format: json
+    ollama_format:
+      type: object
+      properties:
+        concepts:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              type:
+                type: string
+                enum:
+                  - concept
+                  - component
+                  - person
+                  - organization
+                  - location
+                  - event
+                  - process
+                  - pattern
+                  - principle
+            required:
+              - label
+              - type
+      required:
+        - concepts
+
+  - name: entity-primed-2
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    temperature: 0.3
+    system_prompt: |
+      Extract concepts and entities from the provided text.
+
+      KNOWN VOCABULARY (use as hints — look for these AND anything else):
+      The input may include an "existing_concepts" field with terms already
+      known to the knowledge graph. Prioritize confirming or refining these,
+      but also discover new entities not in the list.
+
+      For each concept, provide:
+      - label: canonical name (lowercase, 1-3 words)
+      - type: one of the allowed types
+
+      Guidelines:
+      - Extract 5-20 concepts depending on content length
+      - Include both named entities and important abstract concepts
+      - Normalize labels (lowercase, consistent naming)
+    output_format: json
+    ollama_format:
+      type: object
+      properties:
+        concepts:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              type:
+                type: string
+                enum:
+                  - concept
+                  - component
+                  - person
+                  - organization
+                  - location
+                  - event
+                  - process
+                  - pattern
+                  - principle
+            required:
+              - label
+              - type
+      required:
+        - concepts
+
+  - name: entity-primed-3
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    temperature: 0.3
+    system_prompt: |
+      Extract concepts and entities from the provided text.
+
+      KNOWN VOCABULARY (use as hints — look for these AND anything else):
+      The input may include an "existing_concepts" field with terms already
+      known to the knowledge graph. Prioritize confirming or refining these,
+      but also discover new entities not in the list.
+
+      For each concept, provide:
+      - label: canonical name (lowercase, 1-3 words)
+      - type: one of the allowed types
+
+      Guidelines:
+      - Extract 5-20 concepts depending on content length
+      - Include both named entities and important abstract concepts
+      - Normalize labels (lowercase, consistent naming)
+    output_format: json
+    ollama_format:
+      type: object
+      properties:
+        concepts:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              type:
+                type: string
+                enum:
+                  - concept
+                  - component
+                  - person
+                  - organization
+                  - location
+                  - event
+                  - process
+                  - pattern
+                  - principle
+            required:
+              - label
+              - type
+      required:
+        - concepts
+
+  # --- Entity extraction: unprimed (discovery, low temp) ---
+
+  - name: entity-unprimed
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    temperature: 0.15
+    system_prompt: |
+      Extract all concepts, entities, and important terms from the provided text.
+
+      For each concept, provide a JSON object with "label" (lowercase, 1-3 words)
+      and "type" (concept, component, person, organization, location, event,
+      process, pattern, or principle).
+
+      Return a JSON object with a "concepts" array.
+    output_format: json
+
+  # --- Relationship extraction (3 runs at temp 0.3) ---
+
+  - name: relationship-1
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    temperature: 0.3
+    system_prompt: |
+      Extract relationships between concepts in the provided text.
+
+      For each relationship, provide:
+      - source: entity label (lowercase)
+      - target: entity label (lowercase)
+      - relationship: one of the allowed types
+      - evidence: brief quote or paraphrase from the text
+
+      Guidelines:
+      - Only include relationships with clear textual evidence
+      - Extract ALL relationships visible in the text
+      - Use normalized entity labels (lowercase, 1-3 words)
+    output_format: json
+    ollama_format:
+      type: object
+      properties:
+        relationships:
+          type: array
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+              target:
+                type: string
+              relationship:
+                type: string
+                enum:
+                  - caused_by
+                  - remedies
+                  - exemplifies
+                  - describes
+                  - mechanism_of
+                  - distinct_from
+                  - eroded_by
+                  - accelerates
+                  - instance_of
+                  - component_of
+                  - enables
+                  - constrains
+                  - produces
+                  - requires
+                  - implements
+                  - uses
+                  - depends_on
+                  - part_of
+                  - related_to
+              evidence:
+                type: string
+            required:
+              - source
+              - target
+              - relationship
+              - evidence
+      required:
+        - relationships
+
+  - name: relationship-2
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    temperature: 0.3
+    system_prompt: |
+      Extract relationships between concepts in the provided text.
+
+      For each relationship, provide:
+      - source: entity label (lowercase)
+      - target: entity label (lowercase)
+      - relationship: one of the allowed types
+      - evidence: brief quote or paraphrase from the text
+
+      Guidelines:
+      - Only include relationships with clear textual evidence
+      - Extract ALL relationships visible in the text
+      - Use normalized entity labels (lowercase, 1-3 words)
+    output_format: json
+    ollama_format:
+      type: object
+      properties:
+        relationships:
+          type: array
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+              target:
+                type: string
+              relationship:
+                type: string
+                enum:
+                  - caused_by
+                  - remedies
+                  - exemplifies
+                  - describes
+                  - mechanism_of
+                  - distinct_from
+                  - eroded_by
+                  - accelerates
+                  - instance_of
+                  - component_of
+                  - enables
+                  - constrains
+                  - produces
+                  - requires
+                  - implements
+                  - uses
+                  - depends_on
+                  - part_of
+                  - related_to
+              evidence:
+                type: string
+            required:
+              - source
+              - target
+              - relationship
+              - evidence
+      required:
+        - relationships
+
+  - name: relationship-3
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    temperature: 0.3
+    system_prompt: |
+      Extract relationships between concepts in the provided text.
+
+      For each relationship, provide:
+      - source: entity label (lowercase)
+      - target: entity label (lowercase)
+      - relationship: one of the allowed types
+      - evidence: brief quote or paraphrase from the text
+
+      Guidelines:
+      - Only include relationships with clear textual evidence
+      - Extract ALL relationships visible in the text
+      - Use normalized entity labels (lowercase, 1-3 words)
+    output_format: json
+    ollama_format:
+      type: object
+      properties:
+        relationships:
+          type: array
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+              target:
+                type: string
+              relationship:
+                type: string
+                enum:
+                  - caused_by
+                  - remedies
+                  - exemplifies
+                  - describes
+                  - mechanism_of
+                  - distinct_from
+                  - eroded_by
+                  - accelerates
+                  - instance_of
+                  - component_of
+                  - enables
+                  - constrains
+                  - produces
+                  - requires
+                  - implements
+                  - uses
+                  - depends_on
+                  - part_of
+                  - related_to
+              evidence:
+                type: string
+            required:
+              - source
+              - target
+              - relationship
+              - evidence
+      required:
+        - relationships
+
+  # --- Theme extraction (single run, low temp) ---
+
+  - name: theme
+    model_profile: analyst-mistral
+    timeout_seconds: 120
+    temperature: 0.15
+    system_prompt: |
+      Identify the major themes in the provided text.
+
+      For each theme, provide:
+      - description: concise theme description (2-5 words)
+      - type: one of the allowed types
+      - supporting_evidence: brief quote or paraphrase
+
+      Return a JSON object with a "themes" array.
+    output_format: json
+    ollama_format:
+      type: object
+      properties:
+        themes:
+          type: array
+          items:
+            type: object
+            properties:
+              description:
+                type: string
+              type:
+                type: string
+                enum:
+                  - argument
+                  - methodology
+                  - finding
+                  - concept
+                  - tension
+                  - pattern
+              supporting_evidence:
+                type: string
+            required:
+              - description
+              - type
+              - supporting_evidence
+      required:
+        - themes
