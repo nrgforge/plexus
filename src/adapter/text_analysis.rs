@@ -128,6 +128,49 @@ fn is_upper_or_roman(s: &str) -> bool {
     s.chars().all(|c| c.is_uppercase() || c.is_whitespace() || c.is_ascii_digit() || c == '.')
 }
 
+/// Extract CamelCase identifiers from text.
+///
+/// A CamelCase word starts with uppercase and has at least one
+/// lowercase→uppercase transition (e.g., `TagConceptBridger`, `EngineSink`).
+/// Single-capital words like "The" or all-caps like "ACT" are excluded.
+fn extract_camelcase(text: &str) -> Vec<String> {
+    let mut results = HashSet::new();
+
+    for word in text.split_whitespace() {
+        // Strip surrounding punctuation (backticks, parens, commas, etc.)
+        let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+        if clean.len() < 3 {
+            continue;
+        }
+
+        let chars: Vec<char> = clean.chars().collect();
+
+        // Must start with uppercase
+        if !chars[0].is_uppercase() {
+            continue;
+        }
+
+        // Count lowercase→uppercase transitions
+        let mut transitions = 0;
+        for i in 1..chars.len() {
+            if chars[i].is_uppercase() && chars[i - 1].is_lowercase() {
+                transitions += 1;
+            }
+        }
+
+        // Need at least one transition (otherwise it's just a capitalized word)
+        if transitions < 1 {
+            continue;
+        }
+
+        results.insert(clean.to_string());
+    }
+
+    let mut sorted: Vec<String> = results.into_iter().collect();
+    sorted.sort();
+    sorted
+}
+
 /// Extract proper nouns from text lines.
 ///
 /// A proper noun candidate is a capitalized word that:
@@ -305,6 +348,41 @@ impl Adapter for TextAnalysisAdapter {
                 "mentions",
             );
             edge.raw_weight = 1.0;
+            emission = emission.with_edge(AnnotatedEdge::new(edge));
+        }
+
+        // CamelCase → component entity nodes
+        for name in extract_camelcase(&content) {
+            let normalized = name.to_lowercase();
+            let concept_id = NodeId::from_string(format!("concept:{}", normalized));
+
+            let mut node = Node::new_in_dimension(
+                "concept",
+                ContentType::Concept,
+                dimension::SEMANTIC,
+            );
+            node.id = concept_id.clone();
+            node.properties.insert(
+                "label".to_string(),
+                PropertyValue::String(normalized.clone()),
+            );
+            node.properties.insert(
+                "source".to_string(),
+                PropertyValue::String("camelcase".to_string()),
+            );
+            emission = emission.with_node(AnnotatedNode::new(node));
+
+            // mentions edge: file → concept
+            let mut edge = Edge::new_cross_dimensional(
+                file_node_id.clone(),
+                dimension::STRUCTURE,
+                concept_id,
+                dimension::SEMANTIC,
+                "mentions",
+            );
+            edge.raw_weight = 1.0;
+            edge.contributions
+                .insert("extract-phase2:camelcase".to_string(), 1.0);
             emission = emission.with_edge(AnnotatedEdge::new(edge));
         }
 
@@ -774,6 +852,79 @@ The battle takes place near Dunsinane.
         assert!(
             ctx2.get_node(&chain_id).is_some(),
             "Phase 2 provenance chain should survive reload"
+        );
+    }
+
+    // --- Scenario: CamelCase extraction finds component names ---
+
+    #[test]
+    fn camelcase_extracts_component_names() {
+        let text = "The TagConceptBridger creates EngineSink for processing.";
+        let results = extract_camelcase(text);
+        assert!(results.contains(&"TagConceptBridger".to_string()));
+        assert!(results.contains(&"EngineSink".to_string()));
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn camelcase_ignores_single_capital_words() {
+        let text = "The However Moreover England Scotland";
+        let results = extract_camelcase(text);
+        assert!(results.is_empty(), "single-capital words are not CamelCase: {:?}", results);
+    }
+
+    #[tokio::test]
+    async fn camelcase_uses_contribution_key() {
+        let text = "The TagConceptBridger processes data.\n";
+        let dir = write_temp_file("camel.txt", text);
+        let file_path = dir.path().join("camel.txt");
+
+        let adapter = TextAnalysisAdapter::new();
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+
+        // Pre-create the file node so edges aren't rejected for missing endpoints
+        {
+            let mut c = ctx.lock().unwrap();
+            let mut file_node = Node::new_in_dimension(
+                "file",
+                ContentType::Document,
+                dimension::STRUCTURE,
+            );
+            file_node.id = NodeId::from_string(format!("file:{}", file_path.to_str().unwrap()));
+            c.add_node(file_node);
+        }
+
+        let sink = test_sink(ctx.clone());
+
+        let input = AdapterInput::new(
+            "extract-analysis-text",
+            crate::adapter::extraction::ExtractFileInput {
+                file_path: file_path.to_str().unwrap().to_string(),
+            },
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        // CamelCase concept node exists
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:tagconceptbridger")).is_some(),
+            "CamelCase concept should be extracted"
+        );
+
+        // mentions edge has the camelcase contribution key
+        let camel_edges: Vec<_> = snapshot
+            .edges()
+            .filter(|e| {
+                e.relationship == "mentions"
+                    && e.contributions.contains_key("extract-phase2:camelcase")
+            })
+            .collect();
+        assert!(
+            !camel_edges.is_empty(),
+            "mentions edge should have extract-phase2:camelcase contribution"
         );
     }
 }
