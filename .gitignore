@@ -6,3 +6,6 @@ Cargo.lock
 
 # ONNX model cache (downloaded at runtime by fastembed)
 .fastembed_cache/
+
+# Git worktrees
+.worktrees/
