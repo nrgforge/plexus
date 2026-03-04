@@ -413,7 +413,7 @@ impl GraphStore for SqliteStore {
     }
 
     fn save_context(&self, context: &Context) -> StorageResult<()> {
-        // Save the context row (name, description, metadata)
+        // Save the context row (name, description, metadata) — single upsert, atomic by itself
         self.save_context_metadata(context)?;
 
         let conn = self.conn.lock().unwrap();
@@ -422,96 +422,113 @@ impl GraphStore for SqliteStore {
         // the context, then delete only those that the context explicitly
         // does NOT contain. This preserves nodes/edges written by other
         // engines sharing the same database.
+        //
+        // Wrapped in an explicit transaction so an interrupted write cannot
+        // leave partial node/edge state.
 
-        // --- Nodes: upsert all in-memory nodes ---
-        let context_node_ids: HashSet<String> = context
-            .nodes
-            .keys()
-            .map(|id| id.to_string())
-            .collect();
+        conn.execute_batch("BEGIN IMMEDIATE")?;
 
-        for node in context.nodes.values() {
-            let (id, node_type, content_type, dimension, properties, metadata) = Self::node_to_row(node)?;
-            conn.execute(
-                r#"
-                INSERT INTO nodes (id, context_id, node_type, content_type, dimension, properties_json, metadata_json)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                ON CONFLICT(context_id, id) DO UPDATE SET
-                    node_type = excluded.node_type,
-                    content_type = excluded.content_type,
-                    dimension = excluded.dimension,
-                    properties_json = excluded.properties_json,
-                    metadata_json = excluded.metadata_json
-                "#,
-                params![id, context.id.as_str(), node_type, content_type, dimension, properties, metadata],
-            )?;
-        }
+        let result = (|| -> StorageResult<(HashSet<String>, HashSet<String>)> {
+            // --- Nodes: upsert all in-memory nodes ---
+            let context_node_ids: HashSet<String> = context
+                .nodes
+                .keys()
+                .map(|id| id.to_string())
+                .collect();
 
-        // --- Edges: upsert all in-memory edges ---
-        let context_edge_ids: HashSet<String> = context
-            .edges
-            .iter()
-            .map(|e| e.id.to_string())
-            .collect();
+            for node in context.nodes.values() {
+                let (id, node_type, content_type, dimension, properties, metadata) = Self::node_to_row(node)?;
+                conn.execute(
+                    r#"
+                    INSERT INTO nodes (id, context_id, node_type, content_type, dimension, properties_json, metadata_json)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    ON CONFLICT(context_id, id) DO UPDATE SET
+                        node_type = excluded.node_type,
+                        content_type = excluded.content_type,
+                        dimension = excluded.dimension,
+                        properties_json = excluded.properties_json,
+                        metadata_json = excluded.metadata_json
+                    "#,
+                    params![id, context.id.as_str(), node_type, content_type, dimension, properties, metadata],
+                )?;
+            }
 
-        for edge in &context.edges {
-            let (id, source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions) =
-                Self::edge_to_row(edge)?;
+            // --- Edges: upsert all in-memory edges ---
+            let context_edge_ids: HashSet<String> = context
+                .edges
+                .iter()
+                .map(|e| e.id.to_string())
+                .collect();
 
-            conn.execute(
-                r#"
-                INSERT INTO edges (id, context_id, source_id, target_id, source_dimension, target_dimension,
-                                   relationship, raw_weight, created_at, properties_json, contributions_json)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                ON CONFLICT(context_id, id) DO UPDATE SET
-                    source_id = excluded.source_id,
-                    target_id = excluded.target_id,
-                    source_dimension = excluded.source_dimension,
-                    target_dimension = excluded.target_dimension,
-                    relationship = excluded.relationship,
-                    raw_weight = excluded.raw_weight,
-                    properties_json = excluded.properties_json,
-                    contributions_json = excluded.contributions_json
-                "#,
-                params![id, context.id.as_str(), source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions],
-            )?;
-        }
+            for edge in &context.edges {
+                let (id, source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions) =
+                    Self::edge_to_row(edge)?;
 
-        // --- Delete nodes/edges that were in our baseline but are no longer
-        // in the context (i.e., explicitly removed by this engine). ---
-        // Nodes/edges added by other engines are NOT in our baseline, so
-        // they survive this save.
-        {
-            let baselines = self.baselines.lock().unwrap();
-            if let Some((baseline_nodes, baseline_edges)) = baselines.get(context.id.as_str()) {
-                // Delete edges first (foreign key safety)
-                for baseline_edge_id in baseline_edges {
-                    if !context_edge_ids.contains(baseline_edge_id) {
-                        conn.execute(
-                            "DELETE FROM edges WHERE context_id = ?1 AND id = ?2",
-                            params![context.id.as_str(), baseline_edge_id],
-                        )?;
+                conn.execute(
+                    r#"
+                    INSERT INTO edges (id, context_id, source_id, target_id, source_dimension, target_dimension,
+                                       relationship, raw_weight, created_at, properties_json, contributions_json)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    ON CONFLICT(context_id, id) DO UPDATE SET
+                        source_id = excluded.source_id,
+                        target_id = excluded.target_id,
+                        source_dimension = excluded.source_dimension,
+                        target_dimension = excluded.target_dimension,
+                        relationship = excluded.relationship,
+                        raw_weight = excluded.raw_weight,
+                        properties_json = excluded.properties_json,
+                        contributions_json = excluded.contributions_json
+                    "#,
+                    params![id, context.id.as_str(), source, target, source_dim, target_dim, rel, raw_weight, created, props, contributions],
+                )?;
+            }
+
+            // --- Delete nodes/edges that were in our baseline but are no longer
+            // in the context (i.e., explicitly removed by this engine). ---
+            // Nodes/edges added by other engines are NOT in our baseline, so
+            // they survive this save.
+            {
+                let baselines = self.baselines.lock().unwrap();
+                if let Some((baseline_nodes, baseline_edges)) = baselines.get(context.id.as_str()) {
+                    // Delete edges first (foreign key safety)
+                    for baseline_edge_id in baseline_edges {
+                        if !context_edge_ids.contains(baseline_edge_id) {
+                            conn.execute(
+                                "DELETE FROM edges WHERE context_id = ?1 AND id = ?2",
+                                params![context.id.as_str(), baseline_edge_id],
+                            )?;
+                        }
                     }
-                }
-                // Delete nodes
-                for baseline_node_id in baseline_nodes {
-                    if !context_node_ids.contains(baseline_node_id) {
-                        conn.execute(
-                            "DELETE FROM nodes WHERE context_id = ?1 AND id = ?2",
-                            params![context.id.as_str(), baseline_node_id],
-                        )?;
+                    // Delete nodes
+                    for baseline_node_id in baseline_nodes {
+                        if !context_node_ids.contains(baseline_node_id) {
+                            conn.execute(
+                                "DELETE FROM nodes WHERE context_id = ?1 AND id = ?2",
+                                params![context.id.as_str(), baseline_node_id],
+                            )?;
+                        }
                     }
                 }
             }
+
+            Ok((context_node_ids, context_edge_ids))
+        })();
+
+        match result {
+            Ok((context_node_ids, context_edge_ids)) => {
+                conn.execute_batch("COMMIT")?;
+                // Update baseline to match current context state
+                self.baselines.lock().unwrap().insert(
+                    context.id.as_str().to_string(),
+                    (context_node_ids, context_edge_ids),
+                );
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
         }
-
-        // Update baseline to match current context state
-        self.baselines.lock().unwrap().insert(
-            context.id.as_str().to_string(),
-            (context_node_ids, context_edge_ids),
-        );
-
-        Ok(())
     }
 
     fn load_context(&self, id: &ContextId) -> StorageResult<Option<Context>> {
