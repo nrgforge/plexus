@@ -195,7 +195,8 @@ def main():
         print(json.dumps({"success": False, "error": f"invalid JSON input: {e}"}))
         sys.exit(1)
 
-    text = payload.get("input_data", "")
+    # llm-orc wraps input as {"input": ...}, standalone uses {"input_data": ...}
+    text = payload.get("input", "") or payload.get("input_data", "")
     if not text.strip():
         print(json.dumps({
             "success": True,

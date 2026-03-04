@@ -26,7 +26,7 @@ agents:
 
   - name: entity-primed-1
     model_profile: analyst-mistral
-    timeout_seconds: 120
+    timeout_seconds: 240
     temperature: 0.3
     system_prompt: |
       Extract concepts and entities from the provided text.
@@ -75,7 +75,7 @@ agents:
 
   - name: entity-primed-2
     model_profile: analyst-mistral
-    timeout_seconds: 120
+    timeout_seconds: 240
     temperature: 0.3
     system_prompt: |
       Extract concepts and entities from the provided text.
@@ -124,7 +124,7 @@ agents:
 
   - name: entity-primed-3
     model_profile: analyst-mistral
-    timeout_seconds: 120
+    timeout_seconds: 240
     temperature: 0.3
     system_prompt: |
       Extract concepts and entities from the provided text.
@@ -175,7 +175,7 @@ agents:
 
   - name: entity-unprimed
     model_profile: analyst-mistral
-    timeout_seconds: 120
+    timeout_seconds: 240
     temperature: 0.15
     system_prompt: |
       Extract all concepts, entities, and important terms from the provided text.
@@ -191,7 +191,7 @@ agents:
 
   - name: relationship-1
     model_profile: analyst-mistral
-    timeout_seconds: 120
+    timeout_seconds: 240
     temperature: 0.3
     system_prompt: |
       Extract relationships between concepts in the provided text.
@@ -253,7 +253,7 @@ agents:
 
   - name: relationship-2
     model_profile: analyst-mistral
-    timeout_seconds: 120
+    timeout_seconds: 240
     temperature: 0.3
     system_prompt: |
       Extract relationships between concepts in the provided text.
@@ -315,7 +315,7 @@ agents:
 
   - name: relationship-3
     model_profile: analyst-mistral
-    timeout_seconds: 120
+    timeout_seconds: 240
     temperature: 0.3
     system_prompt: |
       Extract relationships between concepts in the provided text.
@@ -379,7 +379,7 @@ agents:
 
   - name: theme
     model_profile: analyst-mistral
-    timeout_seconds: 120
+    timeout_seconds: 240
     temperature: 0.15
     system_prompt: |
       Identify the major themes in the provided text.
