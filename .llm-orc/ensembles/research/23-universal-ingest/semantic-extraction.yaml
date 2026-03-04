@@ -9,7 +9,6 @@ description: >
 agents:
   # Stage 1: Read file, detect MIME, extract text, chunk
   - name: content-extractor
-    type: script
     script: scripts/specialized/plexus/extract_content.py
     parameters:
       max_chunk_lines: 100

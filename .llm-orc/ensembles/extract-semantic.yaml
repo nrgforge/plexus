@@ -20,7 +20,6 @@ agents:
   # --- Phase 2 complement: SpaCy NER + dependency parsing + co-occurrence ---
 
   - name: spacy-extract
-    type: script
     script: scripts/extraction/spacy-extract.py
 
   # --- Entity extraction: primed (3 runs at temp 0.3 for variation) ---

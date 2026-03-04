@@ -8,9 +8,7 @@ description: Compositional semantic extraction for long documents via chunk→fa
 agents:
   # Layer 1: Chunker (splits document by line count with overlap)
   - name: chunker
-    type: script
     script: scripts/plexus/chunker.sh
-    args: ["150", "20"]  # 150 lines per chunk, 20 line overlap
 
   # Layer 2: Chunk Extractor (runs in parallel on each chunk via fan-out)
   - name: chunk-extractor
