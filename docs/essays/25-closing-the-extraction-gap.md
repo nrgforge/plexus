@@ -132,19 +132,27 @@ The union covers nearly all gold relationships. Phase 2 finds the structural one
 ## The architecture
 
 ```
-Phase 2 (heuristic, <1s, CPU):
-  ├── co-occurrence (209 may_be_related pairs)     ──┐
-  ├── dependency parsing (28 typed relationships)   ──┤
-  └── CamelCase regex (component entity names)      ──┤
-                                                      ├── all contribute independently
-Phase 3 (semantic, ~3.5 min, GPU):                    │   via Invariant 45
-  ├── 3× entity (glossary-primed, structured, 0.3) ──┤
-  ├── 1× entity (unprimed, unconstrained, 0.15)    ──┤
-  ├── 3× relationship (unprimed, structured, 0.3)  ──┤
-  └── 1× theme (structured)                        ──┘
+Phase 2 (heuristic, <5s, CPU):
+  SpaCy (en_core_web_trf):
+  ├── NER + noun phrase discovery → vocabulary ──────┐
+  ├── co-occurrence (may_be_related pairs)     ──┐   │
+  └── dependency parsing (typed relationships)  ──┤   │
+  CamelCase regex (component entity names)      ──┤   │
+                                                  │   │
+Phase 3 (semantic, ~3.5 min, GPU):                │   │
+  ├── 3× entity (SpaCy-primed, structured, 0.3)←─│───┘
+  ├── 1× entity (unprimed, unconstrained, 0.15) ──┤ all contribute
+  ├── 3× relationship (unprimed, structured, 0.3)──┤ independently
+  └── 1× theme (structured)                     ──┘ via Invariant 45
 ```
 
-Phase 1 runs synchronously at ingest time: file node, MIME type, basic metadata. Phase 2 runs as a background task in under a second: sentence co-occurrence for `may_be_related` edges, dependency parsing for typed relationships, regex patterns for component names. Phase 3 runs as sequential Mistral:7b calls through llm-orc: entity extraction (~78s), relationship extraction (~150s), theme extraction (~50s).
+SpaCy serves a dual role: it contributes Phase 2 extraction results (co-occurrence pairs, SVO triples) AND acts as the vocabulary bootstrap for Phase 3 entity-primed agents. The entity-primed agents receive their glossary from SpaCy's discovered entities — NER labels, noun phrase chunks, compound terms — not from a hardcoded domain model. This creates a DAG dependency in the llm-orc ensemble: SpaCy runs first, entity-primed agents depend on its output. Relationship agents, theme agents, and the entity-unprimed agent remain fully independent.
+
+This is distinct from the relationship priming tested in Q1, which was counterproductive (F1h: 38% recall primed vs 81% unprimed). Vocabulary hints expand the entity search space — the LLM uses them as starting points while still discovering new entities. Relationship context constrains the relationship search space — the LLM validates what it's given instead of exploring.
+
+The vocabulary bootstrap is naturally hybrid. On cold start (empty graph), SpaCy is the only vocabulary source. On warm start (rich graph), existing graph concepts from `SemanticAdapter.build_input()` augment SpaCy's discovered terms. Both sources are always present and additive — no threshold or switching logic needed.
+
+Phase 1 runs synchronously at ingest time: file node, MIME type, basic metadata. Phase 2 runs as a background task in under five seconds: SpaCy NER and noun phrase discovery for vocabulary bootstrap and entity extraction, sentence co-occurrence for `may_be_related` edges, dependency parsing for typed relationships, regex patterns for component names. Phase 3 runs as sequential Mistral:7b calls through llm-orc: entity extraction (~78s), relationship extraction (~150s), theme extraction (~50s).
 
 Each extraction run gets a distinct adapter ID — `extract-phase2:cooccurrence`, `extract-phase2:depparse`, `extract-phase3:entity:primed:1`, `extract-phase3:entity:primed:2`, `extract-phase3:entity:unprimed`, and so on. Contributions accumulate in separate slots. Scale normalization brings them to comparable range. Raw weight reflects independent confirmation across extraction methods. The graph's existing machinery — the same deterministic concept IDs, contribution tracking, and enrichment loop that handle multi-adapter evidence from Trellis and Carrel — handles multi-phase, multi-run extraction evidence.
 

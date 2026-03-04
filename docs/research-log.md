@@ -351,8 +351,41 @@ Q0 established structured output as the key intervention for relationship extrac
 - **Themes:** already solved (Essay 24, 100% recall)
 - Each run gets a distinct adapter ID
 
-**Cross-phase interaction:** Independent accumulation via Invariant 45. No priming or data passing between phases. Reinforcement mechanics surface relationships confirmed by multiple sources.
+**Cross-phase interaction:** Independent accumulation via Invariant 45 for relationships and themes. No priming or data passing between phases for relationship extraction (F1h: priming is counterproductive). Entity vocabulary is the exception — see Q2 Addendum below.
 
 **Q3 (GPU scheduling)** is simplified by llm-orc 0.15.11's max concurrency setting and the single-model sequential architecture (all runs use Mistral:7b, no multi-model GPU contention).
 
 **Next:** Essay 25 — capture Q0, Q1, and Q2 findings. Then build the extraction ensemble.
+
+---
+
+## Q2 Addendum: SpaCy as Vocabulary Bootstrap
+
+The Q2 findings and the research plan summary (above) state "no priming or data passing between phases." This conclusion overgeneralized from a finding about relationship priming (F1h) to all cross-phase interaction. The distinction matters:
+
+- **Relationship priming is counterproductive.** F1h demonstrated that feeding Phase 2's typed relationships to the LLM makes it validate rather than extend — 38% recall primed vs 81% unprimed. The LLM becomes lazy when given relationship context.
+- **Vocabulary priming helps.** F2a-F2g demonstrated that glossary priming improves entity extraction — 54% primed vs 31% structured-only, and cross-condition union reaches ~85%. Vocabulary hints expand the search space; relationship context constrains it.
+
+The original Q2 spike used a pre-known domain vocabulary (37 terms from the domain model) to seed the entity-primed agents' system prompts. This was a spike shortcut — in production, we don't know the vocabulary in advance. That's the whole point of extraction.
+
+**SpaCy solves the cold-start problem.** SpaCy discovers entities from text structure — NER, noun phrase chunking, compound term detection — without any prior domain knowledge. Those discovered terms become the glossary that primes the entity-primed LLM agents. This is the vocabulary bootstrap:
+
+1. SpaCy (`en_core_web_trf`) runs first, extracting entities from text structure
+2. Entity-primed agents receive SpaCy's output as "previous agent results" via the llm-orc DAG (`depends_on: [spacy-extract]`)
+3. Agents use these terms as vocabulary hints alongside any existing graph concepts from `SemanticAdapter.build_input()`
+
+The vocabulary bootstrap is naturally hybrid — no threshold or switching logic needed:
+- **Cold start** (empty graph): SpaCy is the only vocabulary source for entity-primed agents
+- **Warm start** (rich graph): both SpaCy and existing graph concepts provide vocabulary; SpaCy adds marginal value but catches new terms not yet in the graph
+- Both sources are always present and additive in the system prompt
+
+`en_core_web_trf` (RoBERTa-based) was chosen over `en_core_web_sm` because vocabulary quality is critical — SpaCy's entity list is the foundation for downstream extraction. Speed is irrelevant: SpaCy runs in <5s even with the transformer model, vs 15-40s per LLM agent.
+
+**Heuristic evaluation impact:**
+- **Relationships:** Fully independent. Phase 2 co-occurrence/SVO and Phase 3 LLM extraction contribute separately. Agreement remains genuine independent confirmation. Unchanged by this addendum.
+- **Entities:** Partially assisted. Entity-primed agents see SpaCy vocabulary as hints but still make independent semantic judgments about what constitutes an entity. SpaCy finds entities from text structure; LLMs evaluate semantic relevance. Agreement is meaningful (two different methods), even if not fully independent. The entity-unprimed agent remains fully independent.
+- **Reinforcement via Invariant 45:** Intact. Separate adapter IDs (`extract-phase2:spacy`, `extract-phase3:entity-primed-1`, etc.), separate contribution slots, scale normalization across adapter ranges. The reinforcement mechanism is agnostic to prompt content.
+
+**Invariant compliance:**
+- **Invariant 45** (each extraction phase has a distinct adapter ID): SpaCy and entity agents still have separate adapter IDs and contribution slots. The DAG is about prompt content, not adapter identity.
+- **Invariant 46** (background extraction phases are independent adapter runs): Each still calls `ingest()` with its own adapter ID. The DAG within the llm-orc ensemble is execution order, not adapter-level dependency.
