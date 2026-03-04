@@ -42,7 +42,7 @@ Introduce a `PlexusApi` struct that is the single entry point for all consumer-f
 
 **Provenance mutations (non-ingest):**
 - `update_mark(context_id, mark_id, changes) -> MarkView`
-- `update_chain(context_id, chain_id, changes) -> ChainView`
+- ~~`update_chain(context_id, chain_id, changes) -> ChainView`~~ *(Not implemented — chain metadata is currently immutable after creation. Revisit if chain editing becomes a consumer need.)*
 - `archive_chain(context_id, chain_id) -> ChainView`
 
 **Context management:**

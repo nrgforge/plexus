@@ -12,7 +12,7 @@ Plexus accumulates knowledge from domain data through an adapter pipeline: adapt
 - **Provenance tracking** — chains, marks, and links are created automatically through the ingest pipeline, ensuring all knowledge carries both semantic content and provenance
 - **Evidence trails** — "what evidence supports this concept?" answered in a single query across all dimensions
 - **Source manifest** — contexts track which files, directories, and URLs belong to them
-- **MCP server** — expose capabilities to AI tools via the Model Context Protocol (8 tools)
+- **MCP server** — expose capabilities to AI tools via the Model Context Protocol (9 tools)
 - **SQLite persistence** — WAL mode for concurrent reads, incremental upserts, cache coherence via `data_version`
 - **Cross-context queries** — discover shared concepts between contexts via deterministic ID intersection
 
@@ -71,17 +71,17 @@ Configure in your MCP client (e.g. Claude Code `settings.json`):
 }
 ```
 
-### MCP Tools (8)
+### MCP Tools (9)
 
 **Session:** `set_context` — set active context (auto-created if new)
 
-**Write:** `annotate` — single write path through the full ingest pipeline (Invariant 7)
+**Write:** `ingest` — single write path through the full adapter pipeline (Invariant 7)
 
-**Context (5):** `context_list`, `context_create`, `context_delete`, `context_rename`, `context_add_sources`, `context_remove_sources`
+**Context (6):** `context_list`, `context_create`, `context_delete`, `context_rename`, `context_add_sources`, `context_remove_sources`
 
 **Queries:** `evidence_trail` — marks, fragments, and chains supporting a concept
 
-All writes go through `annotate` → adapter pipeline → enrichment loop. There are no tools for direct mark/chain/link manipulation — those are internal graph structures managed by the pipeline.
+All writes go through `ingest` → adapter pipeline → enrichment loop. There are no tools for direct mark/chain/link manipulation — those are internal graph structures managed by the pipeline.
 
 ## Development
 
@@ -116,9 +116,9 @@ plexus/
 │   ├── api.rs              # PlexusApi — transport-independent facade
 │   ├── bin/plexus.rs       # CLI binary (plexus mcp, plexus context)
 │   ├── graph/              # Core graph: Node, Edge, Context, Engine
-│   ├── adapter/            # Adapter pipeline, enrichments, FragmentAdapter
+│   ├── adapter/            # Adapter pipeline, enrichments, ContentAdapter
 │   ├── provenance/         # Provenance API (chains, marks, links)
-│   ├── mcp/                # MCP server (rmcp, 8 tools)
+│   ├── mcp/                # MCP server (rmcp, 9 tools)
 │   ├── analysis/           # Content analysis pipeline
 │   ├── query/              # Find, traverse, path queries
 │   └── storage/            # SQLite persistence (WAL, incremental upserts)

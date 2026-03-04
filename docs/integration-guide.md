@@ -55,7 +55,7 @@ Your Application
 
 ## Two Integration Patterns
 
-### Pattern 1: Tagged text fragments (via existing FragmentAdapter)
+### Pattern 1: Tagged text fragments (via existing ContentAdapter)
 
 **Use when:** Your application produces tagged text — journal entries, research notes, writing fragments, annotations, chat messages. Each piece has text content and a set of tags/labels. This is the minimum: every piece of content entering Plexus is at least a fragment.
 
@@ -72,9 +72,9 @@ let input = FragmentInput::new(
 let events = api.ingest("research", "fragment", Box::new(input)).await?;
 ```
 
-**How (MCP):** Not yet surfaced as an MCP tool. The `FragmentAdapter` exists and works; an `ingest_fragment` MCP tool is a single-function addition when needed.
+**How (MCP):** Use the `ingest` tool with `{"text": "...", "tags": [...]}` — auto-classified as `"content"` input kind, routed to ContentAdapter.
 
-**Adapter needed:** None. `FragmentAdapter` is built in.
+**Adapter needed:** None. `ContentAdapter` is built in.
 
 **Annotations are fragments.** When you annotate a file location — "security concern at src/auth.rs:42, tags: auth, security" — the annotation text IS a fragment. The tags produce concepts. The mark provides provenance (which chain, which file, which line). There is no "provenance only" path. Every annotation enters the semantic graph.
 
@@ -88,7 +88,7 @@ let events = api.ingest("research", "fragment", Box::new(input)).await?;
 
 **Examples of when you need a custom adapter:**
 
-| Application | Why FragmentAdapter doesn't fit |
+| Application | Why ContentAdapter doesn't fit |
 |---|---|
 | **Carrel** (research desk) | Ingests Semantic Scholar papers with structured metadata (authors, citations, venues). Needs `cited_by` edges, author nodes, venue nodes — not just tags. |
 | **Sketchbin** (creative workshop) | Ingests creative artifacts (audio, code, visual) with modality-specific metadata. Needs `modality` dimension, creator provenance, federation trust edges. |
@@ -106,7 +106,7 @@ Does my application produce data for Plexus?
 ├── No (read-only consumer) → No adapter. Use PlexusApi reads.
 └── Yes
     └── Is it tagged text with no structural metadata beyond tags?
-        ├── Yes → Use FragmentAdapter via ingest("fragment", ...)
+        ├── Yes → Use ContentAdapter via ingest("content", ...)
         └── No → Write a new adapter
 ```
 
@@ -120,7 +120,7 @@ Signs you need a custom adapter:
 - Your **provenance model** is richer than file+line+annotation (e.g., federation source, API response metadata)
 
 Signs you don't:
-- Your data is text with tags → `FragmentAdapter`
+- Your data is text with tags → ContentAdapter via `ingest("content", ...)`
 - You only read the graph → no adapter at all
 
 ---
@@ -341,20 +341,19 @@ Enrichments are deduplicated by `id()` across integrations — if two integratio
 
 ## Phased Extraction (llm-orc)
 
-Plexus extracts knowledge from source files in four phases, ordered from cheapest to most expensive. Cheap phases complete synchronously; expensive phases run in the background. The graph is useful from the moment Phase 1 completes.
+Plexus extracts knowledge from source files in three phases, ordered from cheapest to most expensive. Phase 1 completes synchronously; Phases 2–3 run in the background. The graph is useful from the moment Phase 1 completes.
 
 | Phase | What it does | Speed | Blocking? |
 |---|---|---|---|
-| 1 — File info | MIME type, file size, extension | Instant | Yes |
-| 2 — Metadata | YAML frontmatter, ID3 tags, format-specific metadata | Fast | Yes |
-| 3 — Heuristic | Section structure, link extraction, term frequency | Moderate | No (background) |
-| 4 — Semantic (LLM) | Abstract concepts, themes, inter-concept relationships | Slow | No (background) |
+| 1 — Registration | File node creation, MIME type, metadata | Instant | Yes |
+| 2 — Heuristic analysis | Section structure, proper nouns, camelCase extraction, link discovery | Moderate | No (background) |
+| 3 — Semantic (LLM) | Abstract concepts, themes, inter-concept relationships via llm-orc | Slow | No (background) |
 
-Each phase has a distinct adapter ID, so contributions accumulate rather than overwrite. When Phase 3 discovers a concept via link extraction and Phase 4 discovers the same concept via LLM analysis, the edge has two contribution slots — evidence diversity across methods strengthens the weight automatically.
+Each phase has a distinct adapter ID, so contributions accumulate rather than overwrite. When Phase 2 discovers a concept via heuristic extraction and Phase 3 discovers the same concept via LLM analysis, the edge has two contribution slots — evidence diversity across methods strengthens the weight automatically.
 
 ### llm-orc integration
 
-Phase 4 delegates to [llm-orc](https://github.com/nathangreen/llm-orchestra) for LLM orchestration. The `SemanticAdapter` invokes an ensemble (a pipeline of agents) that reads the file, chunks it, runs parallel LLM extraction on each chunk, and synthesizes the results.
+Phase 3 delegates to [llm-orc](https://github.com/nathangreen/llm-orchestra) for LLM orchestration. The `SemanticAdapter` invokes an ensemble (a pipeline of agents) that reads the file, chunks it, runs parallel LLM extraction on each chunk, and synthesizes the results.
 
 ```
 Source file
@@ -380,7 +379,7 @@ parse_response()  →  Emission (concept nodes + relationship edges)
 sink.emit()  →  enrichment loop  →  graph
 ```
 
-The adapter prefers the `synthesizer` agent's response (the merged result) over individual chunk agents. When llm-orc is unavailable, Phase 4 is skipped — the graph lacks LLM-derived semantic enrichment but is otherwise fully functional (Invariant 47).
+The adapter prefers the `synthesizer` agent's response (the merged result) over individual chunk agents. When llm-orc is unavailable, Phase 3 is skipped — the graph lacks LLM-derived semantic enrichment but is otherwise fully functional (Invariant 47).
 
 ### External enrichment (on-demand)
 
@@ -459,14 +458,14 @@ For non-MCP applications, the options today:
 
 All transports call the same `PlexusApi` methods. The transport is a thin shell — no domain logic.
 
-### MCP Tools (8)
+### MCP Tools (9)
 
-The MCP server exposes 8 tools. `annotate` is the single write path — it goes through the full ingest pipeline (FragmentAdapter + ProvenanceAdapter → enrichment loop), enforcing Invariant 7: all knowledge carries both semantic content and provenance. There are no tools for direct mark, chain, or link manipulation — those are internal graph structures managed by the pipeline.
+The MCP server exposes 9 tools. `ingest` is the single write path — it goes through the full adapter pipeline (ContentAdapter + ProvenanceAdapter → enrichment loop), enforcing Invariant 7: all knowledge carries both semantic content and provenance. There are no tools for direct mark, chain, or link manipulation — those are internal graph structures managed by the pipeline.
 
 | Tool | Category | Description |
 |---|---|---|
 | `set_context` | Session | Set active context (auto-created if new) |
-| `annotate` | Write | Add a mark to a file location — creates chain, mark, fragment, and concepts atomically through the pipeline |
+| `ingest` | Write | Single write path — routes to adapters by `input_kind`, runs enrichment loop |
 | `context_list` | Context | List all contexts with their sources |
 | `context_create` | Context | Create a new context |
 | `context_delete` | Context | Delete a context by name |
@@ -526,9 +525,9 @@ You choose the path. Plexus handles WAL, upserts, and coherence transparently. I
 
 | Application | Pattern | Adapter | Enrichments | Transport |
 |---|---|---|---|---|
-| **Trellis** | Tagged fragments | FragmentAdapter (built in) | TagConceptBridger, CoOccurrence | REST or gRPC |
-| **Carrel** | Custom (papers + annotations) | PaperAdapter (new) + FragmentAdapter | TagConceptBridger, CoOccurrence, CitationBridger (new) | Rust embedding |
+| **Trellis** | Tagged fragments | ContentAdapter (built in) | TagConceptBridger, CoOccurrence | REST or gRPC |
+| **Carrel** | Custom (papers + annotations) | PaperAdapter (new) + ContentAdapter | TagConceptBridger, CoOccurrence, CitationBridger (new) | Rust embedding |
 | **EDDI** | Custom (movement data) | MovementAdapter (new) | MovementBridger (new) | Rust embedding |
-| **Manza** | Viewer/editor + context management | FragmentAdapter (built in) or custom | TagConceptBridger, CoOccurrence | Rust embedding or gRPC |
+| **Manza** | Viewer/editor + context management | ContentAdapter (built in) or custom | TagConceptBridger, CoOccurrence | Rust embedding or gRPC |
 | **Sketchbin** | Custom (creative artifacts) | SketchAdapter (new), FederationAdapter (new) | TagConceptBridger, CoOccurrence | REST + ActivityPub |
-| **Claude Code** | Tagged fragments | FragmentAdapter (built in) | TagConceptBridger, CoOccurrence | MCP (current) |
+| **Claude Code** | Tagged fragments | ContentAdapter (built in) | TagConceptBridger, CoOccurrence | MCP (current) |
