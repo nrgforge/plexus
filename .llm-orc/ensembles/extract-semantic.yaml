@@ -1,18 +1,23 @@
 # Production extraction ensemble (Essay 25 architecture)
 #
-# 1 SpaCy script agent + 8 LLM agents. Each agent operates independently —
-# no DAG dependencies. Multi-run union exploits run-to-run variation,
-# denoised by Invariant 45 (contribution-based reinforcement).
+# 1 SpaCy script agent + 8 LLM agents. SpaCy runs first as vocabulary
+# bootstrap — entity-primed agents depend on its output via DAG. Other
+# agents (entity-unprimed, relationship, theme) remain independent.
+# Multi-run union exploits run-to-run variation, denoised by Invariant 45
+# (contribution-based reinforcement).
 #
-# Entity-primed agents receive dynamic vocabulary from SemanticAdapter.build_input()
-# (existing concepts from Phase 1 frontmatter + Phase 2 CamelCase/proper nouns).
-# The vocabulary is NOT hardcoded here — it arrives via input_data at runtime.
+# Vocabulary sources for entity-primed agents (additive, both always present):
+# 1. SpaCy (DAG): NER + noun phrase entities discovered from text structure
+# 2. SemanticAdapter (runtime): existing graph concepts via input_data
+# Cold start (empty graph): SpaCy is the only vocabulary source.
+# Warm start (rich graph): both sources contribute; SpaCy adds marginal value.
 
 name: extract-semantic
 description: >
   Multi-agent semantic extraction pipeline. SpaCy (NER + dependency parsing)
-  runs alongside LLM agents for entity, relationship, and theme extraction.
-  Independent accumulation — Invariant 45 handles reinforcement across agents.
+  runs first as vocabulary bootstrap. Entity-primed agents depend on SpaCy
+  output for domain vocabulary hints. Relationship, theme, and entity-unprimed
+  agents remain independent. Invariant 45 handles reinforcement across agents.
 
 max_concurrency: 1
 
@@ -28,13 +33,18 @@ agents:
     model_profile: analyst-mistral
     timeout_seconds: 240
     temperature: 0.3
+    depends_on: [spacy-extract]
     system_prompt: |
       Extract concepts and entities from the provided text.
 
-      KNOWN VOCABULARY (use as hints — look for these AND anything else):
-      The input may include an "existing_concepts" field with terms already
-      known to the knowledge graph. Prioritize confirming or refining these,
-      but also discover new entities not in the list.
+      KNOWN VOCABULARY (from upstream NLP analysis):
+      The previous agent results contain entities discovered from the text
+      via NLP analysis (NER, noun phrases, compound terms). Use these as
+      vocabulary hints — look for these terms AND anything else you find.
+
+      The input may also include an "existing_concepts" field with terms
+      already known to the knowledge graph. Both vocabulary sources are
+      additive — use all of them as hints for what to extract.
 
       For each concept, provide:
       - label: canonical name (lowercase, 1-3 words)
@@ -77,13 +87,18 @@ agents:
     model_profile: analyst-mistral
     timeout_seconds: 240
     temperature: 0.3
+    depends_on: [spacy-extract]
     system_prompt: |
       Extract concepts and entities from the provided text.
 
-      KNOWN VOCABULARY (use as hints — look for these AND anything else):
-      The input may include an "existing_concepts" field with terms already
-      known to the knowledge graph. Prioritize confirming or refining these,
-      but also discover new entities not in the list.
+      KNOWN VOCABULARY (from upstream NLP analysis):
+      The previous agent results contain entities discovered from the text
+      via NLP analysis (NER, noun phrases, compound terms). Use these as
+      vocabulary hints — look for these terms AND anything else you find.
+
+      The input may also include an "existing_concepts" field with terms
+      already known to the knowledge graph. Both vocabulary sources are
+      additive — use all of them as hints for what to extract.
 
       For each concept, provide:
       - label: canonical name (lowercase, 1-3 words)
@@ -126,13 +141,18 @@ agents:
     model_profile: analyst-mistral
     timeout_seconds: 240
     temperature: 0.3
+    depends_on: [spacy-extract]
     system_prompt: |
       Extract concepts and entities from the provided text.
 
-      KNOWN VOCABULARY (use as hints — look for these AND anything else):
-      The input may include an "existing_concepts" field with terms already
-      known to the knowledge graph. Prioritize confirming or refining these,
-      but also discover new entities not in the list.
+      KNOWN VOCABULARY (from upstream NLP analysis):
+      The previous agent results contain entities discovered from the text
+      via NLP analysis (NER, noun phrases, compound terms). Use these as
+      vocabulary hints — look for these terms AND anything else you find.
+
+      The input may also include an "existing_concepts" field with terms
+      already known to the knowledge graph. Both vocabulary sources are
+      additive — use all of them as hints for what to extract.
 
       For each concept, provide:
       - label: canonical name (lowercase, 1-3 words)

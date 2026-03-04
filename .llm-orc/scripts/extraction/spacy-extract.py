@@ -1,11 +1,16 @@
 """SpaCy NER + dependency parsing + co-occurrence extraction.
 
 Extracts entities, typed relationships (SVO triples), and sentence
-co-occurrences from text using SpaCy's en_core_web_sm model.
+co-occurrences from text using SpaCy's en_core_web_trf model
+(RoBERTa-based transformer — best NER and dependency parsing accuracy).
+
+Also serves as the vocabulary bootstrap for downstream entity-primed
+LLM agents: discovered entities become the glossary that primes
+Phase 3 extraction via the llm-orc DAG.
 
 Prerequisite:
     pip install spacy
-    python -m spacy download en_core_web_sm
+    python -m spacy download en_core_web_trf
 
 Input: JSON via stdin with "input_data" containing the source text.
 Output: JSON with entities, relationships, and cooccurrences.
@@ -19,7 +24,7 @@ try:
 except ImportError:
     print(json.dumps({
         "success": False,
-        "error": "spacy not installed. Run: pip install spacy && python -m spacy download en_core_web_sm"
+        "error": "spacy not installed. Run: pip install spacy && python -m spacy download en_core_web_trf"
     }))
     sys.exit(1)
 
@@ -46,11 +51,11 @@ MIN_CHUNK_LEN = 2
 def load_model():
     """Load SpaCy model, falling back gracefully."""
     try:
-        return spacy.load("en_core_web_sm")
+        return spacy.load("en_core_web_trf")
     except OSError:
         print(json.dumps({
             "success": False,
-            "error": "en_core_web_sm not found. Run: python -m spacy download en_core_web_sm"
+            "error": "en_core_web_trf not found. Run: python -m spacy download en_core_web_trf"
         }))
         sys.exit(1)
 
