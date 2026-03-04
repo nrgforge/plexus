@@ -3,7 +3,7 @@
 use super::context::{Context, ContextId, ContextMetadata, Source};
 use super::edge::Edge;
 use super::node::NodeId;
-use crate::adapter::GraphEvent;
+use super::events::GraphEvent;
 use crate::query::{FindQuery, PathQuery, QueryResult, PathResult, TraversalResult, TraverseQuery};
 use crate::storage::{GraphStore, StorageError};
 use chrono::Utc;

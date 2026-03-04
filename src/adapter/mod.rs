@@ -13,7 +13,7 @@ mod engine_sink;
 mod enrichment;
 mod events;
 pub mod extraction;
-pub mod fragment;
+pub mod content;
 pub mod graph_analysis;
 mod ingest;
 #[cfg(test)]
@@ -49,7 +49,7 @@ pub use embedding::FastEmbedEmbedder;
 pub use temporal_proximity::TemporalProximityEnrichment;
 pub use extraction::ExtractionCoordinator;
 pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};
-pub use fragment::{ContentAdapter, FragmentInput, normalize_chain_name};
+pub use content::{ContentAdapter, FragmentInput, normalize_chain_name};
 pub use ingest::IngestPipeline;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 pub use tag_bridger::TagConceptBridger;

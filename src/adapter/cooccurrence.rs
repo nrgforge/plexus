@@ -161,7 +161,7 @@ fn output_edge_exists(context: &Context, source: &NodeId, target: &NodeId, relat
 mod tests {
     use super::*;
     use crate::adapter::engine_sink::EngineSink;
-    use crate::adapter::fragment::{ContentAdapter, FragmentInput};
+    use crate::adapter::content::{ContentAdapter, FragmentInput};
     use crate::adapter::provenance::FrameworkContext;
     use crate::adapter::traits::{Adapter, AdapterInput};
     use crate::graph::{EdgeId, Node};

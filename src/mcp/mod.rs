@@ -1,6 +1,6 @@
 //! MCP server for Plexus — knowledge graph engine via the Model Context Protocol.
 //!
-//! Tools: 8 total (1 write + 6 context + 1 graph read).
+//! Tools: 9 total (1 session + 1 write + 6 context + 1 graph read).
 //!
 //! The single write path is `ingest` (ADR-028), which routes to adapters by
 //! input_kind (explicit or auto-classified from JSON shape). All writes go
