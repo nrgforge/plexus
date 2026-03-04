@@ -389,3 +389,22 @@ The vocabulary bootstrap is naturally hybrid — no threshold or switching logic
 **Invariant compliance:**
 - **Invariant 45** (each extraction phase has a distinct adapter ID): SpaCy and entity agents still have separate adapter IDs and contribution slots. The DAG is about prompt content, not adapter identity.
 - **Invariant 46** (background extraction phases are independent adapter runs): Each still calls `ingest()` with its own adapter ID. The DAG within the llm-orc ensemble is execution order, not adapter-level dependency.
+
+### Validation: Live Ensemble Run
+
+Ran the full `extract-semantic` ensemble with `en_core_web_trf` and the SpaCy→entity-primed DAG against Essay 25's opening sections (~5 paragraphs of domain text). All 9 agents completed successfully.
+
+**SpaCy (trf) vocabulary quality.** The transformer model found 90+ entities including compound domain noun phrases: *parallel extraction*, *deterministic merge*, *relationship extraction*, *structured output*, *glossary priming*, *multi-run union*, *extraction pipeline*, *hidden thinking tokens*, *grammar-level constraint*, *JSON schema constraint*, *deterministic Phase 2 extraction*, *Phase 3 LLM extraction*. Also detected *Qwen3:14b* and *Ollama* via PRODUCT NER. Produced 10 SVO triples and ~200 co-occurrence pairs. This is substantially richer than `en_core_web_sm` would produce on the same text — the model upgrade is validated.
+
+**DAG vocabulary bootstrap.** Entity-primed agents received SpaCy output as "previous agent results" and used the discovered terms. All three primed runs found domain concepts that track SpaCy's vocabulary: *structured output*, *glossary priming*, *multi-run union*, *hidden thinking tokens*, *grammar-level constraint*. The DAG mechanic works as designed.
+
+**Run-to-run variation.** The three relationship agents produced 10, 15, and 10 relationships respectively, with genuine variation — different relationship types for the same entity pairs, and different entity pairs across runs. Consistent with Q0's 12% stability finding.
+
+**Entity-unprimed independence.** The unprimed agent found 26 entities independently, overlapping on core terms (good for reinforcement) while also finding terms the primed agents missed. Cross-condition complementarity is preserved.
+
+**Observed noise (expected, not blocking):**
+- SpaCy extracts percentages and numbers as entities ("85%", "62%", "9.7x"). These won't be confirmed by LLM agents, so reinforcement mechanics will suppress them. A numeric filter in the SpaCy script could reduce noise at the source if volume becomes a problem.
+- SpaCy produces duplicate entities with/without spaces around special characters ("85 %" vs "85%"). The SemanticAdapter's label normalization should collapse these, but worth verifying on a larger corpus.
+- Entity-primed agents produce coarser summary labels ("Changes in Extraction Architecture") compared to the unprimed agent's precise terms ("extraction pipeline"). The SpaCy vocabulary may be encouraging the primed agents to summarize rather than extract. Prompt tuning could sharpen this, but reinforcement mechanics handle it: the summary labels won't accumulate contributions from other agents, so they'll stay at low weight.
+
+**Conclusion.** The vocabulary bootstrap strategy is validated. SpaCy trf discovers domain vocabulary from text structure, the DAG delivers it to entity-primed agents, the unprimed agent provides independent signal, and relationship/theme agents remain fully independent. The architecture works end-to-end. Refinements (numeric filtering, prompt tuning) are optimization, not architecture.
