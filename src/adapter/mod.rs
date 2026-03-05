@@ -33,7 +33,7 @@ pub use engine_sink::EngineSink;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use events::GraphEvent;
 pub use provenance::{FrameworkContext, ProvenanceEntry};
-pub use router::{InputRouter, RouteResult, classify_input, ClassifyError};
+pub use router::{RouteResult, classify_input, ClassifyError};
 pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 pub use types::{
@@ -53,4 +53,3 @@ pub use content::{ContentAdapter, FragmentInput, normalize_chain_name};
 pub use ingest::IngestPipeline;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 pub use tag_bridger::TagConceptBridger;
-pub use text_analysis::TextAnalysisAdapter;
