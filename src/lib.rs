@@ -19,7 +19,6 @@
 //! ```
 
 pub mod adapter;
-pub mod analysis;
 pub mod api;
 mod graph;
 pub mod llm_orc;
@@ -31,11 +30,6 @@ pub mod storage;
 pub use adapter::{
     AdapterError, AdapterSink, Annotation, AnnotatedEdge, AnnotatedNode,
     EmitResult, Emission, Rejection, RejectionReason, Removal,
-};
-pub use analysis::{
-    AnalysisCapability, AnalysisConfig, AnalysisError, AnalysisOrchestrator, AnalysisResult,
-    AnalysisScope, AnalyzerRegistry, ConflictStrategy, ContentAnalyzer, ContentId, ContentItem,
-    GraphMutation, ResultMerger, SubGraph,
 };
 pub use graph::{
     ContentType, Context, ContextId, ContextMetadata, Edge, EdgeId, Node, NodeId, PlexusEngine,
