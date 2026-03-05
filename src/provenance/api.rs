@@ -1,55 +1,35 @@
-//! High-level provenance API wrapping PlexusEngine graph operations.
+//! Read-only provenance API wrapping PlexusEngine graph operations.
 //!
 //! Maps the chain/mark/link provenance model onto nodes and edges
-//! in the `"provenance"` dimension.
+//! in the `"provenance"` dimension. All writes go through
+//! `ProvenanceAdapter` via the ingest pipeline.
 
 use chrono::Utc;
 use std::collections::HashSet;
 
 use crate::{
-    dimension, ContentType, Context, ContextId, Edge, Node, NodeId, PlexusEngine, PlexusError,
+    dimension, Context, ContextId, Node, NodeId, PlexusEngine, PlexusError,
     PlexusResult, PropertyValue,
 };
 
 use super::types::{ChainStatus, ChainView, MarkView};
 
-/// High-level provenance API scoped to a single context.
+/// Read-only provenance API scoped to a single context.
+///
+/// All provenance writes (create, update, archive, delete) route through
+/// `ProvenanceAdapter` via the ingest pipeline.
 pub struct ProvenanceApi<'a> {
     engine: &'a PlexusEngine,
     context_id: ContextId,
 }
 
-/// Pipeline bypass (ADR-029): ProvenanceApi writes directly to the engine,
-/// bypassing IngestPipeline. This is intentional — provenance chains and marks
-/// are structural metadata, not adapter-emitted semantic content, so they do
-/// not participate in the enrichment loop.
 impl<'a> ProvenanceApi<'a> {
     /// Create a new ProvenanceApi for the given context.
     pub fn new(engine: &'a PlexusEngine, context_id: ContextId) -> Self {
         Self { engine, context_id }
     }
 
-    // === Chain operations ===
-
-    /// Create a new provenance chain.
-    pub fn create_chain(
-        &self,
-        name: &str,
-        description: Option<&str>,
-    ) -> PlexusResult<String> {
-        let mut node = Node::new_in_dimension("chain", ContentType::Provenance, dimension::PROVENANCE);
-        node.properties.insert("name".into(), PropertyValue::String(name.into()));
-        if let Some(desc) = description {
-            node.properties.insert("description".into(), PropertyValue::String(desc.into()));
-        }
-        node.properties.insert(
-            "status".into(),
-            PropertyValue::String("active".into()),
-        );
-
-        let id = self.engine.add_node(&self.context_id, node)?;
-        Ok(id.to_string())
-    }
+    // === Chain reads ===
 
     /// List chains, optionally filtered by status.
     pub fn list_chains(&self, status: Option<&str>) -> PlexusResult<Vec<ChainView>> {
@@ -109,109 +89,7 @@ impl<'a> ProvenanceApi<'a> {
         Ok((chain_view, marks))
     }
 
-    /// Archive a chain.
-    pub fn archive_chain(&self, chain_id: &str) -> PlexusResult<()> {
-        self.set_chain_status(chain_id, "archived")
-    }
-
-    // === Mark operations ===
-
-    /// Add a mark to a chain.
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_mark(
-        &self,
-        chain_id: &str,
-        file: &str,
-        line: u32,
-        annotation: &str,
-        column: Option<u32>,
-        mark_type: Option<&str>,
-        tags: Option<Vec<String>>,
-    ) -> PlexusResult<String> {
-        // Verify chain exists
-        let context = self.engine.get_context(&self.context_id)
-            .ok_or_else(|| PlexusError::ContextNotFound(self.context_id.clone()))?;
-        let chain_node_id = NodeId::from(chain_id);
-        if context.get_node(&chain_node_id).is_none() {
-            return Err(PlexusError::NodeNotFound(format!("chain not found: {}", chain_id)));
-        }
-        drop(context);
-
-        let mut node = Node::new_in_dimension("mark", ContentType::Provenance, dimension::PROVENANCE);
-        node.properties.insert("chain_id".into(), PropertyValue::String(chain_id.into()));
-        node.properties.insert("file".into(), PropertyValue::String(file.into()));
-        node.properties.insert("line".into(), PropertyValue::Int(line as i64));
-        node.properties.insert("annotation".into(), PropertyValue::String(annotation.into()));
-        if let Some(col) = column {
-            node.properties.insert("column".into(), PropertyValue::Int(col as i64));
-        }
-        if let Some(t) = mark_type {
-            node.properties.insert("type".into(), PropertyValue::String(t.into()));
-        }
-        if let Some(ref t) = tags {
-            let tag_vals: Vec<PropertyValue> = t.iter()
-                .map(|s| PropertyValue::String(s.clone()))
-                .collect();
-            node.properties.insert("tags".into(), PropertyValue::Array(tag_vals));
-        }
-
-        let mark_id = self.engine.add_node(&self.context_id, node)?;
-
-        // Create "contains" edge from chain to mark
-        let edge = Edge::new_in_dimension(
-            chain_node_id,
-            mark_id.clone(),
-            "contains",
-            dimension::PROVENANCE,
-        );
-        self.engine.add_edge(&self.context_id, edge)?;
-
-        // Note: Tag-to-concept bridging (ADR-009) is handled by TagConceptBridger
-        // enrichment when marks are created through the IngestPipeline.
-
-        Ok(mark_id.to_string())
-    }
-
-    /// Update a mark's fields.
-    pub fn update_mark(
-        &self,
-        mark_id: &str,
-        annotation: Option<&str>,
-        line: Option<u32>,
-        column: Option<u32>,
-        mark_type: Option<&str>,
-        tags: Option<Vec<String>>,
-    ) -> PlexusResult<()> {
-        let mut context = self.engine.get_context(&self.context_id)
-            .ok_or_else(|| PlexusError::ContextNotFound(self.context_id.clone()))?;
-
-        let node_id = NodeId::from(mark_id);
-        let node = context.get_node_mut(&node_id)
-            .ok_or_else(|| PlexusError::NodeNotFound(mark_id.into()))?;
-
-        if let Some(a) = annotation {
-            node.properties.insert("annotation".into(), PropertyValue::String(a.into()));
-        }
-        if let Some(l) = line {
-            node.properties.insert("line".into(), PropertyValue::Int(l as i64));
-        }
-        if let Some(col) = column {
-            node.properties.insert("column".into(), PropertyValue::Int(col as i64));
-        }
-        if let Some(t) = mark_type {
-            node.properties.insert("type".into(), PropertyValue::String(t.into()));
-        }
-        if let Some(t) = tags {
-            let tag_vals: Vec<PropertyValue> = t.iter()
-                .map(|s| PropertyValue::String(s.clone()))
-                .collect();
-            node.properties.insert("tags".into(), PropertyValue::Array(tag_vals));
-        }
-
-        node.metadata.modified_at = Some(Utc::now());
-        self.engine.upsert_context(context)?;
-        Ok(())
-    }
+    // === Mark reads ===
 
     /// List marks with optional filters.
     pub fn list_marks(
@@ -287,21 +165,6 @@ impl<'a> ProvenanceApi<'a> {
         Ok(tags)
     }
 
-    // === Internal helpers ===
-
-    fn set_chain_status(&self, chain_id: &str, status: &str) -> PlexusResult<()> {
-        let mut context = self.engine.get_context(&self.context_id)
-            .ok_or_else(|| PlexusError::ContextNotFound(self.context_id.clone()))?;
-
-        let node_id = NodeId::from(chain_id);
-        let node = context.get_node_mut(&node_id)
-            .ok_or_else(|| PlexusError::NodeNotFound(chain_id.into()))?;
-
-        node.properties.insert("status".into(), PropertyValue::String(status.into()));
-        node.metadata.modified_at = Some(Utc::now());
-        self.engine.upsert_context(context)?;
-        Ok(())
-    }
 }
 
 // === Free helper functions ===
@@ -367,98 +230,7 @@ fn node_to_mark_view(n: &Node, context: &Context) -> MarkView {
     }
 }
 
-// ================================================================
-// ADR-008: Project-Scoped Provenance Tests
-// ================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn setup_engine_with_context(name: &str) -> (PlexusEngine, ContextId) {
-        let engine = PlexusEngine::new();
-        let ctx_id = ContextId::from(name);
-        engine.upsert_context(Context::with_id(ctx_id.clone(), name)).unwrap();
-        (engine, ctx_id)
-    }
-
-    // === Scenario: Mark is created in a project context ===
-    #[test]
-    fn mark_created_in_project_context() {
-        let (engine, ctx_id) = setup_engine_with_context("provence-research");
-        let api = ProvenanceApi::new(&engine, ctx_id.clone());
-
-        let chain_id = api.create_chain("reading-notes", None).unwrap();
-        let mark_id = api.add_mark(
-            &chain_id, "notes.md", 42, "walking through Avignon",
-            None, None, None,
-        ).unwrap();
-
-        // Mark node exists in context with provenance dimension
-        let ctx = engine.get_context(&ctx_id).unwrap();
-        let mark_node = ctx.get_node(&NodeId::from(mark_id.as_str())).unwrap();
-        assert_eq!(mark_node.dimension, dimension::PROVENANCE);
-        assert_eq!(mark_node.node_type, "mark");
-
-        // "contains" edge from chain to mark
-        let contains = ctx.edges().find(|e| {
-            e.source == NodeId::from(chain_id.as_str())
-                && e.target == NodeId::from(mark_id.as_str())
-                && e.relationship == "contains"
-        });
-        assert!(contains.is_some(), "chain should have 'contains' edge to mark");
-    }
-
-    // === Scenario: Mark creation without a context fails ===
-    #[test]
-    fn mark_creation_without_context_fails() {
-        let engine = PlexusEngine::new();
-        // No contexts created — use a non-existent context
-        let api = ProvenanceApi::new(&engine, ContextId::from("nonexistent"));
-
-        let result = api.create_chain("reading-notes", None);
-        assert!(result.is_err(), "creating chain in non-existent context should fail");
-    }
-
-    // === Scenario: No __provenance__ context is auto-created ===
-    #[test]
-    fn no_provenance_context_auto_created() {
-        let engine = PlexusEngine::new();
-        assert_eq!(engine.context_count(), 0);
-
-        // list_contexts returns nothing — no __provenance__ auto-created
-        let contexts = engine.list_contexts();
-        assert!(contexts.is_empty());
-        assert!(!contexts.iter().any(|c| c.as_str() == "__provenance__"));
-    }
-
-    // Note: Tag-to-concept bridging (ADR-009) is now handled by
-    // TagConceptBridger enrichment in the ingest pipeline. See
-    // tag_bridger.rs unit tests and integration_tests.rs for coverage.
-
-    // === Scenario: Chains are scoped to their context ===
-    #[test]
-    fn chains_scoped_to_context() {
-        let engine = PlexusEngine::new();
-        let ctx1 = ContextId::from("provence-research");
-        let ctx2 = ContextId::from("desk");
-        engine.upsert_context(Context::with_id(ctx1.clone(), "provence-research")).unwrap();
-        engine.upsert_context(Context::with_id(ctx2.clone(), "desk")).unwrap();
-
-        let api1 = ProvenanceApi::new(&engine, ctx1.clone());
-        let api2 = ProvenanceApi::new(&engine, ctx2.clone());
-
-        api1.create_chain("reading-notes", None).unwrap();
-        api2.create_chain("desk-notes", None).unwrap();
-
-        // Listing chains in provence-research returns only reading-notes
-        let chains1 = api1.list_chains(None).unwrap();
-        assert_eq!(chains1.len(), 1);
-        assert_eq!(chains1[0].name, "reading-notes");
-
-        // Listing chains in desk returns only desk-notes
-        let chains2 = api2.list_chains(None).unwrap();
-        assert_eq!(chains2.len(), 1);
-        assert_eq!(chains2[0].name, "desk-notes");
-    }
-}
+// Tests for provenance reads are covered by:
+// - api.rs tests (PlexusApi delegates to ProvenanceApi reads)
+// - provenance_adapter.rs tests (write operations via pipeline)
+// - integration_tests.rs (end-to-end provenance workflows)
