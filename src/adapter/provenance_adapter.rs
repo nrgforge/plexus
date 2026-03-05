@@ -1,17 +1,7 @@
-//! ProvenanceAdapter — routes provenance write operations through ingest (ADR-012)
+//! ProvenanceAdapter — routes all provenance write operations through ingest (ADR-012)
 //!
-//! Maps creation/structural provenance operations to graph mutations via emission.
-//! The enrichment loop handles tag-concept bridging (TagConceptBridger) for add_mark.
-//!
-//! Operations routed through this adapter:
-//! - CreateChain: emits chain node
-//! - AddMark: emits mark node + contains edge
-//! - LinkMarks: emits links_to edge
-//! - DeleteMark: emits removal (cascade handles edges)
-//!
-//! Operations remaining direct (not through adapter):
-//! - update_mark, archive_chain: read-modify-write pattern
-//! - delete_chain, unlink_marks: deferred per OQ10 (edge removal)
+//! Maps provenance operations to graph mutations via emission.
+//! The enrichment loop handles tag-concept bridging (TagConceptBridger).
 
 use crate::adapter::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};
