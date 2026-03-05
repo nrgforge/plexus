@@ -190,7 +190,7 @@ impl IngestPipeline {
 
         // Step 3: Enrichment loop runs once with combined events
         if !self.enrichments.enrichments().is_empty() && !all_events.is_empty() {
-            let enrichment_result = EngineSink::run_enrichment_loop(
+            let enrichment_result = super::engine_sink::run_enrichment_loop(
                 &self.engine,
                 &ctx_id,
                 &self.enrichments,

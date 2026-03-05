@@ -364,12 +364,18 @@ impl PlexusApi {
     /// and runs the enrichment loop so dependent enrichments can react.
     ///
     /// Returns the count of edges affected.
+    /// Retract all contributions from an adapter/enrichment (ADR-027).
+    ///
+    /// Bypass: calls run_enrichment_loop directly instead of routing through
+    /// IngestPipeline. Intentional — retraction is not an adapter emission;
+    /// it modifies weights and needs re-normalization via the enrichment loop.
     pub fn retract_contributions(
         &self,
         context_id: &str,
         adapter_id: &str,
     ) -> PlexusResult<usize> {
-        use crate::adapter::{EngineSink, GraphEvent};
+        use crate::adapter::GraphEvent;
+        use crate::adapter::run_enrichment_loop;
 
         let ctx_id = self.resolve(context_id)?;
 
@@ -385,7 +391,7 @@ impl PlexusApi {
         // Phase 2: Run enrichment loop with retraction events
         let registry = self.pipeline.enrichment_registry();
         if !registry.enrichments().is_empty() && !events.is_empty() {
-            let _ = EngineSink::run_enrichment_loop(
+            let _ = run_enrichment_loop(
                 &self.engine,
                 &ctx_id,
                 registry,

@@ -30,6 +30,7 @@ mod types;
 
 pub use cancel::CancellationToken;
 pub use engine_sink::EngineSink;
+pub(crate) use engine_sink::run_enrichment_loop;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use events::GraphEvent;
 pub use provenance::{FrameworkContext, ProvenanceEntry};
