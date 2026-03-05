@@ -6,13 +6,10 @@
 
 use clap::{Parser, Subcommand};
 use plexus::{Context, ContextId, OpenStore, PlexusEngine, Source, SqliteStore};
-use plexus::adapter::{
-    Adapter, GraphAnalysisAdapter, run_analysis,
-    AdapterInput, EngineSink, FrameworkContext,
-};
+use plexus::adapter::{GraphAnalysisAdapter, IngestPipeline, run_analysis};
 use plexus::llm_orc::SubprocessClient;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(
@@ -287,11 +284,8 @@ fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &PathBuf) 
     }
 }
 
-/// Pipeline bypass (ADR-029): runs extraction directly against the engine,
-/// bypassing IngestPipeline. Enrichment fires per-adapter via the extraction
-/// coordinator's own sink setup. This is intentional for CLI one-shot analysis.
-async fn cmd_analyze(engine: &PlexusEngine, context_name: &str, ensemble: &str) -> i32 {
-    let ctx_id = match find_context_by_name(engine, context_name) {
+async fn cmd_analyze(engine: Arc<PlexusEngine>, context_name: &str, ensemble: &str) -> i32 {
+    let ctx_id = match find_context_by_name(&engine, context_name) {
         Some(id) => id,
         None => {
             eprintln!("Error: context '{}' not found", context_name);
@@ -332,21 +326,18 @@ async fn cmd_analyze(engine: &PlexusEngine, context_name: &str, ensemble: &str) 
         return 0;
     }
 
-    // Apply each algorithm's results via its adapter
-    let shared_ctx = Arc::new(Mutex::new(ctx.clone()));
+    // Apply each algorithm's results via the ingest pipeline
+    let pipeline = IngestPipeline::new(engine.clone());
+    let ctx_id_str = ctx_id.to_string();
     let mut total_updates = 0;
 
     for (algo_name, input) in &results {
-        let adapter = GraphAnalysisAdapter::new(algo_name.as_str());
-        let sink = EngineSink::new(shared_ctx.clone()).with_framework_context(FrameworkContext {
-            adapter_id: adapter.id().to_string(),
-            context_id: ctx_id.to_string(),
-            input_summary: Some(format!("analysis:{}", algo_name)),
-        });
-
-        let adapter_input = AdapterInput::new(adapter.input_kind(), input.clone(), &ctx_id.to_string());
-        match adapter.process(&adapter_input, &sink).await {
-            Ok(()) => {
+        let adapter = Arc::new(GraphAnalysisAdapter::new(algo_name.as_str()));
+        match pipeline
+            .ingest_with_adapter(&ctx_id_str, adapter, Box::new(input.clone()))
+            .await
+        {
+            Ok(_events) => {
                 println!("  {} — {} node updates", algo_name, input.results.len());
                 total_updates += input.results.len();
             }
@@ -354,13 +345,6 @@ async fn cmd_analyze(engine: &PlexusEngine, context_name: &str, ensemble: &str) 
                 eprintln!("  {} — failed: {}", algo_name, e);
             }
         }
-    }
-
-    // Save the updated context back to the engine
-    let updated_ctx = shared_ctx.lock().unwrap().clone();
-    if let Err(e) = engine.upsert_context(updated_ctx) {
-        eprintln!("Error saving context: {}", e);
-        return 1;
     }
 
     println!("Done. {} property updates applied.", total_updates);
@@ -387,9 +371,10 @@ fn main() {
                     std::process::exit(1);
                 }
             };
+            let engine = Arc::new(engine);
             let code = tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(cmd_analyze(&engine, &name, &ensemble));
+                .block_on(cmd_analyze(engine, &name, &ensemble));
             std::process::exit(code);
         }
         Commands::Context { action, db } => {
