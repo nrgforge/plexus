@@ -66,6 +66,14 @@ pub enum ProvenanceInput {
         chain_id: String,
         mark_ids: Vec<String>,
     },
+    /// Update a mark (pre-built node from caller's read-modify).
+    UpdateMark {
+        node: Node,
+    },
+    /// Archive a chain (pre-built node from caller's read-modify).
+    ArchiveChain {
+        node: Node,
+    },
 }
 
 /// Adapter that routes provenance write operations through the ingest pipeline.
@@ -237,6 +245,14 @@ impl Adapter for ProvenanceAdapter {
                 // Remove the chain node (cascade handles contains edges)
                 emission = emission.with_removal(NodeId::from(chain_id.as_str()));
                 sink.emit(emission).await?;
+            }
+
+            ProvenanceInput::UpdateMark { node } => {
+                sink.emit(Emission::new().with_node(node.clone())).await?;
+            }
+
+            ProvenanceInput::ArchiveChain { node } => {
+                sink.emit(Emission::new().with_node(node.clone())).await?;
             }
         }
 
