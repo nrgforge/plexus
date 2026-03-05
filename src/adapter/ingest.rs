@@ -185,7 +185,7 @@ impl IngestPipeline {
                 });
 
             adapter.process(&input, &sink).await?;
-            all_events.extend(sink.take_accumulated_events());
+            all_events.extend(sink.drain_events());
         }
 
         // Step 3: Enrichment loop runs once with combined events

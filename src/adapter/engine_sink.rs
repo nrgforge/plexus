@@ -82,7 +82,7 @@ impl EngineSink {
     ///
     /// Used by the ingest pipeline to collect events from adapter processing
     /// without going through the AdapterSink trait.
-    pub fn take_accumulated_events(&self) -> Vec<GraphEvent> {
+    pub fn drain_events(&self) -> Vec<GraphEvent> {
         std::mem::take(&mut *self.accumulated_events.lock().unwrap())
     }
 
