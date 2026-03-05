@@ -287,6 +287,9 @@ fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &PathBuf) 
     }
 }
 
+/// Pipeline bypass (ADR-029): runs extraction directly against the engine,
+/// bypassing IngestPipeline. Enrichment fires per-adapter via the extraction
+/// coordinator's own sink setup. This is intentional for CLI one-shot analysis.
 async fn cmd_analyze(engine: &PlexusEngine, context_name: &str, ensemble: &str) -> i32 {
     let ctx_id = match find_context_by_name(engine, context_name) {
         Some(id) => id,

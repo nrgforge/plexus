@@ -19,6 +19,10 @@ pub struct ProvenanceApi<'a> {
     context_id: ContextId,
 }
 
+/// Pipeline bypass (ADR-029): ProvenanceApi writes directly to the engine,
+/// bypassing IngestPipeline. This is intentional — provenance chains and marks
+/// are structural metadata, not adapter-emitted semantic content, so they do
+/// not participate in the enrichment loop.
 impl<'a> ProvenanceApi<'a> {
     /// Create a new ProvenanceApi for the given context.
     pub fn new(engine: &'a PlexusEngine, context_id: ContextId) -> Self {
