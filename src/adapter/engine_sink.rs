@@ -42,10 +42,11 @@ enum SinkBackend {
 /// Two construction paths (ADR-006):
 /// - `new()`: test path using `Arc<Mutex<Context>>`, no persistence
 /// - `for_engine()`: engine path using PlexusEngine with persist-per-emission
+/// EngineSink validates and commits emissions. It does NOT run enrichment.
+/// The enrichment loop is owned by IngestPipeline (ADR-029 Decision 2).
 pub struct EngineSink {
     backend: SinkBackend,
     framework: Option<FrameworkContext>,
-    enrichments: Option<Arc<EnrichmentRegistry>>,
     /// Events accumulated across all emit() calls (for pipeline event collection).
     accumulated_events: Mutex<Vec<GraphEvent>>,
 }
@@ -56,7 +57,6 @@ impl EngineSink {
         Self {
             backend: SinkBackend::Mutex(context),
             framework: None,
-            enrichments: None,
             accumulated_events: Mutex::new(Vec::new()),
         }
     }
@@ -69,23 +69,12 @@ impl EngineSink {
         Self {
             backend: SinkBackend::Engine { engine, context_id },
             framework: None,
-            enrichments: None,
             accumulated_events: Mutex::new(Vec::new()),
         }
     }
 
     pub fn with_framework_context(mut self, framework: FrameworkContext) -> Self {
         self.framework = Some(framework);
-        self
-    }
-
-    /// Attach an enrichment registry (ADR-010).
-    ///
-    /// After each primary emission (Engine backend only), the enrichment loop
-    /// runs: enrichments receive events and a context snapshot, and may produce
-    /// additional emissions committed through the same path.
-    pub fn with_enrichments(mut self, registry: Arc<EnrichmentRegistry>) -> Self {
-        self.enrichments = Some(registry);
         self
     }
 
@@ -404,31 +393,9 @@ impl AdapterSink for EngineSink {
             }
             SinkBackend::Engine { engine, context_id } => {
                 let framework = self.framework.clone();
-                let mut result = engine.with_context_mut(context_id, |ctx| {
+                let result = engine.with_context_mut(context_id, |ctx| {
                     Self::emit_inner(ctx, emission, &framework)
                 }).map_err(Self::map_engine_error)??;
-
-                // Run enrichment loop if enrichments are registered (ADR-010)
-                if let Some(ref registry) = self.enrichments {
-                    if !registry.enrichments().is_empty() {
-                        let primary_events = result.events.clone();
-                        let enrichment_result = run_enrichment_loop(
-                            engine,
-                            context_id,
-                            registry,
-                            &primary_events,
-                        )?;
-
-                        // Merge enrichment results into primary result
-                        result.nodes_committed += enrichment_result.nodes_committed;
-                        result.edges_committed += enrichment_result.edges_committed;
-                        result.removals_committed += enrichment_result.removals_committed;
-                        result.edge_removals_committed += enrichment_result.edge_removals_committed;
-                        result.rejections.extend(enrichment_result.rejections);
-                        result.provenance.extend(enrichment_result.provenance);
-                        result.events.extend(enrichment_result.events);
-                    }
-                }
 
                 // Accumulate events for pipeline collection
                 self.accumulated_events.lock().unwrap()

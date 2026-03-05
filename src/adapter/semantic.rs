@@ -1753,7 +1753,6 @@ Cargo is the build system and package manager for Rust projects.
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
         ]));
         let sink = EngineSink::for_engine(engine.clone(), context_id.clone())
-            .with_enrichments(registry)
             .with_framework_context(crate::adapter::provenance::FrameworkContext {
                 adapter_id: "extract-semantic".to_string(),
                 context_id: "test".to_string(),
@@ -1767,6 +1766,12 @@ Cargo is the build system and package manager for Rust projects.
         );
 
         adapter.process(&input, &sink).await.unwrap();
+
+        // Run enrichment loop with accumulated events
+        let primary_events = sink.take_accumulated_events();
+        crate::adapter::engine_sink::run_enrichment_loop(
+            &engine, &context_id, &registry, &primary_events,
+        ).unwrap();
 
         // Check that TagConceptBridger created references edges
         let ctx = engine.get_context(&context_id).expect("context should exist");

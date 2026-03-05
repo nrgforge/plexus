@@ -4,7 +4,7 @@
 mod tests {
     use crate::adapter::cancel::CancellationToken;
     use crate::adapter::cooccurrence::CoOccurrenceEnrichment;
-    use crate::adapter::engine_sink::EngineSink;
+    use crate::adapter::engine_sink::{EngineSink, run_enrichment_loop};
     use crate::adapter::enrichment::{Enrichment, EnrichmentRegistry};
     use crate::adapter::events::GraphEvent;
     use crate::adapter::content::{ContentAdapter, FragmentInput};
@@ -586,8 +586,7 @@ mod tests {
             input_summary: None,
         };
         let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone())
-            .with_framework_context(framework)
-            .with_enrichments(registry);
+            .with_framework_context(framework);
 
         // Emit a node
         let result = sink
@@ -595,6 +594,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.nodes_committed, 1);
+
+        // Run enrichment loop with primary events
+        let _enrichment_result = run_enrichment_loop(
+            &engine, &ctx_id, &registry, &result.events,
+        ).unwrap();
 
         // Enrichment was called exactly once (one round, then quiescent)
         assert_eq!(enrichment.call_count(), 1);
@@ -679,18 +683,22 @@ mod tests {
             input_summary: None,
         };
         let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone())
-            .with_framework_context(framework)
-            .with_enrichments(registry);
+            .with_framework_context(framework);
 
         // Emit a no-op node to trigger the enrichment loop
-        let result = sink
+        let primary_result = sink
             .emit(Emission::new().with_node(node("trigger-node")))
             .await
             .unwrap();
 
+        // Run enrichment loop with primary events
+        let enrichment_result = run_enrichment_loop(
+            &engine, &ctx_id, &registry, &primary_result.events,
+        ).unwrap();
+
         // Primary emission: 1 node. Enrichment: 1 edge.
-        assert!(result.nodes_committed >= 1);
-        assert_eq!(result.edges_committed, 1);
+        assert!(primary_result.nodes_committed >= 1);
+        assert_eq!(enrichment_result.edges_committed, 1);
 
         // The may_be_related edge exists in the context
         let ctx = engine.get_context(&ctx_id).unwrap();
@@ -728,13 +736,17 @@ mod tests {
             input_summary: None,
         };
         let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone())
-            .with_framework_context(framework)
-            .with_enrichments(registry);
+            .with_framework_context(framework);
 
         let result = sink
             .emit(Emission::new().with_node(node("A")))
             .await
             .unwrap();
+
+        // Run enrichment loop with primary events
+        let _enrichment_result = run_enrichment_loop(
+            &engine, &ctx_id, &registry, &result.events,
+        ).unwrap();
 
         // Loop completed in one round (enrichment called once, returned None)
         assert_eq!(enrichment.call_count(), 1);
@@ -858,14 +870,18 @@ mod tests {
             input_summary: None,
         };
         let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone())
-            .with_framework_context(framework)
-            .with_enrichments(registry);
+            .with_framework_context(framework);
 
         // Primary emission triggers the loop
-        let result = sink
+        let primary_result = sink
             .emit(Emission::new().with_node(node("trigger")))
             .await
             .unwrap();
+
+        // Run enrichment loop with primary events
+        let enrichment_result = run_enrichment_loop(
+            &engine, &ctx_id, &registry, &primary_result.events,
+        ).unwrap();
 
         // Primary: 1 node (trigger). Round 0: enrichment A adds new-node.
         // Round 1: enrichment B sees new-node event, emits edge.
@@ -879,9 +895,10 @@ mod tests {
                 && e.target == NodeId::from_string("new-node")
                 && e.relationship == "depends_on"));
 
-        // Total: trigger (primary) + new-node (enrichment A) = 2 nodes, 1 edge (enrichment B)
-        assert_eq!(result.nodes_committed, 2);
-        assert_eq!(result.edges_committed, 1);
+        // Total: trigger (primary) = 1 node; enrichment: 1 node + 1 edge
+        assert_eq!(primary_result.nodes_committed, 1);
+        assert_eq!(enrichment_result.nodes_committed, 1);
+        assert_eq!(enrichment_result.edges_committed, 1);
     }
 
     // === Scenario: Per-round events — enrichment sees only previous round's events ===
@@ -935,12 +952,14 @@ mod tests {
             input_summary: None,
         };
         let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone())
-            .with_framework_context(framework)
-            .with_enrichments(registry);
+            .with_framework_context(framework);
 
-        sink.emit(Emission::new().with_node(node("primary-node")))
+        let primary_result = sink.emit(Emission::new().with_node(node("primary-node")))
             .await
             .unwrap();
+
+        // Run enrichment loop with primary events
+        run_enrichment_loop(&engine, &ctx_id, &registry, &primary_result.events).unwrap();
 
         let calls = enrichment.calls.lock().unwrap();
         // Round 0 saw primary events (NodesAdded for primary-node)
@@ -1004,16 +1023,21 @@ mod tests {
             input_summary: None,
         };
         let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone())
-            .with_framework_context(framework)
-            .with_enrichments(registry);
+            .with_framework_context(framework);
 
-        let result = sink
+        let primary_result = sink
             .emit(Emission::new().with_node(node("trigger")))
             .await
             .unwrap();
 
+        // Run enrichment loop with primary events
+        let enrichment_result = run_enrichment_loop(
+            &engine, &ctx_id, &registry, &primary_result.events,
+        ).unwrap();
+
         // Safety valve at 3 rounds: primary (1 node) + 3 enrichment rounds (3 nodes) = 4
-        assert_eq!(result.nodes_committed, 4);
+        assert_eq!(primary_result.nodes_committed, 1);
+        assert_eq!(enrichment_result.nodes_committed, 3);
 
         // The enrichment was called exactly 3 times (the max rounds)
         assert_eq!(*enrichment.counter.lock().unwrap(), 3);
@@ -1042,12 +1066,14 @@ mod tests {
             input_summary: None,
         };
         let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone())
-            .with_framework_context(framework)
-            .with_enrichments(registry);
+            .with_framework_context(framework);
 
-        sink.emit(Emission::new().with_node(node("A")))
+        let primary_result = sink.emit(Emission::new().with_node(node("A")))
             .await
             .unwrap();
+
+        // Run enrichment loop with primary events
+        run_enrichment_loop(&engine, &ctx_id, &registry, &primary_result.events).unwrap();
 
         // Only the first enrichment instance was called (dedup by id)
         assert_eq!(enrichment_a.call_count(), 1);
