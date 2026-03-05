@@ -138,6 +138,59 @@ impl IngestPipeline {
         count
     }
 
+    /// Ingest with an explicit adapter, skipping input_kind routing.
+    ///
+    /// Same pipeline steps as `ingest()` but uses the provided adapter
+    /// directly instead of routing by input_kind. Used for dynamic
+    /// adapters (e.g., one per algorithm in graph analysis).
+    pub async fn ingest_with_adapter(
+        &self,
+        context_id: &str,
+        adapter: Arc<dyn Adapter>,
+        data: Box<dyn std::any::Any + Send + Sync>,
+    ) -> Result<Vec<OutboundEvent>, AdapterError> {
+        let ctx_id = ContextId::from(context_id);
+
+        // Verify context exists
+        if self.engine.get_context(&ctx_id).is_none() {
+            return Err(AdapterError::ContextNotFound(context_id.to_string()));
+        }
+
+        let input = AdapterInput::from_boxed(adapter.input_kind(), data, context_id);
+
+        // Step 1: Process the adapter
+        let sink = EngineSink::for_engine(self.engine.clone(), ctx_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: adapter.id().to_string(),
+                context_id: context_id.to_string(),
+                input_summary: None,
+            });
+
+        adapter.process(&input, &sink).await?;
+        let mut all_events: Vec<GraphEvent> = sink.drain_events();
+
+        // Step 2: Enrichment loop
+        if !self.enrichments.enrichments().is_empty() && !all_events.is_empty() {
+            let enrichment_result = super::engine_sink::run_enrichment_loop(
+                &self.engine,
+                &ctx_id,
+                &self.enrichments,
+                &all_events,
+            )?;
+            all_events.extend(enrichment_result.events);
+        }
+
+        // Step 3: Transform events
+        let snapshot = self
+            .engine
+            .get_context(&ctx_id)
+            .ok_or_else(|| AdapterError::ContextNotFound(context_id.to_string()))?;
+
+        let outbound = adapter.transform_events(&all_events, &snapshot);
+
+        Ok(outbound)
+    }
+
     /// The single write endpoint (ADR-012).
     ///
     /// 1. Routes to adapters matching `input_kind` (fan-out if multiple)

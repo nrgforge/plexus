@@ -32,6 +32,18 @@ impl PlexusApi {
 
     // --- Write ---
 
+    /// Ingest with an explicit adapter, skipping input_kind routing.
+    pub async fn ingest_with_adapter(
+        &self,
+        context_id: &str,
+        adapter: Arc<dyn crate::adapter::Adapter>,
+        data: Box<dyn std::any::Any + Send + Sync>,
+    ) -> Result<Vec<OutboundEvent>, AdapterError> {
+        self.pipeline
+            .ingest_with_adapter(context_id, adapter, data)
+            .await
+    }
+
     /// The single write endpoint (ADR-012).
     pub async fn ingest(
         &self,
