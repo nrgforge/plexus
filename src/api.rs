@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::adapter::{AdapterError, FragmentInput, IngestPipeline, OutboundEvent, ProvenanceInput, normalize_chain_name};
 use crate::graph::{
-    Context, ContextId, NodeId, PlexusEngine, PlexusError, PlexusResult, Source,
+    Context, ContextId, NodeId, PlexusEngine, PlexusError, PlexusResult, PropertyValue, Source,
 };
 use crate::provenance::{ChainView, MarkView, ProvenanceApi};
 use crate::query::{
@@ -236,10 +236,8 @@ impl PlexusApi {
         self.engine.find_path(&ctx_id, query)
     }
 
-    // --- Provenance mutations (non-ingest) ---
-
-    /// Update a mark's metadata.
-    pub fn update_mark(
+    /// Update a mark's metadata. Routes through ingest pipeline.
+    pub async fn update_mark(
         &self,
         context_id: &str,
         mark_id: &str,
@@ -248,14 +246,76 @@ impl PlexusApi {
         column: Option<u32>,
         mark_type: Option<&str>,
         tags: Option<Vec<String>>,
-    ) -> PlexusResult<()> {
-        self.prov(context_id)?
-            .update_mark(mark_id, annotation, line, column, mark_type, tags)
+    ) -> Result<(), AdapterError> {
+        let ctx_id = self
+            .resolve(context_id)
+            .map_err(|e| AdapterError::Internal(e.to_string()))?;
+
+        let mut node = {
+            let ctx = self
+                .engine
+                .get_context(&ctx_id)
+                .ok_or_else(|| AdapterError::ContextNotFound(context_id.to_string()))?;
+            let node_id = NodeId::from(mark_id);
+            ctx.get_node(&node_id)
+                .ok_or_else(|| AdapterError::Internal(format!("mark not found: {}", mark_id)))?
+                .clone()
+        };
+
+        if let Some(a) = annotation {
+            node.properties.insert("annotation".into(), PropertyValue::String(a.into()));
+        }
+        if let Some(l) = line {
+            node.properties.insert("line".into(), PropertyValue::Int(l as i64));
+        }
+        if let Some(col) = column {
+            node.properties.insert("column".into(), PropertyValue::Int(col as i64));
+        }
+        if let Some(t) = mark_type {
+            node.properties.insert("type".into(), PropertyValue::String(t.into()));
+        }
+        if let Some(t) = tags {
+            let tag_vals: Vec<PropertyValue> = t.iter()
+                .map(|s| PropertyValue::String(s.clone()))
+                .collect();
+            node.properties.insert("tags".into(), PropertyValue::Array(tag_vals));
+        }
+
+        let input = ProvenanceInput::UpdateMark { node };
+        self.pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await?;
+        Ok(())
     }
 
-    /// Archive a chain.
-    pub fn archive_chain(&self, context_id: &str, chain_id: &str) -> PlexusResult<()> {
-        self.prov(context_id)?.archive_chain(chain_id)
+    /// Archive a chain. Routes through ingest pipeline.
+    pub async fn archive_chain(
+        &self,
+        context_id: &str,
+        chain_id: &str,
+    ) -> Result<(), AdapterError> {
+        let ctx_id = self
+            .resolve(context_id)
+            .map_err(|e| AdapterError::Internal(e.to_string()))?;
+
+        let mut node = {
+            let ctx = self
+                .engine
+                .get_context(&ctx_id)
+                .ok_or_else(|| AdapterError::ContextNotFound(context_id.to_string()))?;
+            let node_id = NodeId::from(chain_id);
+            ctx.get_node(&node_id)
+                .ok_or_else(|| AdapterError::Internal(format!("chain not found: {}", chain_id)))?
+                .clone()
+        };
+
+        node.properties.insert("status".into(), PropertyValue::String("archived".into()));
+
+        let input = ProvenanceInput::ArchiveChain { node };
+        self.pipeline
+            .ingest(ctx_id.as_str(), "provenance", Box::new(input))
+            .await?;
+        Ok(())
     }
 
     /// Delete a mark (cascades edges). Routes through ingest pipeline.
@@ -712,10 +772,10 @@ mod tests {
         assert!(!tags.contains(&"cooking".to_string()));
     }
 
-    // === Scenario: Non-ingest mutations route through ProvenanceApi ===
-    #[test]
-    fn update_mark_routes_through_provenance_api() {
-        let (engine, api) = setup();
+    // === Scenario: update_mark routes through ingest pipeline ===
+    #[tokio::test]
+    async fn update_mark_routes_through_pipeline() {
+        let (engine, api) = setup_with_provenance();
 
         // Create context with a mark
         let mut ctx = Context::new("research");
@@ -724,6 +784,7 @@ mod tests {
         mark.properties.insert("annotation".into(), PropertyValue::String("original".into()));
         mark.properties.insert("file".into(), PropertyValue::String("src/main.rs".into()));
         mark.properties.insert("line".into(), PropertyValue::String("42".into()));
+        mark.properties.insert("chain_id".into(), PropertyValue::String("chain:provenance:notes".into()));
         // Add chain to contain the mark (required for mark to be found by list_marks)
         let mut chain = Node::new_in_dimension("chain", ContentType::Provenance, dimension::PROVENANCE);
         chain.id = NodeId::from("chain:provenance:notes");
@@ -738,8 +799,9 @@ mod tests {
         ));
         engine.upsert_context(ctx).unwrap();
 
-        // Update through PlexusApi
+        // Update through PlexusApi (now async, routes through pipeline)
         api.update_mark("research", "mark:1", Some("updated"), None, None, None, None)
+            .await
             .unwrap();
 
         // Verify via provenance read
