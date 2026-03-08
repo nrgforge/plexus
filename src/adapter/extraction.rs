@@ -410,6 +410,28 @@ fn update_extraction_status_via_engine(
     });
 }
 
+/// Create an EngineSink from either the engine path or the mutex path.
+///
+/// Used by Phase 2 and Phase 3 to avoid duplicating sink construction.
+fn create_sink(
+    engine: &Option<Arc<crate::graph::PlexusEngine>>,
+    context_id: &Option<crate::graph::ContextId>,
+    mutex: &Option<Arc<std::sync::Mutex<Context>>>,
+    adapter_id: &str,
+    context_id_str: &str,
+) -> EngineSink {
+    let sink = if let (Some(ref eng), Some(ref ctx_id)) = (engine, context_id) {
+        EngineSink::for_engine(eng.clone(), ctx_id.clone())
+    } else {
+        EngineSink::new(mutex.clone().unwrap())
+    };
+    sink.with_framework_context(FrameworkContext {
+        adapter_id: adapter_id.to_string(),
+        context_id: context_id_str.to_string(),
+        input_summary: None,
+    })
+}
+
 #[async_trait]
 impl Adapter for ExtractionCoordinator {
     fn id(&self) -> &str {
@@ -469,16 +491,9 @@ impl Adapter for ExtractionCoordinator {
                     })?;
 
                     // Create sink: engine path or mutex path
-                    let sink = if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
-                        EngineSink::for_engine(engine.clone(), ctx_id.clone())
-                    } else {
-                        EngineSink::new(bg_mutex.clone().unwrap())
-                    }.with_framework_context(
-                        FrameworkContext {
-                            adapter_id: adapter.id().to_string(),
-                            context_id: context_id_bg.clone(),
-                            input_summary: None,
-                        },
+                    let sink = create_sink(
+                        &bg_engine, &bg_context_id, &bg_mutex,
+                        adapter.id(), &context_id_bg,
                     );
 
                     let phase2_input = AdapterInput::new(
@@ -511,16 +526,9 @@ impl Adapter for ExtractionCoordinator {
                                 AdapterError::Internal(format!("semaphore closed: {}", e))
                             })?;
 
-                            let sink3 = if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
-                                EngineSink::for_engine(engine.clone(), ctx_id.clone())
-                            } else {
-                                EngineSink::new(bg_mutex.clone().unwrap())
-                            }.with_framework_context(
-                                FrameworkContext {
-                                    adapter_id: phase3.id().to_string(),
-                                    context_id: context_id_bg.clone(),
-                                    input_summary: None,
-                                },
+                            let sink3 = create_sink(
+                                &bg_engine, &bg_context_id, &bg_mutex,
+                                phase3.id(), &context_id_bg,
                             );
 
                             let phase3_input = AdapterInput::new(
