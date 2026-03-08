@@ -564,16 +564,11 @@ impl PlexusApi {
 
     // --- Internal ---
 
-    /// Resolve a context name to its ContextId.
+    /// Resolve a context name to its ContextId (O(1) via name index).
     fn resolve(&self, name: &str) -> PlexusResult<ContextId> {
-        for cid in self.engine.list_contexts() {
-            if let Some(ctx) = self.engine.get_context(&cid) {
-                if ctx.name == name {
-                    return Ok(cid);
-                }
-            }
-        }
-        Err(PlexusError::ContextNotFound(ContextId::from(name)))
+        self.engine
+            .resolve_by_name(name)
+            .ok_or_else(|| PlexusError::ContextNotFound(ContextId::from(name)))
     }
 
     /// Discover concepts shared between two contexts via deterministic
