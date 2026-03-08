@@ -451,9 +451,9 @@ pub(crate) fn run_enrichment_loop(
     }
 
     if !quiesced {
-        eprintln!(
-            "warning: enrichment loop aborted after {} rounds (safety valve)",
-            registry.max_rounds()
+        tracing::warn!(
+            rounds = registry.max_rounds(),
+            "enrichment loop aborted (safety valve)"
         );
     }
 

@@ -105,7 +105,7 @@ impl PlexusMcpServer {
                 );
                 let n = pipeline.register_specs_from_dir(&specs_dir, Some(client));
                 if n > 0 {
-                    eprintln!("adapter-specs: loaded {} spec(s)", n);
+                    tracing::info!(count = n, "adapter-specs: loaded spec(s)");
                 }
             }
         }
@@ -311,7 +311,7 @@ pub fn run_mcp_server(db_path: PathBuf) -> i32 {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!("failed to create tokio runtime: {}", e);
+            tracing::error!(error = %e, "failed to create tokio runtime");
             return 1;
         }
     };
@@ -321,13 +321,13 @@ pub fn run_mcp_server(db_path: PathBuf) -> i32 {
             let store = match SqliteStore::open(&db_path) {
                 Ok(s) => Arc::new(s),
                 Err(e) => {
-                    eprintln!("failed to open database at {}: {}", db_path.display(), e);
+                    tracing::error!(path = %db_path.display(), error = %e, "failed to open database");
                     return 1;
                 }
             };
             let eng = PlexusEngine::with_store(store);
             if let Err(e) = eng.load_all() {
-                eprintln!("failed to load contexts: {}", e);
+                tracing::error!(error = %e, "failed to load contexts");
                 return 1;
             }
             eng
@@ -339,18 +339,18 @@ pub fn run_mcp_server(db_path: PathBuf) -> i32 {
             Some(project_dir),
         );
 
-        eprintln!("plexus mcp server starting on stdio...");
+        tracing::info!("plexus mcp server starting on stdio...");
 
         let service = match server.serve(rmcp::transport::stdio()).await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("failed to start MCP server: {}", e);
+                tracing::error!(error = %e, "failed to start MCP server");
                 return 1;
             }
         };
 
         if let Err(e) = service.waiting().await {
-            eprintln!("MCP server error: {}", e);
+            tracing::error!(error = %e, "MCP server error");
             return 1;
         }
 

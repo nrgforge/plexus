@@ -92,7 +92,7 @@ impl IngestPipeline {
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("adapter-specs: cannot read {}: {}", dir.display(), e);
+                tracing::warn!(dir = %dir.display(), error = %e, "adapter-specs: cannot read directory");
                 return 0;
             }
         };
@@ -107,7 +107,7 @@ impl IngestPipeline {
             let yaml = match std::fs::read_to_string(&path) {
                 Ok(y) => y,
                 Err(e) => {
-                    eprintln!("adapter-specs: cannot read {}: {}", path.display(), e);
+                    tracing::warn!(path = %path.display(), error = %e, "adapter-specs: cannot read file");
                     continue;
                 }
             };
@@ -115,7 +115,7 @@ impl IngestPipeline {
             let adapter = match DeclarativeAdapter::from_yaml(&yaml) {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!("adapter-specs: invalid spec {}: {}", path.display(), e);
+                    tracing::warn!(path = %path.display(), error = %e, "adapter-specs: invalid spec");
                     continue;
                 }
             };
@@ -126,10 +126,10 @@ impl IngestPipeline {
                 adapter
             };
 
-            eprintln!(
-                "adapter-specs: registered {} (input_kind={})",
-                path.display(),
-                adapter.input_kind()
+            tracing::info!(
+                path = %path.display(),
+                input_kind = %adapter.input_kind(),
+                "adapter-specs: registered spec"
             );
             self.register_adapter(Arc::new(adapter));
             count += 1;
