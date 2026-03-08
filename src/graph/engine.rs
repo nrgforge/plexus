@@ -221,7 +221,7 @@ impl PlexusEngine {
     /// Retract all contributions from an adapter/enrichment (ADR-027).
     ///
     /// Removes the adapter's contribution slot from every edge in the context,
-    /// prunes zero-evidence edges, recomputes raw weights, and persists.
+    /// prunes zero-evidence edges, recomputes combined weights, and persists.
     /// Returns graph events (ContributionsRetracted + EdgesRemoved for pruned edges).
     ///
     /// Bypasses the adapter pipeline intentionally — retraction is an engine-level

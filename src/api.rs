@@ -304,6 +304,10 @@ impl PlexusApi {
     }
 
     /// Archive a chain. Routes through ingest pipeline.
+    ///
+    /// Library-only — not exposed via MCP. The MCP transport uses `ingest`
+    /// as its single write tool (ADR-028). Direct callers (Rust embedding)
+    /// can use this for convenience.
     pub async fn archive_chain(
         &self,
         context_id: &str,
