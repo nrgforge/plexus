@@ -612,6 +612,168 @@ mod tests {
         );
     }
 
+    // --- parse_analysis_response edge cases ---
+
+    #[test]
+    fn parse_response_skips_failed_agents() {
+        let mut results = HashMap::new();
+        results.insert(
+            "pagerank".to_string(),
+            AgentResult {
+                response: Some(
+                    r#"{"updates": [{"node_id": "concept:a", "properties": {"score": 0.5}}]}"#
+                        .to_string(),
+                ),
+                status: Some("success".to_string()),
+                error: None,
+            },
+        );
+        results.insert(
+            "community".to_string(),
+            AgentResult {
+                response: Some("error output".to_string()),
+                status: Some("failed".to_string()),
+                error: Some("script crashed".to_string()),
+            },
+        );
+        let response = InvokeResponse {
+            results,
+            status: "completed".to_string(),
+            metadata: serde_json::Value::Null,
+        };
+
+        let parsed = parse_analysis_response(&response).unwrap();
+        assert_eq!(parsed.len(), 1, "only successful agent should produce results");
+        assert_eq!(parsed[0].0, "pagerank");
+    }
+
+    #[test]
+    fn parse_response_skips_missing_updates_field() {
+        let mut results = HashMap::new();
+        results.insert(
+            "hits".to_string(),
+            AgentResult {
+                response: Some(r#"{"scores": [1, 2, 3]}"#.to_string()),
+                status: Some("success".to_string()),
+                error: None,
+            },
+        );
+        let response = InvokeResponse {
+            results,
+            status: "completed".to_string(),
+            metadata: serde_json::Value::Null,
+        };
+
+        let parsed = parse_analysis_response(&response).unwrap();
+        assert!(parsed.is_empty(), "no results when updates field is missing");
+    }
+
+    #[test]
+    fn parse_response_skips_empty_node_ids() {
+        let mut results = HashMap::new();
+        results.insert(
+            "pagerank".to_string(),
+            AgentResult {
+                response: Some(
+                    r#"{"updates": [
+                        {"node_id": "", "properties": {"score": 0.5}},
+                        {"node_id": "concept:valid", "properties": {"score": 0.3}}
+                    ]}"#
+                    .to_string(),
+                ),
+                status: Some("success".to_string()),
+                error: None,
+            },
+        );
+        let response = InvokeResponse {
+            results,
+            status: "completed".to_string(),
+            metadata: serde_json::Value::Null,
+        };
+
+        let parsed = parse_analysis_response(&response).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].1.results.len(), 1, "empty node_id filtered out");
+        assert_eq!(parsed[0].1.results[0].node_id, "concept:valid");
+    }
+
+    #[test]
+    fn parse_response_handles_mixed_property_types() {
+        let mut results = HashMap::new();
+        results.insert(
+            "analysis".to_string(),
+            AgentResult {
+                response: Some(
+                    r#"{"updates": [{
+                        "node_id": "concept:x",
+                        "properties": {
+                            "score": 0.75,
+                            "rank": 3,
+                            "label": "hub",
+                            "active": true
+                        }
+                    }]}"#
+                    .to_string(),
+                ),
+                status: Some("success".to_string()),
+                error: None,
+            },
+        );
+        let response = InvokeResponse {
+            results,
+            status: "completed".to_string(),
+            metadata: serde_json::Value::Null,
+        };
+
+        let parsed = parse_analysis_response(&response).unwrap();
+        let props = &parsed[0].1.results[0].properties;
+        assert_eq!(props.len(), 4);
+        assert!(props.iter().any(|(k, v)| k == "score" && *v == PropertyValue::Float(0.75)));
+        assert!(props.iter().any(|(k, v)| k == "label" && *v == PropertyValue::String("hub".into())));
+        assert!(props.iter().any(|(k, v)| k == "active" && *v == PropertyValue::Bool(true)));
+    }
+
+    #[test]
+    fn export_graph_captures_weights_and_relationships() {
+        let mut ctx = Context::new("test");
+        ctx.add_node(concept("concept:a"));
+        ctx.add_node(concept("concept:b"));
+        ctx.add_node(concept("concept:c"));
+
+        let mut e1 = Edge::new(
+            NodeId::from_string("concept:a"),
+            NodeId::from_string("concept:b"),
+            "related_to",
+        );
+        e1.combined_weight = 0.8;
+        ctx.add_edge(e1);
+
+        let mut e2 = Edge::new(
+            NodeId::from_string("concept:b"),
+            NodeId::from_string("concept:c"),
+            "implies",
+        );
+        e2.combined_weight = 0.3;
+        ctx.add_edge(e2);
+
+        let json = export_graph_for_analysis(&ctx);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["node_count"], 3);
+        assert_eq!(parsed["edge_count"], 2);
+
+        let edges = parsed["edges"].as_array().unwrap();
+        // Find the edge with relationship "implies"
+        let implies_edge = edges
+            .iter()
+            .find(|e| e["relationship"] == "implies")
+            .expect("implies edge should be exported");
+        assert_eq!(implies_edge["source"], "concept:b");
+        assert_eq!(implies_edge["target"], "concept:c");
+        // Weight should be present (exact value may differ due to f32→f64)
+        assert!(implies_edge["weight"].as_f64().unwrap() > 0.0);
+    }
+
     // --- Live integration test: real SubprocessClient → llm-orc → scripts ---
     //
     // Run with: cargo test live_graph_analysis -- --ignored
