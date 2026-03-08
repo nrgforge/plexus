@@ -5,6 +5,17 @@
 //! - Edges: reject if either endpoint missing from graph or same emission
 //! - Removals: no-op if node doesn't exist; cascade connected edges
 //! - Empty emission: no-op
+//!
+//! # Backend split: Mutex vs Engine
+//!
+//! `SinkBackend` has two variants. Both execute identical 5-phase emission
+//! logic via `emit_inner()` — validation, contribution tracking (ADR-003),
+//! scale normalization, and event firing are the same in both paths.
+//!
+//! The only difference is persistence: `Mutex` is ephemeral (unit tests),
+//! while `Engine` persists per-emission via `PlexusEngine::with_context_mut`
+//! (ADR-006). This design lets tests exercise the full validation/emission
+//! pipeline without requiring a storage backend.
 
 use super::enrichment::EnrichmentRegistry;
 use crate::graph::events::GraphEvent;
