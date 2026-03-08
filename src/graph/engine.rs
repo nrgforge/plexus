@@ -45,6 +45,8 @@ pub type PlexusResult<T> = Result<T, PlexusError>;
 pub struct PlexusEngine {
     /// All contexts managed by this engine (in-memory cache)
     contexts: DashMap<ContextId, Context>,
+    /// Reverse lookup: context name → context ID (O(1) resolution)
+    name_index: DashMap<String, ContextId>,
     /// Optional persistent storage backend
     store: Option<Arc<dyn GraphStore>>,
     /// Last observed data_version for cache coherence (ADR-017 §2)
@@ -71,6 +73,7 @@ impl PlexusEngine {
     pub fn new() -> Self {
         Self {
             contexts: DashMap::new(),
+            name_index: DashMap::new(),
             store: None,
             last_data_version: AtomicU64::new(0),
         }
@@ -83,6 +86,7 @@ impl PlexusEngine {
     pub fn with_store(store: Arc<dyn GraphStore>) -> Self {
         Self {
             contexts: DashMap::new(),
+            name_index: DashMap::new(),
             store: Some(store),
             last_data_version: AtomicU64::new(0),
         }
@@ -102,6 +106,7 @@ impl PlexusEngine {
 
         for id in context_ids {
             if let Some(context) = store.load_context(&id)? {
+                self.name_index.insert(context.name.clone(), id.clone());
                 self.contexts.insert(id, context);
                 loaded += 1;
             }
@@ -127,6 +132,14 @@ impl PlexusEngine {
             store.save_context(&context)?;
         }
 
+        // Update name index (remove old name if replacing an existing context)
+        if let Some(old) = self.contexts.get(&id) {
+            if old.name != context.name {
+                self.name_index.remove(&old.name);
+            }
+        }
+        self.name_index.insert(context.name.clone(), id.clone());
+
         // Update in-memory cache
         self.contexts.insert(id.clone(), context);
         Ok(id)
@@ -149,8 +162,12 @@ impl PlexusEngine {
             store.delete_context(id)?;
         }
 
-        // Remove from in-memory cache
-        Ok(self.contexts.remove(id).map(|(_, ctx)| ctx))
+        // Remove from in-memory cache and name index
+        let removed = self.contexts.remove(id).map(|(_, ctx)| ctx);
+        if let Some(ref ctx) = removed {
+            self.name_index.remove(&ctx.name);
+        }
+        Ok(removed)
     }
 
     /// List all context IDs
@@ -171,6 +188,11 @@ impl PlexusEngine {
     /// Check if engine has persistent storage configured
     pub fn has_store(&self) -> bool {
         self.store.is_some()
+    }
+
+    /// Resolve a context name to its ID in O(1) time.
+    pub fn resolve_by_name(&self, name: &str) -> Option<ContextId> {
+        self.name_index.get(name).map(|r| r.value().clone())
     }
 
     /// Execute a closure with mutable access to a context (ADR-006).
@@ -254,8 +276,10 @@ impl PlexusEngine {
 
         // Reload all contexts from storage
         let context_ids = store.list_contexts()?;
+        self.name_index.clear();
         for id in &context_ids {
             if let Some(context) = store.load_context(id)? {
+                self.name_index.insert(context.name.clone(), id.clone());
                 self.contexts.insert(id.clone(), context);
             }
         }
@@ -286,8 +310,13 @@ impl PlexusEngine {
         let mut context = self.contexts.get_mut(id)
             .ok_or_else(|| PlexusError::ContextNotFound(id.clone()))?;
 
+        let old_name = context.name.clone();
         context.name = new_name.to_string();
         context.metadata.updated_at = Some(Utc::now());
+
+        // Update name index
+        self.name_index.remove(&old_name);
+        self.name_index.insert(new_name.to_string(), id.clone());
 
         if let Some(ref store) = self.store {
             store.save_context_metadata(&context)?;
@@ -727,6 +756,59 @@ mod tests {
         assert!(reloaded, "should detect external changes");
         assert_eq!(engine_b.get_context(&ctx_id).unwrap().node_count(), 5,
             "must see 5 nodes after reload");
+    }
+
+    // === Name Index Tests ===
+
+    #[test]
+    fn test_resolve_by_name() {
+        let engine = PlexusEngine::new();
+        let ctx = Context::new("my-context");
+        let id = ctx.id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        assert_eq!(engine.resolve_by_name("my-context"), Some(id));
+        assert_eq!(engine.resolve_by_name("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_name_index_updated_on_rename() {
+        let engine = PlexusEngine::new();
+        let ctx = Context::new("old-name");
+        let id = ctx.id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        engine.rename_context(&id, "new-name").unwrap();
+
+        assert_eq!(engine.resolve_by_name("old-name"), None);
+        assert_eq!(engine.resolve_by_name("new-name"), Some(id));
+    }
+
+    #[test]
+    fn test_name_index_updated_on_remove() {
+        let engine = PlexusEngine::new();
+        let ctx = Context::new("to-remove");
+        let id = ctx.id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        assert!(engine.resolve_by_name("to-remove").is_some());
+        engine.remove_context(&id).unwrap();
+        assert_eq!(engine.resolve_by_name("to-remove"), None);
+    }
+
+    #[test]
+    fn test_name_index_updated_on_upsert_replace() {
+        let engine = PlexusEngine::new();
+        let mut ctx = Context::new("original");
+        let id = ctx.id.clone();
+        engine.upsert_context(ctx.clone()).unwrap();
+
+        // Replace with different name, same ID
+        ctx.name = "renamed".to_string();
+        engine.upsert_context(ctx).unwrap();
+
+        assert_eq!(engine.resolve_by_name("original"), None);
+        assert_eq!(engine.resolve_by_name("renamed"), Some(id));
     }
 
     #[test]
