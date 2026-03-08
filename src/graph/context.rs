@@ -156,16 +156,11 @@ impl Context {
 
     /// Add an edge to the context.
     ///
-    /// # Recompute obligation (ADR-003)
-    ///
-    /// When adding edges **with contributions**, the caller must call
-    /// [`recompute_raw_weights()`](Self::recompute_raw_weights) after all edges in a
-    /// batch have been committed. `add_edge()` does **not** recompute raw weights
-    /// itself — it only merges contribution slots. Skipping the recompute leaves
-    /// `raw_weight` stale with respect to the current contribution set.
-    ///
-    /// `EngineSink::emit_inner` fulfills this obligation automatically after
-    /// committing all edges in an emission.
+    /// Merges contribution slots on exact duplicates but does **not** recompute
+    /// combined weights — callers adding edges in a batch should call
+    /// [`recompute_raw_weights()`](Self::recompute_raw_weights) once after the batch.
+    /// `PlexusEngine::add_edge()`, `apply_mutation()`, and `EngineSink::emit_inner`
+    /// all fulfill this obligation automatically.
     ///
     /// # Deduplication strategy
     ///

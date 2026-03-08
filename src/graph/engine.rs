@@ -441,6 +441,7 @@ impl PlexusEngine {
             .ok_or_else(|| PlexusError::ContextNotFound(context_id.clone()))?;
 
         context.add_edge(edge);
+        context.recompute_raw_weights();
 
         // Persist if storage configured
         if let Some(ref store) = self.store {
@@ -473,6 +474,9 @@ impl PlexusEngine {
         let edge_count = edges.len();
         for edge in edges {
             context.add_edge(edge);
+        }
+        if edge_count > 0 {
+            context.recompute_raw_weights();
         }
 
         // Persist once at the end
