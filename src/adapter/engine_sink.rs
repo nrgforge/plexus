@@ -330,6 +330,7 @@ pub(crate) fn run_enrichment_loop(
     let mut accumulated = EmitResult::empty();
     let mut round_events: Vec<GraphEvent> = trigger_events.to_vec();
     let mut round = 0;
+    let mut quiesced = false;
 
     while round < registry.max_rounds() && !round_events.is_empty() {
         // Snapshot the context (clone for consistent, immutable view)
@@ -346,6 +347,7 @@ pub(crate) fn run_enrichment_loop(
 
         // Quiescence: all enrichments returned None
         if round_emissions.is_empty() {
+            quiesced = true;
             break;
         }
 
@@ -376,9 +378,12 @@ pub(crate) fn run_enrichment_loop(
 
         round_events = new_events;
         round += 1;
-    }
 
-    let quiesced = round_events.is_empty();
+        // Also quiesced if no new events were produced
+        if round_events.is_empty() {
+            quiesced = true;
+        }
+    }
 
     if !quiesced {
         eprintln!(

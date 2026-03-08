@@ -4959,4 +4959,83 @@ emit:
         // Cleanup
         std::fs::remove_dir_all(&tmp_dir).ok();
     }
+
+    // ================================================================
+    // Enrichment Convergence Fitness (ADR-010 telemetry)
+    // ================================================================
+
+    #[tokio::test]
+    async fn enrichment_loop_converges_within_budget_for_production_enrichments() {
+        use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::adapter::discovery_gap::DiscoveryGapEnrichment;
+        use crate::adapter::temporal_proximity::TemporalProximityEnrichment;
+        use crate::graph::{dimension, PropertyValue};
+
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = ContextId::from("convergence-test");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "convergence-test")).unwrap();
+
+        // Register all production enrichments with representative config
+        let registry = Arc::new(EnrichmentRegistry::new(vec![
+            Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
+            Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
+            Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap")) as Arc<dyn Enrichment>,
+            Arc::new(TemporalProximityEnrichment::new("timestamp", 60_000, "temporal_proximity")) as Arc<dyn Enrichment>,
+        ]));
+
+        // Build a realistic payload that exercises co-occurrence:
+        // 2 fragments each tagged_with 2 shared concepts → co-occurrence fires
+        let mut frag1 = Node::new_in_dimension("fragment", ContentType::Document, dimension::PROVENANCE);
+        frag1.id = NodeId::from_string("frag:1");
+        frag1.properties.insert("tags".into(), PropertyValue::Array(vec![
+            PropertyValue::String("machine-learning".into()),
+            PropertyValue::String("ai".into()),
+        ]));
+
+        let mut frag2 = Node::new_in_dimension("fragment", ContentType::Document, dimension::PROVENANCE);
+        frag2.id = NodeId::from_string("frag:2");
+        frag2.properties.insert("tags".into(), PropertyValue::Array(vec![
+            PropertyValue::String("machine-learning".into()),
+            PropertyValue::String("ai".into()),
+        ]));
+
+        let mut concept_ml = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+        concept_ml.id = NodeId::from_string("concept:machine-learning");
+        concept_ml.properties.insert("label".into(), PropertyValue::String("machine-learning".into()));
+
+        let mut concept_ai = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+        concept_ai.id = NodeId::from_string("concept:ai");
+        concept_ai.properties.insert("label".into(), PropertyValue::String("ai".into()));
+
+        let tagged1_ml = Edge::new(frag1.id.clone(), concept_ml.id.clone(), "tagged_with");
+        let tagged1_ai = Edge::new(frag1.id.clone(), concept_ai.id.clone(), "tagged_with");
+        let tagged2_ml = Edge::new(frag2.id.clone(), concept_ml.id.clone(), "tagged_with");
+        let tagged2_ai = Edge::new(frag2.id.clone(), concept_ai.id.clone(), "tagged_with");
+
+        let framework = FrameworkContext {
+            adapter_id: "test-adapter".to_string(),
+            context_id: "convergence-test".to_string(),
+            input_summary: None,
+        };
+        let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone())
+            .with_framework_context(framework);
+
+        let emission = Emission::new()
+            .with_node(frag1).with_node(frag2)
+            .with_node(concept_ml).with_node(concept_ai)
+            .with_edge(tagged1_ml).with_edge(tagged1_ai)
+            .with_edge(tagged2_ml).with_edge(tagged2_ai);
+
+        let primary_result = sink.emit(emission).await.unwrap();
+
+        // Run the enrichment loop with all production enrichments
+        let loop_result = run_enrichment_loop(
+            &engine, &ctx_id, &registry, &primary_result.events,
+        ).unwrap();
+
+        assert!(loop_result.quiesced,
+            "production enrichments should converge by quiescence (ran {} rounds)", loop_result.rounds);
+        assert!(loop_result.rounds <= 3,
+            "production enrichments should converge within 3 rounds, got {}", loop_result.rounds);
+    }
 }
