@@ -24,7 +24,6 @@ mod router;
 pub mod semantic;
 mod sink;
 mod tag_bridger;
-pub mod text_analysis;
 mod traits;
 mod types;
 
