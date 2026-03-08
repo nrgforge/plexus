@@ -112,6 +112,21 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
     None
 }
 
+/// Build a concept node from a label string.
+///
+/// Shared construction: normalizes the label, creates a deterministic NodeId,
+/// and sets the label property. Callers add their own extra properties
+/// (confidence, concept_type, source, etc.) after this returns.
+fn build_concept_node(label: &str) -> (NodeId, Node) {
+    let normalized = label.to_lowercase();
+    let concept_id = NodeId::from_string(format!("concept:{}", normalized));
+    let mut node = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+    node.id = concept_id.clone();
+    node.properties
+        .insert("label".to_string(), PropertyValue::String(normalized));
+    (concept_id, node)
+}
+
 /// Phase 3 semantic adapter — delegates to llm-orc for concept extraction.
 pub struct SemanticAdapter {
     /// The llm-orc client (mock or real)
@@ -231,19 +246,7 @@ impl SemanticAdapter {
                     continue;
                 }
 
-                let normalized = label.to_lowercase();
-                let concept_id = NodeId::from_string(format!("concept:{}", normalized));
-
-                let mut node = Node::new_in_dimension(
-                    "concept",
-                    ContentType::Concept,
-                    dimension::SEMANTIC,
-                );
-                node.id = concept_id.clone();
-                node.properties.insert(
-                    "label".to_string(),
-                    PropertyValue::String(normalized.clone()),
-                );
+                let (concept_id, mut node) = build_concept_node(label);
 
                 if let Some(confidence) = concept.get("confidence").and_then(|v| v.as_f64()) {
                     node.properties.insert(
@@ -422,19 +425,7 @@ impl SemanticAdapter {
                     continue;
                 }
 
-                let normalized = label.to_lowercase();
-                let concept_id = NodeId::from_string(format!("concept:{}", normalized));
-
-                let mut node = Node::new_in_dimension(
-                    "concept",
-                    ContentType::Concept,
-                    dimension::SEMANTIC,
-                );
-                node.id = concept_id.clone();
-                node.properties.insert(
-                    "label".to_string(),
-                    PropertyValue::String(normalized.clone()),
-                );
+                let (concept_id, mut node) = build_concept_node(label);
                 if let Some(concept_type) = concept.get("type").and_then(|v| v.as_str()) {
                     node.properties.insert(
                         "concept_type".to_string(),
@@ -518,19 +509,7 @@ impl SemanticAdapter {
                 if label.is_empty() {
                     continue;
                 }
-                let normalized = label.to_lowercase();
-                let concept_id = NodeId::from_string(format!("concept:{}", normalized));
-
-                let mut node = Node::new_in_dimension(
-                    "concept",
-                    ContentType::Concept,
-                    dimension::SEMANTIC,
-                );
-                node.id = concept_id.clone();
-                node.properties.insert(
-                    "label".to_string(),
-                    PropertyValue::String(normalized.clone()),
-                );
+                let (concept_id, mut node) = build_concept_node(label);
                 if let Some(etype) = entity.get("type").and_then(|v| v.as_str()) {
                     node.properties.insert(
                         "concept_type".to_string(),
@@ -643,19 +622,7 @@ impl SemanticAdapter {
                     continue;
                 }
 
-                let normalized = description.to_lowercase();
-                let concept_id = NodeId::from_string(format!("concept:{}", normalized));
-
-                let mut node = Node::new_in_dimension(
-                    "concept",
-                    ContentType::Concept,
-                    dimension::SEMANTIC,
-                );
-                node.id = concept_id.clone();
-                node.properties.insert(
-                    "label".to_string(),
-                    PropertyValue::String(normalized.clone()),
-                );
+                let (concept_id, mut node) = build_concept_node(description);
                 node.properties.insert(
                     "source".to_string(),
                     PropertyValue::String("theme".to_string()),
