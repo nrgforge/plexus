@@ -303,6 +303,15 @@ impl EngineSink {
 
 }
 
+/// Enrichment loop telemetry: result plus convergence metadata.
+pub(crate) struct EnrichmentLoopResult {
+    pub result: EmitResult,
+    /// Number of enrichment rounds executed.
+    pub rounds: usize,
+    /// True if terminated by quiescence, false if safety valve.
+    pub quiesced: bool,
+}
+
 /// Run the enrichment loop after a primary emission (ADR-010).
 ///
 /// Per-round events: each round sees only events from the previous round.
@@ -310,13 +319,14 @@ impl EngineSink {
 /// The loop terminates when all enrichments return None (quiescence)
 /// or the safety valve (max rounds) is reached.
 ///
-/// Returns an EmitResult accumulating all enrichment rounds' mutations.
+/// Returns an EnrichmentLoopResult with the accumulated EmitResult
+/// plus convergence telemetry (rounds, quiesced).
 pub(crate) fn run_enrichment_loop(
     engine: &PlexusEngine,
     context_id: &ContextId,
     registry: &EnrichmentRegistry,
     trigger_events: &[GraphEvent],
-) -> Result<EmitResult, AdapterError> {
+) -> Result<EnrichmentLoopResult, AdapterError> {
     let mut accumulated = EmitResult::empty();
     let mut round_events: Vec<GraphEvent> = trigger_events.to_vec();
     let mut round = 0;
@@ -368,14 +378,20 @@ pub(crate) fn run_enrichment_loop(
         round += 1;
     }
 
-    if round >= registry.max_rounds() && !round_events.is_empty() {
+    let quiesced = round_events.is_empty();
+
+    if !quiesced {
         eprintln!(
             "warning: enrichment loop aborted after {} rounds (safety valve)",
             registry.max_rounds()
         );
     }
 
-    Ok(accumulated)
+    Ok(EnrichmentLoopResult {
+        result: accumulated,
+        rounds: round,
+        quiesced,
+    })
 }
 
 #[async_trait]

@@ -177,7 +177,7 @@ impl IngestPipeline {
                 &self.enrichments,
                 &all_events,
             )?;
-            all_events.extend(enrichment_result.events);
+            all_events.extend(enrichment_result.result.events);
         }
 
         // Step 3: Transform events
@@ -249,7 +249,7 @@ impl IngestPipeline {
                 &self.enrichments,
                 &all_events,
             )?;
-            all_events.extend(enrichment_result.events);
+            all_events.extend(enrichment_result.result.events);
         }
 
         // Step 4: Transform events through each matched adapter

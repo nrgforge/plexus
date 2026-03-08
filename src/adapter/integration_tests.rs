@@ -698,7 +698,7 @@ mod tests {
 
         // Primary emission: 1 node. Enrichment: 1 edge.
         assert!(primary_result.nodes_committed >= 1);
-        assert_eq!(enrichment_result.edges_committed, 1);
+        assert_eq!(enrichment_result.result.edges_committed, 1);
 
         // The may_be_related edge exists in the context
         let ctx = engine.get_context(&ctx_id).unwrap();
@@ -897,8 +897,8 @@ mod tests {
 
         // Total: trigger (primary) = 1 node; enrichment: 1 node + 1 edge
         assert_eq!(primary_result.nodes_committed, 1);
-        assert_eq!(enrichment_result.nodes_committed, 1);
-        assert_eq!(enrichment_result.edges_committed, 1);
+        assert_eq!(enrichment_result.result.nodes_committed, 1);
+        assert_eq!(enrichment_result.result.edges_committed, 1);
     }
 
     // === Scenario: Per-round events — enrichment sees only previous round's events ===
@@ -1037,7 +1037,7 @@ mod tests {
 
         // Safety valve at 3 rounds: primary (1 node) + 3 enrichment rounds (3 nodes) = 4
         assert_eq!(primary_result.nodes_committed, 1);
-        assert_eq!(enrichment_result.nodes_committed, 3);
+        assert_eq!(enrichment_result.result.nodes_committed, 3);
 
         // The enrichment was called exactly 3 times (the max rounds)
         assert_eq!(*enrichment.counter.lock().unwrap(), 3);
