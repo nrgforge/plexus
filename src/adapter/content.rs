@@ -14,7 +14,7 @@
 use crate::graph::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{Emission, OutboundEvent};
+use crate::adapter::types::{Emission, OutboundEvent, concept_node};
 use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -203,29 +203,19 @@ impl Adapter for ContentAdapter {
 
         // Build concept nodes and tagged_with edges
         for tag in &fragment.tags {
-            let concept_id = NodeId::from_string(format!("concept:{}", tag.to_lowercase()));
-
-            let mut concept_node =
-                Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
-            concept_node.id = concept_id.clone();
-            concept_node.properties.insert(
-                "label".to_string(),
-                PropertyValue::String(tag.to_lowercase()),
-            );
+            let (concept_id, node) = concept_node(tag);
 
             // tagged_with edge: fragment → concept, cross-dimensional
-            let edge = Edge::new_cross_dimensional(
+            let mut edge = Edge::new_cross_dimensional(
                 fragment_id.clone(),
                 dimension::STRUCTURE,
                 concept_id,
                 dimension::SEMANTIC,
                 "tagged_with",
             );
-            // Set raw_weight to 1.0 — engine extracts this as the contribution value
-            let mut edge = edge;
             edge.combined_weight = 1.0;
 
-            emission = emission.with_node(concept_node).with_edge(edge);
+            emission = emission.with_node(node).with_edge(edge);
         }
 
         // Build provenance chain + mark (Invariant 7: content is always

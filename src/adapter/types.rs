@@ -266,6 +266,24 @@ impl OutboundEvent {
     }
 }
 
+// === Construction helpers ===
+
+/// Create a concept node with deterministic ID and label property.
+///
+/// Normalizes `label` to lowercase for the ID (`concept:<lowercase>`) and the
+/// `label` property. Returns the `(NodeId, Node)` pair so callers can add
+/// additional properties before wrapping in `AnnotatedNode`.
+pub fn concept_node(label: &str) -> (NodeId, Node) {
+    use crate::graph::{dimension, ContentType};
+    let normalized = label.to_lowercase();
+    let id = NodeId::from_string(format!("concept:{}", normalized));
+    let mut node = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+    node.id = id.clone();
+    node.properties
+        .insert("label".to_string(), PropertyValue::String(normalized));
+    (id, node)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

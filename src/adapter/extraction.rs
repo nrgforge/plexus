@@ -17,7 +17,7 @@ use crate::adapter::provenance::FrameworkContext;
 use crate::adapter::semantic::SemanticInput;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission};
+use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, concept_node};
 use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -309,25 +309,15 @@ fn run_phase1(
                 Ok(frontmatter) => {
                     let tags = extract_tags_from_frontmatter(&frontmatter);
                     for tag in &tags {
-                        let concept_id = NodeId::from_string(format!("concept:{}", tag));
+                        let (cid, node) = concept_node(tag);
 
-                        let mut concept_node = Node::new_in_dimension(
-                            "concept",
-                            ContentType::Concept,
-                            dimension::SEMANTIC,
-                        );
-                        concept_node.id = concept_id.clone();
-                        concept_node.properties.insert(
-                            "label".to_string(),
-                            PropertyValue::String(tag.clone()),
-                        );
-                        emission = emission.with_node(AnnotatedNode::new(concept_node));
+                        emission = emission.with_node(AnnotatedNode::new(node));
 
                         // tagged_with edge: file → concept
                         let mut edge = Edge::new_cross_dimensional(
                             file_node_id.clone(),
                             dimension::STRUCTURE,
-                            concept_id,
+                            cid,
                             dimension::SEMANTIC,
                             "tagged_with",
                         );
