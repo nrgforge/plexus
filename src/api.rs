@@ -4,6 +4,21 @@
 //! Transports (MCP, gRPC, REST, direct embedding) call `PlexusApi` methods —
 //! they never reach into `ProvenanceApi`, `IngestPipeline`, or `PlexusEngine`
 //! directly.
+//!
+//! # Async vs sync boundary
+//!
+//! **Async** (`async fn`): operations that route through `IngestPipeline` —
+//! `ingest`, `annotate`, `update_mark`, `archive_chain`, `delete_mark`,
+//! `delete_chain`, `link_marks`, `unlink_marks`. These involve adapter
+//! execution and potentially I/O-bound enrichment.
+//!
+//! **Sync** (`fn`): read-only operations that query the in-memory `DashMap`
+//! cache — `list_chains`, `get_chain`, `list_marks`, `list_tags`, `get_links`,
+//! `evidence_trail`, `find_nodes`, `traverse`, `find_path`, `context_*`.
+//! Also `retract_contributions` (mutates in-memory state synchronously).
+//!
+//! This split is intentional: reads are fast cache lookups with no I/O,
+//! while writes go through the async adapter pipeline.
 
 use std::sync::Arc;
 
@@ -432,15 +447,13 @@ impl PlexusApi {
     /// Retract all contributions from an adapter/enrichment (ADR-027).
     ///
     /// Removes the adapter's contribution slot from every edge in the context,
-    /// prunes zero-evidence edges, recomputes raw weights, fires events,
+    /// prunes zero-evidence edges, recomputes combined weights, fires events,
     /// and runs the enrichment loop so dependent enrichments can react.
-    ///
     /// Returns the count of edges affected.
-    /// Retract all contributions from an adapter/enrichment (ADR-027).
     ///
-    /// Bypass: calls run_enrichment_loop directly instead of routing through
-    /// IngestPipeline. Intentional — retraction is not an adapter emission;
-    /// it modifies weights and needs re-normalization via the enrichment loop.
+    /// Bypasses the adapter pipeline intentionally — retraction is an
+    /// engine-level operation that reverses a prior adapter's effect,
+    /// then runs the enrichment loop directly for re-normalization.
     pub fn retract_contributions(
         &self,
         context_id: &str,
