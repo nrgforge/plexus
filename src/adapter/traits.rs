@@ -3,7 +3,7 @@
 //! Inbound: transforms domain-specific input into graph mutations via process().
 //! Outbound: transforms raw graph events into domain-meaningful events via transform_events().
 
-use super::events::GraphEvent;
+use crate::graph::events::GraphEvent;
 use super::sink::{AdapterError, AdapterSink};
 use super::types::OutboundEvent;
 use crate::graph::Context;

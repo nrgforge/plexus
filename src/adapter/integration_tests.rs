@@ -6,7 +6,7 @@ mod tests {
     use crate::adapter::cooccurrence::CoOccurrenceEnrichment;
     use crate::adapter::engine_sink::{EngineSink, run_enrichment_loop};
     use crate::adapter::enrichment::{Enrichment, EnrichmentRegistry};
-    use crate::adapter::events::GraphEvent;
+    use crate::graph::events::GraphEvent;
     use crate::adapter::content::{ContentAdapter, FragmentInput};
     use crate::adapter::provenance::FrameworkContext;
     use crate::adapter::sink::{AdapterError, AdapterSink};

@@ -10,7 +10,7 @@
 //! so the enrichment loop reaches quiescence.
 
 use crate::adapter::enrichment::Enrichment;
-use crate::adapter::events::GraphEvent;
+use crate::graph::events::GraphEvent;
 use crate::adapter::types::{AnnotatedEdge, Emission};
 use crate::graph::{dimension, Context, Edge, NodeId};
 

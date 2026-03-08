@@ -3,7 +3,7 @@
 //! Maps provenance operations to graph mutations via emission.
 //! The enrichment loop handles tag-concept bridging (TagConceptBridger).
 
-use crate::adapter::events::GraphEvent;
+use crate::graph::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
 use crate::adapter::types::{EdgeRemoval, Emission, OutboundEvent};

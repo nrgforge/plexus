@@ -11,7 +11,7 @@
 //! All node IDs are deterministic. Re-ingesting the same fragment produces the same
 //! nodes, triggering upsert rather than creating duplicates.
 
-use crate::adapter::events::GraphEvent;
+use crate::graph::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
 use crate::adapter::types::{Emission, OutboundEvent};

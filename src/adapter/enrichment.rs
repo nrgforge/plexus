@@ -5,7 +5,7 @@
 //! within the graph — distinct from adapters, which bridge between a
 //! consumer's domain and the graph.
 
-use super::events::GraphEvent;
+use crate::graph::events::GraphEvent;
 use super::types::Emission;
 use crate::graph::Context;
 use std::collections::HashSet;

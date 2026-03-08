@@ -7,7 +7,7 @@
 //! - Empty emission: no-op
 
 use super::enrichment::EnrichmentRegistry;
-use super::events::GraphEvent;
+use crate::graph::events::GraphEvent;
 use super::provenance::{FrameworkContext, ProvenanceEntry};
 use super::sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 use super::types::{AnnotatedEdge, AnnotatedNode, Emission};

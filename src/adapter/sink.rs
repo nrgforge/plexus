@@ -3,7 +3,7 @@
 //! The sink is the interface through which adapters push graph mutations
 //! into the engine. `emit()` is async — the adapter awaits validation feedback.
 
-use super::events::GraphEvent;
+use crate::graph::events::GraphEvent;
 use super::provenance::ProvenanceEntry;
 use super::types::Emission;
 use crate::graph::NodeId;

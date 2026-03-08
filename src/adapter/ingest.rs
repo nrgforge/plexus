@@ -11,7 +11,7 @@
 
 use super::engine_sink::EngineSink;
 use super::enrichment::{Enrichment, EnrichmentRegistry};
-use super::events::GraphEvent;
+use crate::graph::events::GraphEvent;
 use super::provenance::FrameworkContext;
 use super::sink::AdapterError;
 use super::traits::{Adapter, AdapterInput};
