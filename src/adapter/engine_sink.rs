@@ -10,7 +10,7 @@ use super::enrichment::EnrichmentRegistry;
 use super::events::GraphEvent;
 use super::provenance::{FrameworkContext, ProvenanceEntry};
 use super::sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
-use super::types::Emission;
+use super::types::{AnnotatedEdge, AnnotatedNode, Emission};
 use crate::graph::{Context, ContextId, EdgeId, NodeId, PlexusEngine};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -100,150 +100,38 @@ impl EngineSink {
         }
 
         let mut result = EmitResult::empty();
-        let timestamp = Utc::now();
 
         let adapter_id = framework.as_ref().map(|fw| fw.adapter_id.clone())
             .unwrap_or_default();
         let context_id = framework.as_ref().map(|fw| fw.context_id.clone())
             .unwrap_or_default();
 
-        // Phase 1: Commit nodes (upsert semantics)
-        let mut committed_node_ids: Vec<NodeId> = Vec::new();
-        for annotated_node in emission.nodes {
-            let node_id = annotated_node.node.id.clone();
-            let annotation = annotated_node.annotation;
-
-            ctx.add_node(annotated_node.node);
-            result.nodes_committed += 1;
-            committed_node_ids.push(node_id.clone());
-
-            if let Some(ref fw) = framework {
-                let entry = ProvenanceEntry::from_context(fw, timestamp, annotation);
-                result.provenance.push((node_id, entry));
-            }
-        }
+        // Phase 1: Commit nodes
+        let (mut committed_node_ids, provenance) = commit_nodes(ctx, emission.nodes, framework);
+        result.nodes_committed += committed_node_ids.len();
+        result.provenance = provenance;
 
         // Phase 2: Validate and commit edges
-        let mut committed_edge_ids: Vec<EdgeId> = Vec::new();
-        let mut weights_changed_edge_ids: Vec<EdgeId> = Vec::new();
-        for annotated_edge in emission.edges {
-            let edge = &annotated_edge.edge;
-            let source_exists = ctx.get_node(&edge.source).is_some();
-            let target_exists = ctx.get_node(&edge.target).is_some();
-
-            if !source_exists {
-                result.rejections.push(Rejection::new(
-                    format!("edge {}→{}", edge.source, edge.target),
-                    RejectionReason::MissingEndpoint(edge.source.clone()),
-                ));
-                continue;
-            }
-
-            if !target_exists {
-                result.rejections.push(Rejection::new(
-                    format!("edge {}→{}", edge.source, edge.target),
-                    RejectionReason::MissingEndpoint(edge.target.clone()),
-                ));
-                continue;
-            }
-
-            let mut edge_to_commit = annotated_edge.edge;
-
-            // ADR-003: Set contribution for the emitting adapter
-            let contribution_value = edge_to_commit.raw_weight;
-            if !adapter_id.is_empty() {
-                edge_to_commit.contributions.insert(
-                    adapter_id.clone(),
-                    contribution_value,
-                );
-            }
-
-            // ADR-003: Detect contribution change for WeightsChanged event
-            let mut contribution_changed = false;
-            if !adapter_id.is_empty() {
-                if let Some(existing) = ctx.edges.iter().find(|e| {
-                    e.source == edge_to_commit.source
-                        && e.target == edge_to_commit.target
-                        && e.relationship == edge_to_commit.relationship
-                        && e.source_dimension == edge_to_commit.source_dimension
-                        && e.target_dimension == edge_to_commit.target_dimension
-                }) {
-                    let old_value = existing.contributions.get(&adapter_id);
-                    let new_value = Some(&contribution_value);
-                    contribution_changed = old_value != new_value;
-                }
-            }
-
-            let edge_id = edge_to_commit.id.clone();
-            ctx.add_edge(edge_to_commit);
-            result.edges_committed += 1;
-            committed_edge_ids.push(edge_id.clone());
-
-            if contribution_changed {
-                weights_changed_edge_ids.push(edge_id);
-            }
-        }
-
-        // ADR-003: Recompute raw weights via scale normalization
-        if !committed_edge_ids.is_empty() {
-            ctx.recompute_raw_weights();
-        }
+        let (committed_edge_ids, weights_changed_edge_ids, edge_rejections) =
+            commit_edges(ctx, emission.edges, &adapter_id);
+        result.edges_committed += committed_edge_ids.len();
+        result.rejections = edge_rejections;
 
         // Phase 2.5: Property updates (merge, not replace) — ADR-023
-        let mut updated_node_ids: Vec<NodeId> = Vec::new();
-        for update in emission.property_updates {
-            if let Some(node) = ctx.get_node_mut(&update.node_id) {
-                for (key, value) in update.properties {
-                    node.properties.insert(key, value);
-                }
-                result.nodes_committed += 1;
-                updated_node_ids.push(update.node_id);
-            }
-            // No-op if node doesn't exist (not a rejection — node may come later)
-        }
-        if !updated_node_ids.is_empty() {
-            committed_node_ids.extend(updated_node_ids);
-        }
+        let updated_node_ids = apply_property_updates(ctx, emission.property_updates);
+        result.nodes_committed += updated_node_ids.len();
+        committed_node_ids.extend(updated_node_ids);
 
         // Phase 3: Process edge removals (targeted)
-        let mut explicitly_removed_edge_ids: Vec<EdgeId> = Vec::new();
-        for edge_removal in emission.edge_removals {
-            let before_count = ctx.edges.len();
-            ctx.edges.retain(|e| {
-                if e.source == edge_removal.source
-                    && e.target == edge_removal.target
-                    && e.relationship == edge_removal.relationship
-                {
-                    explicitly_removed_edge_ids.push(e.id.clone());
-                    false
-                } else {
-                    true
-                }
-            });
-            result.edge_removals_committed += before_count - ctx.edges.len();
-        }
+        let (explicitly_removed_edge_ids, edge_removals_count) =
+            remove_edges(ctx, emission.edge_removals);
+        result.edge_removals_committed += edge_removals_count;
 
         // Phase 4: Process node removals (cascade connected edges)
-        let mut removed_node_ids: Vec<NodeId> = Vec::new();
-        let mut cascaded_edge_ids: Vec<EdgeId> = Vec::new();
-        for removal in emission.removals {
-            if ctx.get_node(&removal.node_id).is_some() {
-                // Collect cascaded edge IDs before removing
-                for edge in ctx.edges.iter() {
-                    if edge.source == removal.node_id || edge.target == removal.node_id {
-                        cascaded_edge_ids.push(edge.id.clone());
-                    }
-                }
-                ctx.nodes.remove(&removal.node_id);
-                ctx.edges.retain(|e| {
-                    e.source != removal.node_id && e.target != removal.node_id
-                });
-                result.removals_committed += 1;
-                removed_node_ids.push(removal.node_id);
-            }
-        }
+        let (removed_node_ids, cascaded_edge_ids) = remove_nodes(ctx, emission.removals);
+        result.removals_committed += removed_node_ids.len();
 
-        // Phase 5: Fire graph events (order: NodesAdded, EdgesAdded, NodesRemoved, EdgesRemoved)
+        // Phase 5: Fire graph events
         if !committed_node_ids.is_empty() {
             result.events.push(GraphEvent::NodesAdded {
                 node_ids: committed_node_ids,
@@ -301,6 +189,172 @@ impl EngineSink {
         }
     }
 
+}
+
+// === emit_inner phase helpers ===
+
+/// Phase 1: Commit nodes (upsert semantics). Returns committed IDs and provenance entries.
+fn commit_nodes(
+    ctx: &mut Context,
+    nodes: Vec<AnnotatedNode>,
+    framework: &Option<FrameworkContext>,
+) -> (Vec<NodeId>, Vec<(NodeId, ProvenanceEntry)>) {
+    let timestamp = Utc::now();
+    let mut committed = Vec::new();
+    let mut provenance = Vec::new();
+
+    for annotated_node in nodes {
+        let node_id = annotated_node.node.id.clone();
+        let annotation = annotated_node.annotation;
+
+        ctx.add_node(annotated_node.node);
+        committed.push(node_id.clone());
+
+        if let Some(ref fw) = framework {
+            let entry = ProvenanceEntry::from_context(fw, timestamp, annotation);
+            provenance.push((node_id, entry));
+        }
+    }
+
+    (committed, provenance)
+}
+
+/// Phase 2: Validate and commit edges. Returns (committed IDs, weight-changed IDs, rejections).
+fn commit_edges(
+    ctx: &mut Context,
+    edges: Vec<AnnotatedEdge>,
+    adapter_id: &str,
+) -> (Vec<EdgeId>, Vec<EdgeId>, Vec<Rejection>) {
+    let mut committed = Vec::new();
+    let mut weights_changed = Vec::new();
+    let mut rejections = Vec::new();
+
+    for annotated_edge in edges {
+        let edge = &annotated_edge.edge;
+
+        if ctx.get_node(&edge.source).is_none() {
+            rejections.push(Rejection::new(
+                format!("edge {}→{}", edge.source, edge.target),
+                RejectionReason::MissingEndpoint(edge.source.clone()),
+            ));
+            continue;
+        }
+        if ctx.get_node(&edge.target).is_none() {
+            rejections.push(Rejection::new(
+                format!("edge {}→{}", edge.source, edge.target),
+                RejectionReason::MissingEndpoint(edge.target.clone()),
+            ));
+            continue;
+        }
+
+        let mut edge_to_commit = annotated_edge.edge;
+
+        // ADR-003: Set contribution for the emitting adapter
+        let contribution_value = edge_to_commit.raw_weight;
+        if !adapter_id.is_empty() {
+            edge_to_commit.contributions.insert(
+                adapter_id.to_string(),
+                contribution_value,
+            );
+        }
+
+        // ADR-003: Detect contribution change for WeightsChanged event
+        let mut contribution_changed = false;
+        if !adapter_id.is_empty() {
+            if let Some(existing) = ctx.edges.iter().find(|e| {
+                e.source == edge_to_commit.source
+                    && e.target == edge_to_commit.target
+                    && e.relationship == edge_to_commit.relationship
+                    && e.source_dimension == edge_to_commit.source_dimension
+                    && e.target_dimension == edge_to_commit.target_dimension
+            }) {
+                let old_value = existing.contributions.get(adapter_id);
+                let new_value = Some(&contribution_value);
+                contribution_changed = old_value != new_value;
+            }
+        }
+
+        let edge_id = edge_to_commit.id.clone();
+        ctx.add_edge(edge_to_commit);
+        committed.push(edge_id.clone());
+
+        if contribution_changed {
+            weights_changed.push(edge_id);
+        }
+    }
+
+    // ADR-003: Recompute raw weights via scale normalization
+    if !committed.is_empty() {
+        ctx.recompute_raw_weights();
+    }
+
+    (committed, weights_changed, rejections)
+}
+
+/// Phase 2.5: Apply property updates (merge, not replace). Returns updated node IDs.
+fn apply_property_updates(
+    ctx: &mut Context,
+    updates: Vec<crate::adapter::types::PropertyUpdate>,
+) -> Vec<NodeId> {
+    let mut updated = Vec::new();
+    for update in updates {
+        if let Some(node) = ctx.get_node_mut(&update.node_id) {
+            for (key, value) in update.properties {
+                node.properties.insert(key, value);
+            }
+            updated.push(update.node_id);
+        }
+    }
+    updated
+}
+
+/// Phase 3: Process targeted edge removals. Returns (removed IDs, removal count).
+fn remove_edges(
+    ctx: &mut Context,
+    edge_removals: Vec<crate::adapter::types::EdgeRemoval>,
+) -> (Vec<EdgeId>, usize) {
+    let mut removed = Vec::new();
+    let mut count = 0;
+    for edge_removal in edge_removals {
+        let before = ctx.edges.len();
+        ctx.edges.retain(|e| {
+            if e.source == edge_removal.source
+                && e.target == edge_removal.target
+                && e.relationship == edge_removal.relationship
+            {
+                removed.push(e.id.clone());
+                false
+            } else {
+                true
+            }
+        });
+        count += before - ctx.edges.len();
+    }
+    (removed, count)
+}
+
+/// Phase 4: Process node removals with edge cascade. Returns (removed node IDs, cascaded edge IDs).
+fn remove_nodes(
+    ctx: &mut Context,
+    removals: Vec<crate::adapter::types::Removal>,
+) -> (Vec<NodeId>, Vec<EdgeId>) {
+    let mut removed_nodes = Vec::new();
+    let mut cascaded_edges = Vec::new();
+    for removal in removals {
+        if ctx.get_node(&removal.node_id).is_some() {
+            for edge in ctx.edges.iter() {
+                if edge.source == removal.node_id || edge.target == removal.node_id {
+                    cascaded_edges.push(edge.id.clone());
+                }
+            }
+            ctx.nodes.remove(&removal.node_id);
+            ctx.edges.retain(|e| {
+                e.source != removal.node_id && e.target != removal.node_id
+            });
+            removed_nodes.push(removal.node_id);
+        }
+    }
+    (removed_nodes, cascaded_edges)
 }
 
 /// Enrichment loop telemetry: result plus convergence metadata.
