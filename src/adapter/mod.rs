@@ -34,7 +34,7 @@ pub(crate) use engine_sink::run_enrichment_loop;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use events::GraphEvent;
 pub use provenance::{FrameworkContext, ProvenanceEntry};
-pub use router::{RouteResult, classify_input, ClassifyError};
+pub use router::{classify_input, ClassifyError};
 pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 pub use types::{
