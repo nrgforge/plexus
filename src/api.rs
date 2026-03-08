@@ -264,7 +264,7 @@ impl PlexusApi {
     ) -> Result<(), AdapterError> {
         let ctx_id = self
             .resolve(context_id)
-            .map_err(|e| AdapterError::Internal(e.to_string()))?;
+            .map_err(|e| AdapterError::Storage(e.to_string()))?;
 
         let mut node = {
             let ctx = self
@@ -315,7 +315,7 @@ impl PlexusApi {
     ) -> Result<(), AdapterError> {
         let ctx_id = self
             .resolve(context_id)
-            .map_err(|e| AdapterError::Internal(e.to_string()))?;
+            .map_err(|e| AdapterError::Storage(e.to_string()))?;
 
         let mut node = {
             let ctx = self
@@ -345,7 +345,7 @@ impl PlexusApi {
     ) -> Result<(), AdapterError> {
         let ctx_id = self
             .resolve(context_id)
-            .map_err(|e| AdapterError::Internal(e.to_string()))?;
+            .map_err(|e| AdapterError::Storage(e.to_string()))?;
         let input = ProvenanceInput::DeleteMark {
             mark_id: mark_id.to_string(),
         };
@@ -435,7 +435,7 @@ impl PlexusApi {
     ) -> Result<(), AdapterError> {
         let ctx_id = self
             .resolve(context_id)
-            .map_err(|e| AdapterError::Internal(e.to_string()))?;
+            .map_err(|e| AdapterError::Storage(e.to_string()))?;
         let input = ProvenanceInput::UnlinkMarks {
             source_id: source_id.to_string(),
             target_id: target_id.to_string(),

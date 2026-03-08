@@ -106,6 +106,10 @@ pub enum AdapterError {
     Cancelled,
     #[error("context not found: {0}")]
     ContextNotFound(String),
+    #[error("storage error: {0}")]
+    Storage(String),
+    #[error("serialization error: {0}")]
+    Serialization(String),
     #[error("adapter error: {0}")]
     Internal(String),
     #[error("skipped: {0}")]

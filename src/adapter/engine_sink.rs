@@ -196,7 +196,7 @@ impl EngineSink {
         match e {
             crate::graph::PlexusError::ContextNotFound(id) =>
                 AdapterError::ContextNotFound(id.to_string()),
-            other => AdapterError::Internal(other.to_string()),
+            other => AdapterError::Storage(other.to_string()),
         }
     }
 

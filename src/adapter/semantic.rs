@@ -215,7 +215,7 @@ impl SemanticAdapter {
         file_path: &str,
     ) -> Result<Emission, AdapterError> {
         let parsed: serde_json::Value = extract_json(response_text)
-            .ok_or_else(|| AdapterError::Internal(
+            .ok_or_else(|| AdapterError::Serialization(
                 format!("no valid JSON found in llm-orc response: {}", &response_text[..response_text.len().min(200)])
             ))?;
 

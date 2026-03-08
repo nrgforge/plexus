@@ -278,7 +278,7 @@ fn run_phase1(
 
     // Read file metadata
     let metadata = std::fs::metadata(path)
-        .map_err(|e| AdapterError::Internal(format!("cannot read file metadata: {}", e)))?;
+        .map_err(|e| AdapterError::Storage(format!("cannot read file metadata: {}", e)))?;
     let file_size = metadata.len();
 
     // File node

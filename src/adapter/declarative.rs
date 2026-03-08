@@ -452,7 +452,7 @@ impl DeclarativeAdapter {
     /// the adapter. Returns an error for malformed YAML or spec violations.
     pub fn from_yaml(yaml: &str) -> Result<Self, AdapterError> {
         let spec: DeclarativeSpec = serde_yaml::from_str(yaml).map_err(|e| {
-            AdapterError::Internal(format!("YAML deserialization error: {}", e))
+            AdapterError::Serialization(format!("YAML deserialization error: {}", e))
         })?;
         Self::new(spec)
     }
