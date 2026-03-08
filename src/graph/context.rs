@@ -154,9 +154,21 @@ impl Context {
         id
     }
 
-    /// Add an edge to the context
+    /// Add an edge to the context.
     ///
-    /// Uses a hybrid deduplication strategy:
+    /// # Recompute obligation (ADR-003)
+    ///
+    /// When adding edges **with contributions**, the caller must call
+    /// [`recompute_raw_weights()`](Self::recompute_raw_weights) after all edges in a
+    /// batch have been committed. `add_edge()` does **not** recompute raw weights
+    /// itself — it only merges contribution slots. Skipping the recompute leaves
+    /// `raw_weight` stale with respect to the current contribution set.
+    ///
+    /// `EngineSink::emit_inner` fulfills this obligation automatically after
+    /// committing all edges in an emission.
+    ///
+    /// # Deduplication strategy
+    ///
     /// - **Dimension-distinct**: Edges with same source/target/relationship but different
     ///   dimensions are stored as separate edges (preserves multi-dimensional richness)
     /// - **Exact duplicate**: When the same edge (source/target/relationship/dimensions) already
@@ -560,6 +572,43 @@ mod tests {
         assert_ne!(weight_before, weight_after, "raw weight should change after retraction");
         // Both edges still exist (both had remaining contributions)
         assert_eq!(ctx.edge_count(), 2);
+    }
+
+    /// Verify that raw_weight is consistent with contributions after recompute.
+    ///
+    /// This is the debug safety net for the recompute obligation documented
+    /// on `add_edge()`. If this fails, a caller committed edges with contributions
+    /// but forgot to call `recompute_raw_weights()`.
+    #[test]
+    fn verify_raw_weights_consistent_with_contributions() {
+        let mut ctx = Context::new("test");
+        let id_a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let id_c = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+
+        // Add edges with contributions (raw_weight starts stale at 1.0)
+        ctx.add_edge(
+            Edge::new_in_dimension(id_a.clone(), id_b.clone(), "related_to", "semantic")
+                .with_contribution("adapter-a", 0.8)
+                .with_contribution("adapter-b", 0.4),
+        );
+        ctx.add_edge(
+            Edge::new_in_dimension(id_b.clone(), id_c.clone(), "related_to", "semantic")
+                .with_contribution("adapter-a", 0.3),
+        );
+
+        // Before recompute, raw_weight is stale (still 1.0 from Edge::new)
+        assert_eq!(ctx.edges[0].raw_weight, 1.0, "raw_weight stale before recompute");
+
+        // After recompute, raw_weight reflects normalized contributions
+        ctx.recompute_raw_weights();
+        assert_ne!(ctx.edges[0].raw_weight, 1.0, "raw_weight should change after recompute");
+
+        // Verify consistency: recomputing again should be idempotent
+        let weights: Vec<f32> = ctx.edges.iter().map(|e| e.raw_weight).collect();
+        ctx.recompute_raw_weights();
+        let weights_again: Vec<f32> = ctx.edges.iter().map(|e| e.raw_weight).collect();
+        assert_eq!(weights, weights_again, "recompute_raw_weights should be idempotent");
     }
 
     #[test]
