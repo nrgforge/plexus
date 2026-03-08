@@ -223,7 +223,7 @@ impl Adapter for ContentAdapter {
             );
             // Set raw_weight to 1.0 — engine extracts this as the contribution value
             let mut edge = edge;
-            edge.raw_weight = 1.0;
+            edge.combined_weight = 1.0;
 
             emission = emission.with_node(concept_node).with_edge(edge);
         }

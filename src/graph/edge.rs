@@ -60,7 +60,7 @@ impl From<String> for EdgeId {
 /// A directed edge in the knowledge graph
 ///
 /// Carries per-adapter contributions and a relationship type.
-/// Raw weight is computed from scale-normalized contributions.
+/// Combined weight is computed from scale-normalized contributions.
 /// Normalized weights are computed at query time, not stored.
 /// See ADR-001, ADR-003.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +86,8 @@ pub struct Edge {
     /// Combined strength across all contributions. Ground truth for query-time
     /// normalization — never decays on a clock. Updated by the engine when
     /// contributions change.
-    pub raw_weight: f32,
+    #[serde(rename = "raw_weight")]
+    pub combined_weight: f32,
     /// When the edge was created
     pub created_at: DateTime<Utc>,
     /// Additional properties
@@ -109,7 +110,7 @@ impl Edge {
             target_dimension: dimension::DEFAULT.to_string(),
             relationship: relationship.into(),
             contributions: HashMap::new(),
-            raw_weight: 1.0,
+            combined_weight: 1.0,
             created_at: Utc::now(),
             properties: HashMap::new(),
         }
@@ -131,7 +132,7 @@ impl Edge {
             target_dimension: dim_str,
             relationship: relationship.into(),
             contributions: HashMap::new(),
-            raw_weight: 1.0,
+            combined_weight: 1.0,
             created_at: Utc::now(),
             properties: HashMap::new(),
         }
@@ -153,7 +154,7 @@ impl Edge {
             target_dimension: target_dim.into(),
             relationship: relationship.into(),
             contributions: HashMap::new(),
-            raw_weight: 1.0,
+            combined_weight: 1.0,
             created_at: Utc::now(),
             properties: HashMap::new(),
         }

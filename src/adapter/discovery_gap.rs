@@ -71,7 +71,7 @@ impl Enrichment for DiscoveryGapEnrichment {
             }
 
             // Emit symmetric discovery_gap pair with trigger edge's weight
-            let contribution = edge.raw_weight;
+            let contribution = edge.combined_weight;
 
             let mut forward = Edge::new_in_dimension(
                 a.clone(),
@@ -79,7 +79,7 @@ impl Enrichment for DiscoveryGapEnrichment {
                 &self.output_relationship,
                 dimension::SEMANTIC,
             );
-            forward.raw_weight = contribution;
+            forward.combined_weight = contribution;
             emission = emission.with_edge(AnnotatedEdge::new(forward));
 
             if !output_edge_exists(context, b, a, &self.output_relationship) {
@@ -89,7 +89,7 @@ impl Enrichment for DiscoveryGapEnrichment {
                     &self.output_relationship,
                     dimension::SEMANTIC,
                 );
-                reverse.raw_weight = contribution;
+                reverse.combined_weight = contribution;
                 emission = emission.with_edge(AnnotatedEdge::new(reverse));
             }
         }
@@ -170,7 +170,7 @@ mod tests {
             "similar_to",
             dimension::SEMANTIC,
         );
-        trigger.raw_weight = 0.85;
+        trigger.combined_weight = 0.85;
         ctx.add_edge(trigger);
 
         let emission = enrichment
@@ -196,8 +196,8 @@ mod tests {
         assert!(reverse.is_some(), "bravo→alpha discovery_gap");
 
         // Contribution equals trigger edge's contribution
-        assert_eq!(forward.unwrap().edge.raw_weight, 0.85);
-        assert_eq!(reverse.unwrap().edge.raw_weight, 0.85);
+        assert_eq!(forward.unwrap().edge.combined_weight, 0.85);
+        assert_eq!(reverse.unwrap().edge.combined_weight, 0.85);
     }
 
     // === Scenario 2: No discovery gap when structural evidence already exists ===
@@ -225,7 +225,7 @@ mod tests {
             "similar_to",
             dimension::SEMANTIC,
         );
-        trigger.raw_weight = 0.9;
+        trigger.combined_weight = 0.9;
         ctx.add_edge(trigger);
 
         assert!(
@@ -250,7 +250,7 @@ mod tests {
             "similar_to",
             dimension::SEMANTIC,
         );
-        trigger.raw_weight = 0.85;
+        trigger.combined_weight = 0.85;
         ctx.add_edge(trigger);
 
         // Round 1: productive

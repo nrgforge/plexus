@@ -157,7 +157,7 @@ mod serialization_tests {
         assert_eq!(edge.source.as_str(), "agent:security-reviewer");
         assert_eq!(edge.target.as_str(), "agent:senior-reviewer");
         assert_eq!(edge.relationship, "depends_on");
-        assert_eq!(edge.raw_weight, 0.87);
+        assert_eq!(edge.combined_weight, 0.87);
     }
 
     #[test]

@@ -1093,7 +1093,7 @@ mod tests {
                 .with_contribution("embedding:model-a", 0.8)
                 .with_contribution("co_occurrence:tagged_with:may_be_related", 0.6),
         );
-        ctx.recompute_raw_weights();
+        ctx.recompute_combined_weights();
         engine.upsert_context(ctx).unwrap();
 
         let affected = api.retract_contributions("research", "embedding:model-a").unwrap();
@@ -1118,7 +1118,7 @@ mod tests {
             Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", dimension::SEMANTIC)
                 .with_contribution("embedding:model-a", 0.9),
         );
-        ctx_a.recompute_raw_weights();
+        ctx_a.recompute_combined_weights();
         engine.upsert_context(ctx_a).unwrap();
 
         // Context B with same adapter
@@ -1129,7 +1129,7 @@ mod tests {
             Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", dimension::SEMANTIC)
                 .with_contribution("embedding:model-a", 0.7),
         );
-        ctx_b.recompute_raw_weights();
+        ctx_b.recompute_combined_weights();
         engine.upsert_context(ctx_b).unwrap();
 
         // Retract only in ctx-a
@@ -1160,14 +1160,14 @@ mod tests {
             Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", dimension::SEMANTIC)
                 .with_contribution("test-adapter", 0.5),
         );
-        ctx.recompute_raw_weights();
+        ctx.recompute_combined_weights();
         engine.upsert_context(ctx).unwrap();
         assert_eq!(engine.get_context(&api.resolve("research").unwrap()).unwrap().edge_count(), 1);
 
         // Update: re-emit with new value (simulated by direct mutation)
         engine.with_context_mut(&api.resolve("research").unwrap(), |ctx| {
             ctx.edges[0].contributions.insert("test-adapter".to_string(), 0.8);
-            ctx.recompute_raw_weights();
+            ctx.recompute_combined_weights();
         }).unwrap();
         let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
         assert_eq!(*ctx.edges[0].contributions.get("test-adapter").unwrap(), 0.8);

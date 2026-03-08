@@ -263,7 +263,7 @@ mod tests {
 
         // Emit an edge with contribution value 0.75
         let mut e = edge("concept:travel", "concept:avignon");
-        e.raw_weight = 0.75;
+        e.combined_weight = 0.75;
         let result = sink.emit(Emission::new().with_edge(e)).await.unwrap();
         assert_eq!(result.edges_committed, 1);
 
@@ -353,15 +353,15 @@ mod tests {
         // Emit two edges from adapter-1 with different contributions
         let sink = make_engine_sink(&engine, &ctx_id, "adapter-1");
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 5.0;
+        e1.combined_weight = 5.0;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 10.0;
+        e2.combined_weight = 10.0;
         sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
 
         // Capture in-memory raw weights
         let ctx = engine.get_context(&ctx_id).unwrap();
-        let ab_weight = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap().raw_weight;
-        let ac_weight = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap().raw_weight;
+        let ab_weight = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap().combined_weight;
+        let ac_weight = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap().combined_weight;
 
         // Load from storage (simulating restart)
         let engine2 = PlexusEngine::with_store(store);
@@ -369,10 +369,10 @@ mod tests {
         let mut ctx2 = engine2.get_context(&ctx_id).unwrap();
 
         // Recompute raw weights from persisted contributions
-        ctx2.recompute_raw_weights();
+        ctx2.recompute_combined_weights();
 
-        let ab_reloaded = ctx2.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap().raw_weight;
-        let ac_reloaded = ctx2.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap().raw_weight;
+        let ab_reloaded = ctx2.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap().combined_weight;
+        let ac_reloaded = ctx2.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap().combined_weight;
 
         assert!((ab_weight - ab_reloaded).abs() < 1e-6,
             "A→B raw weight should match after reload: {} vs {}", ab_weight, ab_reloaded);
@@ -651,7 +651,7 @@ mod tests {
                 "semantic",
             );
             // emit_inner uses raw_weight as the contribution value
-            edge.raw_weight = 0.75;
+            edge.combined_weight = 0.75;
             Some(Emission::new().with_edge(edge))
         }
     }
@@ -1709,7 +1709,7 @@ mod tests {
             "may_be_related",
             dimension::SEMANTIC,
         );
-        edge_ta.raw_weight = 1.0;
+        edge_ta.combined_weight = 1.0;
         ctx.add_edge(edge_ta);
 
         let mut edge_at = Edge::new_in_dimension(
@@ -1718,7 +1718,7 @@ mod tests {
             "may_be_related",
             dimension::SEMANTIC,
         );
-        edge_at.raw_weight = 1.0;
+        edge_at.combined_weight = 1.0;
         ctx.add_edge(edge_at);
 
         engine.upsert_context(ctx).unwrap();
@@ -3541,7 +3541,7 @@ mod tests {
         let mut cooccurrence_pairs: Vec<(String, String, f32)> = may_be_related
             .iter()
             .filter(|e| e.source.to_string() < e.target.to_string()) // deduplicate symmetric pairs
-            .map(|e| (e.source.to_string(), e.target.to_string(), e.raw_weight))
+            .map(|e| (e.source.to_string(), e.target.to_string(), e.combined_weight))
             .collect();
         cooccurrence_pairs.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
 
@@ -3907,9 +3907,9 @@ mod tests {
                 "similar_to edge target should be in semantic dimension"
             );
             assert!(
-                edge.raw_weight > 0.0,
+                edge.combined_weight > 0.0,
                 "similar_to edge should have positive weight, got {}",
-                edge.raw_weight
+                edge.combined_weight
             );
         }
 
@@ -4394,9 +4394,9 @@ mod tests {
         // Emit two edges from a real adapter with different raw weights
         let sink = make_engine_sink(&engine, &ctx_id, "adapter-1");
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 5.0;
+        e1.combined_weight = 5.0;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 10.0;
+        e2.combined_weight = 10.0;
         sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
 
         // Capture in-memory query-time normalized weights
@@ -4412,7 +4412,7 @@ mod tests {
         engine2.load_all().unwrap();
         let ctx2 = engine2.get_context(&ctx_id).unwrap();
 
-        // Query-time normalization on reloaded data — no manual recompute_raw_weights() call
+        // Query-time normalization on reloaded data — no manual recompute_combined_weights() call
         let reloaded = strategy.normalize(&NodeId::from_string("A"), &ctx2);
         let reload_ab = reloaded.iter().find(|ne| ne.edge.target == NodeId::from_string("B")).unwrap().normalized_weight;
         let reload_ac = reloaded.iter().find(|ne| ne.edge.target == NodeId::from_string("C")).unwrap().normalized_weight;

@@ -132,7 +132,7 @@ pub fn export_graph_for_analysis(ctx: &Context) -> String {
                 "source": e.source.as_str(),
                 "target": e.target.as_str(),
                 "relationship": e.relationship,
-                "weight": e.raw_weight,
+                "weight": e.combined_weight,
             })
         })
         .collect();

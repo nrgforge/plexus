@@ -250,7 +250,7 @@ fn commit_edges(
         let mut edge_to_commit = annotated_edge.edge;
 
         // ADR-003: Set contribution for the emitting adapter
-        let contribution_value = edge_to_commit.raw_weight;
+        let contribution_value = edge_to_commit.combined_weight;
         if !adapter_id.is_empty() {
             edge_to_commit.contributions.insert(
                 adapter_id.to_string(),
@@ -285,7 +285,7 @@ fn commit_edges(
 
     // ADR-003: Recompute raw weights via scale normalization
     if !committed.is_empty() {
-        ctx.recompute_raw_weights();
+        ctx.recompute_combined_weights();
     }
 
     (committed, weights_changed, rejections)
@@ -775,7 +775,7 @@ mod tests {
         let (sink, ctx) = make_sink();
 
         let mut e = edge("A", "B");
-        e.raw_weight = 0.42;
+        e.combined_weight = 0.42;
 
         let emission = Emission::new()
             .with_node(node("A"))
@@ -785,7 +785,7 @@ mod tests {
         sink.emit(emission).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.edges[0].raw_weight, 0.42);
+        assert_eq!(ctx.edges[0].combined_weight, 0.42);
     }
 
     // ================================================================
@@ -1086,7 +1086,7 @@ mod tests {
         }
 
         let mut e = edge("A", "B");
-        e.raw_weight = 5.0;
+        e.combined_weight = 5.0;
 
         let result = sink.emit(Emission::new().with_edge(e)).await.unwrap();
         assert_eq!(result.edges_committed, 1);
@@ -1109,12 +1109,12 @@ mod tests {
 
         // First emission
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 5.0;
+        e1.combined_weight = 5.0;
         sink.emit(Emission::new().with_edge(e1)).await.unwrap();
 
         // Re-emit same value
         let mut e2 = edge("A", "B");
-        e2.raw_weight = 5.0;
+        e2.combined_weight = 5.0;
         let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1139,11 +1139,11 @@ mod tests {
         }
 
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 5.0;
+        e1.combined_weight = 5.0;
         sink.emit(Emission::new().with_edge(e1)).await.unwrap();
 
         let mut e2 = edge("A", "B");
-        e2.raw_weight = 8.0;
+        e2.combined_weight = 8.0;
         let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1167,11 +1167,11 @@ mod tests {
         }
 
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 8.0;
+        e1.combined_weight = 8.0;
         sink.emit(Emission::new().with_edge(e1)).await.unwrap();
 
         let mut e2 = edge("A", "B");
-        e2.raw_weight = 3.0;
+        e2.combined_weight = 3.0;
         let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1202,7 +1202,7 @@ mod tests {
         let sink1 = EngineSink::new(ctx.clone()).with_framework_context(fw1);
 
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 5.0;
+        e1.combined_weight = 5.0;
         sink1.emit(Emission::new().with_edge(e1)).await.unwrap();
 
         // Second adapter
@@ -1214,7 +1214,7 @@ mod tests {
         let sink2 = EngineSink::new(ctx.clone()).with_framework_context(fw2);
 
         let mut e2 = edge("A", "B");
-        e2.raw_weight = 0.7;
+        e2.combined_weight = 0.7;
         let result = sink2.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1242,16 +1242,16 @@ mod tests {
 
         // First processing
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 5.0;
+        e1.combined_weight = 5.0;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 3.0;
+        e2.combined_weight = 3.0;
         sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
 
         // Re-processing with same values
         let mut e1r = edge("A", "B");
-        e1r.raw_weight = 5.0;
+        e1r.combined_weight = 5.0;
         let mut e2r = edge("A", "C");
-        e2r.raw_weight = 3.0;
+        e2r.combined_weight = 3.0;
         let result = sink.emit(Emission::new().with_edge(e1r).with_edge(e2r)).await.unwrap();
 
         // No contribution changes
@@ -1289,7 +1289,7 @@ mod tests {
             NodeId::from_string("abrupt"),
             "may_be_related",
         );
-        first_edge.raw_weight = 0.2;
+        first_edge.combined_weight = 0.2;
         first_sink.emit(Emission::new().with_edge(first_edge)).await.unwrap();
 
         {
@@ -1310,7 +1310,7 @@ mod tests {
             NodeId::from_string("abrupt"),
             "may_be_related",
         );
-        confirm_edge.raw_weight = 0.85;
+        confirm_edge.combined_weight = 0.85;
         let result = second_sink.emit(Emission::new().with_edge(confirm_edge)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1321,9 +1321,9 @@ mod tests {
 
         // Raw weight: each adapter has one edge (degenerate case → 1.0 each)
         // raw_weight = 1.0 + 1.0 = 2.0
-        assert!((edge.raw_weight - 2.0).abs() < 1e-6,
+        assert!((edge.combined_weight - 2.0).abs() < 1e-6,
             "raw weight should be sum of scale-normalized contributions: expected 2.0, got {}",
-            edge.raw_weight);
+            edge.combined_weight);
 
         let weights_changed = result.events.iter()
             .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
@@ -1346,14 +1346,14 @@ mod tests {
         }
 
         let mut e = edge("A", "B");
-        e.raw_weight = 5.0;
+        e.combined_weight = 5.0;
         sink.emit(Emission::new().with_edge(e)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
         let edge = &ctx.edges[0];
         // Single edge from single adapter: min=5, max=5, range=0 → normalize to 1.0
-        assert!((edge.raw_weight - 1.0).abs() < 1e-6,
-            "degenerate case should normalize to 1.0, got {}", edge.raw_weight);
+        assert!((edge.combined_weight - 1.0).abs() < 1e-6,
+            "degenerate case should normalize to 1.0, got {}", edge.combined_weight);
     }
 
     // === Scenario: Single adapter, multiple edges — min→0.0, max→1.0 ===
@@ -1370,11 +1370,11 @@ mod tests {
         }
 
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 2.0;
+        e1.combined_weight = 2.0;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 10.0;
+        e2.combined_weight = 10.0;
         let mut e3 = edge("A", "D");
-        e3.raw_weight = 18.0;
+        e3.combined_weight = 18.0;
         sink.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1388,10 +1388,10 @@ mod tests {
         let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
 
         let floor = 0.01 / 1.01; // α/(1+α) ≈ 0.00990
-        assert!((ab.raw_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.raw_weight);
-        assert!(ab.raw_weight > 0.0, "A→B should be non-zero (ADR-005 normalization floor)");
-        assert!((ac.raw_weight - 0.505).abs() < 1e-2, "A→C should be ~0.505, got {}", ac.raw_weight);
-        assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
+        assert!((ab.combined_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.combined_weight);
+        assert!(ab.combined_weight > 0.0, "A→B should be non-zero (ADR-005 normalization floor)");
+        assert!((ac.combined_weight - 0.505).abs() < 1e-2, "A→C should be ~0.505, got {}", ac.combined_weight);
+        assert!((ad.combined_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.combined_weight);
     }
 
     // === Scenario: Two adapters on different scales — normalization prevents dominance ===
@@ -1416,11 +1416,11 @@ mod tests {
         let sink_cc = EngineSink::new(ctx.clone()).with_framework_context(fw_cc);
 
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 2.0;
+        e1.combined_weight = 2.0;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 18.0;
+        e2.combined_weight = 18.0;
         let mut e3 = edge("A", "D");
-        e3.raw_weight = 14.0;
+        e3.combined_weight = 14.0;
         sink_cc.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
 
         // movement: A→B=400, A→C=100, A→D=350
@@ -1432,11 +1432,11 @@ mod tests {
         let sink_mv = EngineSink::new(ctx.clone()).with_framework_context(fw_mv);
 
         let mut e4 = edge("A", "B");
-        e4.raw_weight = 400.0;
+        e4.combined_weight = 400.0;
         let mut e5 = edge("A", "C");
-        e5.raw_weight = 100.0;
+        e5.combined_weight = 100.0;
         let mut e6 = edge("A", "D");
-        e6.raw_weight = 350.0;
+        e6.combined_weight = 350.0;
         sink_mv.emit(Emission::new().with_edge(e4).with_edge(e5).with_edge(e6)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1448,17 +1448,17 @@ mod tests {
         // code-coverage (min=2, max=18, range=16): B≈0.0099, C=1.0, D≈0.7525
         // movement (min=100, max=400, range=300): B=1.0, C≈0.0099, D≈0.835
         // A→D still highest (both adapters contribute strongly)
-        assert!(ad.raw_weight > ab.raw_weight,
-            "A→D ({}) should rank higher than A→B ({})", ad.raw_weight, ab.raw_weight);
-        assert!(ad.raw_weight > ac.raw_weight,
-            "A→D ({}) should rank higher than A→C ({})", ad.raw_weight, ac.raw_weight);
+        assert!(ad.combined_weight > ab.combined_weight,
+            "A→D ({}) should rank higher than A→B ({})", ad.combined_weight, ab.combined_weight);
+        assert!(ad.combined_weight > ac.combined_weight,
+            "A→D ({}) should rank higher than A→C ({})", ad.combined_weight, ac.combined_weight);
 
         // A→D: cc=(12+0.16)/16.16 + mv=(250+3)/303
         let expected_cc = (14.0 - 2.0 + 0.01 * 16.0) / (1.01 * 16.0);
         let expected_mv = (350.0 - 100.0 + 0.01 * 300.0) / (1.01 * 300.0);
         let expected_ad = expected_cc + expected_mv;
-        assert!((ad.raw_weight - expected_ad).abs() < 1e-3,
-            "A→D should be ~{:.3}, got {}", expected_ad, ad.raw_weight);
+        assert!((ad.combined_weight - expected_ad).abs() < 1e-3,
+            "A→D should be ~{:.3}, got {}", expected_ad, ad.combined_weight);
     }
 
     // === Scenario: Signed adapter range normalizes correctly ===
@@ -1475,11 +1475,11 @@ mod tests {
         }
 
         let mut e1 = edge("A", "B");
-        e1.raw_weight = -0.8;
+        e1.combined_weight = -0.8;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 0.5;
+        e2.combined_weight = 0.5;
         let mut e3 = edge("A", "D");
-        e3.raw_weight = 1.0;
+        e3.combined_weight = 1.0;
         sink.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1493,10 +1493,10 @@ mod tests {
         let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
 
         let floor = 0.01 / 1.01;
-        assert!((ab.raw_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.raw_weight);
-        assert!(ab.raw_weight > 0.0, "A→B should be non-zero (ADR-005)");
-        assert!((ac.raw_weight - 0.725).abs() < 1e-2, "A→C should be ~0.725, got {}", ac.raw_weight);
-        assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
+        assert!((ab.combined_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.combined_weight);
+        assert!(ab.combined_weight > 0.0, "A→B should be non-zero (ADR-005)");
+        assert!((ac.combined_weight - 0.725).abs() < 1e-2, "A→C should be ~0.725, got {}", ac.combined_weight);
+        assert!((ad.combined_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.combined_weight);
     }
 
     // === Scenario: New emission extending range shifts all that adapter's values ===
@@ -1514,20 +1514,20 @@ mod tests {
 
         // First emission: A→B=5, A→C=15
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 5.0;
+        e1.combined_weight = 5.0;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 15.0;
+        e2.combined_weight = 15.0;
         sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
 
         {
             let c = ctx.lock().unwrap();
             let ac = c.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
-            assert!((ac.raw_weight - 1.0).abs() < 1e-6, "A→C should be 1.0 before range extension");
+            assert!((ac.combined_weight - 1.0).abs() < 1e-6, "A→C should be 1.0 before range extension");
         }
 
         // New emission extends range: A→D=25
         let mut e3 = edge("A", "D");
-        e3.raw_weight = 25.0;
+        e3.combined_weight = 25.0;
         sink.emit(Emission::new().with_edge(e3)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1541,10 +1541,10 @@ mod tests {
         let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
 
         let floor = 0.01 / 1.01;
-        assert!((ab.raw_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.raw_weight);
-        assert!(ab.raw_weight > 0.0, "A→B should be non-zero (ADR-005)");
-        assert!((ac.raw_weight - 0.505).abs() < 1e-2, "A→C should be ~0.505 (shifted, with floor), got {}", ac.raw_weight);
-        assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
+        assert!((ab.combined_weight - floor).abs() < 1e-4, "A→B should be ~{:.4} (floor), got {}", floor, ab.combined_weight);
+        assert!(ab.combined_weight > 0.0, "A→B should be non-zero (ADR-005)");
+        assert!((ac.combined_weight - 0.505).abs() < 1e-2, "A→C should be ~0.505 (shifted, with floor), got {}", ac.combined_weight);
+        assert!((ad.combined_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.combined_weight);
     }
 
     // ================================================================
@@ -1565,9 +1565,9 @@ mod tests {
 
         // co-occurrence contributions: A→B = 0.5, A→C = 1.0
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 0.5;
+        e1.combined_weight = 0.5;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 1.0;
+        e2.combined_weight = 1.0;
         sink.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1579,10 +1579,10 @@ mod tests {
         let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
 
         let expected_floor = 0.01 / 1.01;
-        assert!((ab.raw_weight - expected_floor).abs() < 1e-4,
-            "A→B should be ~{:.4}, got {}", expected_floor, ab.raw_weight);
-        assert!(ab.raw_weight > 0.0, "A→B raw weight must be non-zero (ADR-005)");
-        assert!((ac.raw_weight - 1.0).abs() < 1e-6, "A→C should be 1.0, got {}", ac.raw_weight);
+        assert!((ab.combined_weight - expected_floor).abs() < 1e-4,
+            "A→B should be ~{:.4}, got {}", expected_floor, ab.combined_weight);
+        assert!(ab.combined_weight > 0.0, "A→B raw weight must be non-zero (ADR-005)");
+        assert!((ac.combined_weight - 1.0).abs() < 1e-6, "A→C should be 1.0, got {}", ac.combined_weight);
     }
 
     // === Scenario: Floor is proportionally equal across adapters with different ranges ===
@@ -1606,9 +1606,9 @@ mod tests {
         };
         let sink_co = EngineSink::new(ctx.clone()).with_framework_context(fw_co);
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 0.5; // min
+        e1.combined_weight = 0.5; // min
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 1.0; // max
+        e2.combined_weight = 1.0; // max
         sink_co.emit(Emission::new().with_edge(e1).with_edge(e2)).await.unwrap();
 
         // code-coverage: range 99 (min=1, max=100)
@@ -1619,15 +1619,15 @@ mod tests {
         };
         let sink_cc = EngineSink::new(ctx.clone()).with_framework_context(fw_cc);
         let mut e3 = edge("A", "C");
-        e3.raw_weight = 1.0; // min for code-coverage
+        e3.combined_weight = 1.0; // min for code-coverage
         let mut e4 = edge("A", "D");
-        e4.raw_weight = 100.0; // max for code-coverage
+        e4.combined_weight = 100.0; // max for code-coverage
         sink_cc.emit(Emission::new().with_edge(e3).with_edge(e4)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
         // A→B has co-occurrence min (0.5): floor = α/(1+α) ≈ 0.00990
         let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
-        let co_floor = ab.raw_weight; // Only co-occurrence contributes to A→B
+        let co_floor = ab.combined_weight; // Only co-occurrence contributes to A→B
 
         // A→D has code-coverage min (contribution is max=100, but A→C has code-coverage min=1)
         // Actually we need a separate edge at code-coverage min
@@ -1635,7 +1635,7 @@ mod tests {
         // The code-coverage contribution on A→C is at code-coverage min
         let ac = ctx.edges.iter().find(|e| e.target == NodeId::from_string("C")).unwrap();
         // ac has two contributions: co-occurrence=1.0 (maps to 1.0) and code-coverage=1.0 (maps to floor)
-        let cc_floor = ac.raw_weight - 1.0; // subtract co-occurrence's normalized contribution (1.0)
+        let cc_floor = ac.combined_weight - 1.0; // subtract co-occurrence's normalized contribution (1.0)
 
         // Both floors should be approximately equal: α/(1+α) ≈ 0.00990
         let expected_floor = 0.01 / 1.01;
@@ -1659,13 +1659,13 @@ mod tests {
         }
 
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 0.7;
+        e1.combined_weight = 0.7;
         sink.emit(Emission::new().with_edge(e1)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
         // Single value: min=0.7, max=0.7, range=0.0 → degenerate → 1.0
         let ab = ctx.edges.iter().find(|e| e.target == NodeId::from_string("B")).unwrap();
-        assert!((ab.raw_weight - 1.0).abs() < 1e-6, "degenerate case should be 1.0, got {}", ab.raw_weight);
+        assert!((ab.combined_weight - 1.0).abs() < 1e-6, "degenerate case should be 1.0, got {}", ab.combined_weight);
     }
 
     // === Scenario: Normalization floor preserves relative ordering ===
@@ -1682,11 +1682,11 @@ mod tests {
         }
 
         let mut e1 = edge("A", "B");
-        e1.raw_weight = 1.0;
+        e1.combined_weight = 1.0;
         let mut e2 = edge("A", "C");
-        e2.raw_weight = 3.0;
+        e2.combined_weight = 3.0;
         let mut e3 = edge("A", "D");
-        e3.raw_weight = 5.0;
+        e3.combined_weight = 5.0;
         sink.emit(Emission::new().with_edge(e1).with_edge(e2).with_edge(e3)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1695,11 +1695,11 @@ mod tests {
         let ad = ctx.edges.iter().find(|e| e.target == NodeId::from_string("D")).unwrap();
 
         // Ordering preserved: A→B < A→C < A→D
-        assert!(ab.raw_weight < ac.raw_weight, "A→B ({}) < A→C ({})", ab.raw_weight, ac.raw_weight);
-        assert!(ac.raw_weight < ad.raw_weight, "A→C ({}) < A→D ({})", ac.raw_weight, ad.raw_weight);
+        assert!(ab.combined_weight < ac.combined_weight, "A→B ({}) < A→C ({})", ab.combined_weight, ac.combined_weight);
+        assert!(ac.combined_weight < ad.combined_weight, "A→C ({}) < A→D ({})", ac.combined_weight, ad.combined_weight);
         // Maximum = 1.0
-        assert!((ad.raw_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.raw_weight);
+        assert!((ad.combined_weight - 1.0).abs() < 1e-6, "A→D should be 1.0, got {}", ad.combined_weight);
         // Minimum > 0.0
-        assert!(ab.raw_weight > 0.0, "A→B should be > 0.0 (ADR-005), got {}", ab.raw_weight);
+        assert!(ab.combined_weight > 0.0, "A→B should be > 0.0 (ADR-005), got {}", ab.combined_weight);
     }
 }

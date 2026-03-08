@@ -15,8 +15,8 @@ pub struct TraverseQuery {
     pub direction: Direction,
     /// Optional relationship type filter
     pub relationship: Option<String>,
-    /// Minimum edge raw weight filter
-    pub min_raw_weight: Option<f32>,
+    /// Minimum edge weight filter
+    pub min_weight: Option<f32>,
 }
 
 impl TraverseQuery {
@@ -27,7 +27,7 @@ impl TraverseQuery {
             max_depth: 1,
             direction: Direction::Outgoing,
             relationship: None,
-            min_raw_weight: None,
+            min_weight: None,
         }
     }
 
@@ -49,9 +49,9 @@ impl TraverseQuery {
         self
     }
 
-    /// Filter by minimum edge raw weight
-    pub fn min_raw_weight(mut self, min_raw_weight: f32) -> Self {
-        self.min_raw_weight = Some(min_raw_weight);
+    /// Filter by minimum edge weight
+    pub fn min_weight(mut self, min_weight: f32) -> Self {
+        self.min_weight = Some(min_weight);
         self
     }
 
@@ -146,9 +146,9 @@ impl TraverseQuery {
             }
         }
 
-        // Check raw weight filter
-        if let Some(min) = self.min_raw_weight {
-            if edge.raw_weight < min {
+        // Check weight filter
+        if let Some(min) = self.min_weight {
+            if edge.combined_weight < min {
                 return false;
             }
         }

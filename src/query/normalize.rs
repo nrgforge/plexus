@@ -1,6 +1,6 @@
 //! Query-time normalization strategies
 //!
-//! Raw weights are stored. Normalized weights are computed at query time
+//! Combined weights are stored. Normalized weights are computed at query time
 //! via a pluggable NormalizationStrategy. The graph stores ground truth;
 //! normalization is an interpretive lens.
 
@@ -16,7 +16,7 @@ pub struct NormalizedEdge {
 
 /// Pluggable normalization strategy.
 ///
-/// Different consumers can apply different strategies to the same raw weights.
+/// Different consumers can apply different strategies to the same combined weights.
 pub trait NormalizationStrategy: Send + Sync {
     /// Compute normalized weights for all outgoing edges from a node.
     ///
@@ -44,7 +44,7 @@ impl NormalizationStrategy for OutgoingDivisive {
             return Vec::new();
         }
 
-        let sum: f64 = outgoing.iter().map(|e| e.raw_weight as f64).sum();
+        let sum: f64 = outgoing.iter().map(|e| e.combined_weight as f64).sum();
 
         if sum == 0.0 {
             return outgoing
@@ -59,7 +59,7 @@ impl NormalizationStrategy for OutgoingDivisive {
         outgoing
             .into_iter()
             .map(|e| NormalizedEdge {
-                normalized_weight: e.raw_weight as f64 / sum,
+                normalized_weight: e.combined_weight as f64 / sum,
                 edge: e.clone(),
             })
             .collect()
@@ -86,12 +86,12 @@ impl NormalizationStrategy for Softmax {
         // For numerical stability, subtract max before exp
         let max_w = outgoing
             .iter()
-            .map(|e| e.raw_weight)
+            .map(|e| e.combined_weight)
             .fold(f32::NEG_INFINITY, f32::max) as f64;
 
         let exp_weights: Vec<f64> = outgoing
             .iter()
-            .map(|e| (e.raw_weight as f64 - max_w).exp())
+            .map(|e| (e.combined_weight as f64 - max_w).exp())
             .collect();
 
         let sum_exp: f64 = exp_weights.iter().sum();
@@ -131,13 +131,13 @@ mod tests {
         n
     }
 
-    fn edge_weighted(source: &str, target: &str, raw_weight: f32) -> Edge {
+    fn edge_weighted(source: &str, target: &str, weight: f32) -> Edge {
         let mut e = Edge::new(
             NodeId::from_string(source),
             NodeId::from_string(target),
             "related_to",
         );
-        e.raw_weight = raw_weight;
+        e.combined_weight = weight;
         e
     }
 
@@ -202,7 +202,7 @@ mod tests {
         assert!(approx_eq(ad_after, 0.5));  // 5/10
 
         // Raw weights unchanged
-        let ab_raw = ctx.edges().find(|e| e.target == NodeId::from_string("B")).unwrap().raw_weight;
+        let ab_raw = ctx.edges().find(|e| e.target == NodeId::from_string("B")).unwrap().combined_weight;
         assert_eq!(ab_raw, 3.0);
     }
 
@@ -254,7 +254,7 @@ mod tests {
         assert!(!approx_eq(div_ab, sm_ab), "strategies should produce different values");
 
         // But raw weights are the same for both
-        let ab_raw = ctx.edges().find(|e| e.target == NodeId::from_string("B")).unwrap().raw_weight;
+        let ab_raw = ctx.edges().find(|e| e.target == NodeId::from_string("B")).unwrap().combined_weight;
         assert_eq!(ab_raw, 3.0);
     }
 

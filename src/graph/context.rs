@@ -158,7 +158,7 @@ impl Context {
     ///
     /// Merges contribution slots on exact duplicates but does **not** recompute
     /// combined weights — callers adding edges in a batch should call
-    /// [`recompute_raw_weights()`](Self::recompute_raw_weights) once after the batch.
+    /// [`recompute_combined_weights()`](Self::recompute_combined_weights) once after the batch.
     /// `PlexusEngine::add_edge()`, `apply_mutation()`, and `EngineSink::emit_inner`
     /// all fulfill this obligation automatically.
     ///
@@ -168,7 +168,7 @@ impl Context {
     ///   dimensions are stored as separate edges (preserves multi-dimensional richness)
     /// - **Exact duplicate**: When the same edge (source/target/relationship/dimensions) already
     ///   exists, contributions are merged per-adapter-slot (ADR-003) and properties merge.
-    ///   For edges without contributions, raw_weight falls back to max for backward compat.
+    ///   For edges without contributions, combined_weight falls back to max for backward compat.
     /// - **Cross-dimensional**: When the same logical edge appears in multiple dimensions,
     ///   a `_cross_dim_count` property tracks how many dimensions it spans.
     pub fn add_edge(&mut self, edge: Edge) {
@@ -202,11 +202,11 @@ impl Context {
             for (adapter_id, value) in &edge.contributions {
                 existing.contributions.insert(adapter_id.clone(), *value);
             }
-            // raw_weight: for edges with contributions, the caller is responsible
-            // for calling recompute_raw_weights() after all edges are committed.
+            // combined_weight: for edges with contributions, the caller is responsible
+            // for calling recompute_combined_weights() after all edges are committed.
             // For edges without contributions, fall back to max for backward compat.
             if edge.contributions.is_empty() {
-                existing.raw_weight = existing.raw_weight.max(edge.raw_weight);
+                existing.combined_weight = existing.combined_weight.max(edge.combined_weight);
             }
             for (k, v) in edge.properties {
                 existing.properties.insert(k, v);
@@ -270,15 +270,15 @@ impl Context {
     /// The weakest real contribution maps to α/(1+α) ≈ 0.0099, not 0.0.
     const FLOOR_ALPHA: f32 = 0.01;
 
-    /// Recompute raw_weight on all edges using scale normalization (ADR-003, ADR-005).
+    /// Recompute combined_weight on all edges using scale normalization (ADR-003, ADR-005).
     ///
     /// For each adapter, computes min and max contribution values across all edges.
     /// Each contribution is scale-normalized with dynamic epsilon (ADR-005):
     ///   `(value - min + α·range) / ((1 + α)·range)`
     /// where α = 0.01 (floor coefficient). This maps minimum to ~0.0099, not 0.0.
     /// Degenerate case (min == max) normalizes to 1.0.
-    /// raw_weight = sum of scale-normalized contributions across all adapters.
-    pub fn recompute_raw_weights(&mut self) {
+    /// combined_weight = sum of scale-normalized contributions across all adapters.
+    pub fn recompute_combined_weights(&mut self) {
         use std::collections::HashMap;
 
         if self.edges.is_empty() {
@@ -301,10 +301,10 @@ impl Context {
 
         let alpha = Self::FLOOR_ALPHA;
 
-        // Recompute raw_weight for each edge
+        // Recompute combined_weight for each edge
         for edge in &mut self.edges {
             if edge.contributions.is_empty() {
-                continue; // Leave raw_weight as-is for edges without contributions
+                continue; // Leave combined_weight as-is for edges without contributions
             }
 
             let mut sum = 0.0f32;
@@ -320,14 +320,14 @@ impl Context {
                     sum += normalized;
                 }
             }
-            edge.raw_weight = sum;
+            edge.combined_weight = sum;
         }
     }
 
     /// Retract all contributions from a named adapter/enrichment (ADR-027).
     ///
     /// Removes the adapter's contribution slot from every edge in the context.
-    /// Recomputes raw weights from remaining contributions. Prunes edges
+    /// Recomputes combined weights from remaining contributions. Prunes edges
     /// whose contributions map becomes empty (zero evidence).
     ///
     /// Returns (edges_affected, pruned_edge_ids).
@@ -355,9 +355,9 @@ impl Context {
             self.edges.retain(|e| !pruned_set.contains(&e.id));
         }
 
-        // Phase 3: Recompute raw weights from remaining contributions
+        // Phase 3: Recompute combined weights from remaining contributions
         if edges_affected > 0 {
-            self.recompute_raw_weights();
+            self.recompute_combined_weights();
             self.touch();
         }
 
@@ -383,17 +383,17 @@ mod tests {
 
         // Add first edge
         let mut edge1 = Edge::new(id_a.clone(), id_b.clone(), "calls");
-        edge1.raw_weight = 0.5;
+        edge1.combined_weight = 0.5;
         ctx.add_edge(edge1);
 
-        // Add exact duplicate with higher raw_weight
+        // Add exact duplicate with higher combined_weight
         let mut edge2 = Edge::new(id_a.clone(), id_b.clone(), "calls");
-        edge2.raw_weight = 0.8;
+        edge2.combined_weight = 0.8;
         ctx.add_edge(edge2);
 
-        // Should only have one edge, with the higher raw_weight
+        // Should only have one edge, with the higher combined_weight
         assert_eq!(ctx.edge_count(), 1);
-        assert_eq!(ctx.edges[0].raw_weight, 0.8);
+        assert_eq!(ctx.edges[0].combined_weight, 0.8);
     }
 
     #[test]
@@ -458,7 +458,7 @@ mod tests {
             Edge::new_in_dimension(id_b.clone(), id_c.clone(), "similar_to", "semantic")
                 .with_contribution("embedding:model-a", 0.7),
         );
-        ctx.recompute_raw_weights();
+        ctx.recompute_combined_weights();
 
         let (affected, pruned) = ctx.retract_contributions("embedding:model-a");
 
@@ -484,7 +484,7 @@ mod tests {
             Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", "semantic")
                 .with_contribution("embedding:model-a", 0.9),
         );
-        ctx.recompute_raw_weights();
+        ctx.recompute_combined_weights();
 
         let (affected, pruned) = ctx.retract_contributions("embedding:model-a");
 
@@ -504,7 +504,7 @@ mod tests {
                 .with_contribution("embedding:model-a", 0.8)
                 .with_contribution("co_occurrence:tagged_with:may_be_related", 0.6),
         );
-        ctx.recompute_raw_weights();
+        ctx.recompute_combined_weights();
 
         let (affected, pruned) = ctx.retract_contributions("embedding:model-a");
 
@@ -527,19 +527,19 @@ mod tests {
             Edge::new_in_dimension(id_a.clone(), id_b.clone(), "similar_to", "semantic")
                 .with_contribution("embedding:model-a", 0.8),
         );
-        ctx.recompute_raw_weights();
-        let original_weight = ctx.edges[0].raw_weight;
+        ctx.recompute_combined_weights();
+        let original_weight = ctx.edges[0].combined_weight;
 
         let (affected, pruned) = ctx.retract_contributions("nonexistent-adapter");
 
         assert_eq!(affected, 0);
         assert!(pruned.is_empty());
         assert_eq!(ctx.edge_count(), 1);
-        assert_eq!(ctx.edges[0].raw_weight, original_weight, "weights should be unchanged");
+        assert_eq!(ctx.edges[0].combined_weight, original_weight, "weights should be unchanged");
     }
 
     #[test]
-    fn retract_recomputes_raw_weights() {
+    fn retract_recomputes_combined_weights() {
         let mut ctx = Context::new("test");
         let id_a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
         let id_b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
@@ -556,32 +556,32 @@ mod tests {
                 .with_contribution("embedding:model-a", 0.6)
                 .with_contribution("other-adapter", 0.9),
         );
-        ctx.recompute_raw_weights();
-        let weight_before = ctx.edges[0].raw_weight;
+        ctx.recompute_combined_weights();
+        let weight_before = ctx.edges[0].combined_weight;
 
         ctx.retract_contributions("embedding:model-a");
 
         // After retraction, only "other-adapter" remains
         // With a single adapter, scale normalization changes the weights
-        let weight_after = ctx.edges[0].raw_weight;
-        assert_ne!(weight_before, weight_after, "raw weight should change after retraction");
+        let weight_after = ctx.edges[0].combined_weight;
+        assert_ne!(weight_before, weight_after, "combined weight should change after retraction");
         // Both edges still exist (both had remaining contributions)
         assert_eq!(ctx.edge_count(), 2);
     }
 
-    /// Verify that raw_weight is consistent with contributions after recompute.
+    /// Verify that combined_weight is consistent with contributions after recompute.
     ///
     /// This is the debug safety net for the recompute obligation documented
     /// on `add_edge()`. If this fails, a caller committed edges with contributions
-    /// but forgot to call `recompute_raw_weights()`.
+    /// but forgot to call `recompute_combined_weights()`.
     #[test]
-    fn verify_raw_weights_consistent_with_contributions() {
+    fn verify_combined_weights_consistent_with_contributions() {
         let mut ctx = Context::new("test");
         let id_a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
         let id_b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
         let id_c = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
 
-        // Add edges with contributions (raw_weight starts stale at 1.0)
+        // Add edges with contributions (combined_weight starts stale at 1.0)
         ctx.add_edge(
             Edge::new_in_dimension(id_a.clone(), id_b.clone(), "related_to", "semantic")
                 .with_contribution("adapter-a", 0.8)
@@ -592,18 +592,18 @@ mod tests {
                 .with_contribution("adapter-a", 0.3),
         );
 
-        // Before recompute, raw_weight is stale (still 1.0 from Edge::new)
-        assert_eq!(ctx.edges[0].raw_weight, 1.0, "raw_weight stale before recompute");
+        // Before recompute, combined_weight is stale (still 1.0 from Edge::new)
+        assert_eq!(ctx.edges[0].combined_weight, 1.0, "combined_weight stale before recompute");
 
-        // After recompute, raw_weight reflects normalized contributions
-        ctx.recompute_raw_weights();
-        assert_ne!(ctx.edges[0].raw_weight, 1.0, "raw_weight should change after recompute");
+        // After recompute, combined_weight reflects normalized contributions
+        ctx.recompute_combined_weights();
+        assert_ne!(ctx.edges[0].combined_weight, 1.0, "combined_weight should change after recompute");
 
         // Verify consistency: recomputing again should be idempotent
-        let weights: Vec<f32> = ctx.edges.iter().map(|e| e.raw_weight).collect();
-        ctx.recompute_raw_weights();
-        let weights_again: Vec<f32> = ctx.edges.iter().map(|e| e.raw_weight).collect();
-        assert_eq!(weights, weights_again, "recompute_raw_weights should be idempotent");
+        let weights: Vec<f32> = ctx.edges.iter().map(|e| e.combined_weight).collect();
+        ctx.recompute_combined_weights();
+        let weights_again: Vec<f32> = ctx.edges.iter().map(|e| e.combined_weight).collect();
+        assert_eq!(weights, weights_again, "recompute_combined_weights should be idempotent");
     }
 
     #[test]

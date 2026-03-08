@@ -331,7 +331,7 @@ fn run_phase1(
                             dimension::SEMANTIC,
                             "tagged_with",
                         );
-                        edge.raw_weight = 1.0;
+                        edge.combined_weight = 1.0;
                         emission = emission.with_edge(AnnotatedEdge::new(edge));
                     }
                 }

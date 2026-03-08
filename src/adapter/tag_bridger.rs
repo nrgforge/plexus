@@ -139,7 +139,7 @@ fn make_bridge_edge(mark_id: &NodeId, concept_id: &NodeId, relationship: &str) -
         dimension::SEMANTIC,
         relationship,
     );
-    edge.raw_weight = 1.0;
+    edge.combined_weight = 1.0;
     crate::adapter::types::AnnotatedEdge::new(edge)
 }
 

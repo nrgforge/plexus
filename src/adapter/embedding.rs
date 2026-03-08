@@ -321,7 +321,7 @@ impl Enrichment for EmbeddingSimilarityEnrichment {
                     &self.output_relationship,
                     dimension::SEMANTIC,
                 );
-                forward.raw_weight = *similarity;
+                forward.combined_weight = *similarity;
                 emission = emission.with_edge(AnnotatedEdge::new(forward));
 
                 // Reverse edge (symmetric pair)
@@ -332,7 +332,7 @@ impl Enrichment for EmbeddingSimilarityEnrichment {
                         &self.output_relationship,
                         dimension::SEMANTIC,
                     );
-                    reverse.raw_weight = *similarity;
+                    reverse.combined_weight = *similarity;
                     emission = emission.with_edge(AnnotatedEdge::new(reverse));
                 }
             }
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(forward.unwrap().edge.relationship, "similar_to");
         assert_eq!(reverse.unwrap().edge.relationship, "similar_to");
         // Similarity should be above threshold
-        assert!(forward.unwrap().edge.raw_weight > 0.7);
+        assert!(forward.unwrap().edge.combined_weight > 0.7);
     }
 
     // === Scenario: Embedding enrichment respects similarity threshold ===
@@ -679,14 +679,14 @@ mod tests {
             .find(|ae| ae.edge.source == voyage && ae.edge.target == travel)
             .unwrap()
             .edge
-            .raw_weight;
+            .combined_weight;
         let rv_weight = emission
             .edges
             .iter()
             .find(|ae| ae.edge.source == travel && ae.edge.target == voyage)
             .unwrap()
             .edge
-            .raw_weight;
+            .combined_weight;
 
         assert!(
             (fw_weight - rv_weight).abs() < 1e-6,

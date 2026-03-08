@@ -81,7 +81,7 @@ impl Enrichment for CoOccurrenceEnrichment {
                     &self.output_relationship,
                     dimension::SEMANTIC,
                 );
-                edge.raw_weight = score;
+                edge.combined_weight = score;
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
             }
 
@@ -92,7 +92,7 @@ impl Enrichment for CoOccurrenceEnrichment {
                     &self.output_relationship,
                     dimension::SEMANTIC,
                 );
-                edge.raw_weight = score;
+                edge.combined_weight = score;
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
             }
         }
@@ -257,7 +257,7 @@ mod tests {
         let enrichment = CoOccurrenceEnrichment::new();
         let emission = enrichment.enrich(&[edges_added_event()], &ctx).unwrap();
 
-        let scores: Vec<f32> = emission.edges.iter().map(|ae| ae.edge.raw_weight).collect();
+        let scores: Vec<f32> = emission.edges.iter().map(|ae| ae.edge.combined_weight).collect();
         assert_eq!(scores[0], scores[1], "symmetric edges should have equal scores");
     }
 
@@ -279,13 +279,13 @@ mod tests {
         let ta_edge = emission.edges.iter().find(|ae| {
             ae.edge.source == travel_id && ae.edge.target == avignon_id
         }).expect("travel→avignon should exist");
-        assert_eq!(ta_edge.edge.raw_weight, 1.0);
+        assert_eq!(ta_edge.edge.combined_weight, 1.0);
 
         // travel↔paris: 1 shared / 2 max = 0.5
         let tp_edge = emission.edges.iter().find(|ae| {
             ae.edge.source == travel_id && ae.edge.target == paris_id
         }).expect("travel→paris should exist");
-        assert_eq!(tp_edge.edge.raw_weight, 0.5);
+        assert_eq!(tp_edge.edge.combined_weight, 0.5);
     }
 
     #[tokio::test]
@@ -311,13 +311,13 @@ mod tests {
         let mut edge_ta = Edge::new_in_dimension(
             travel_id.clone(), avignon_id.clone(), "may_be_related", dimension::SEMANTIC,
         );
-        edge_ta.raw_weight = 1.0;
+        edge_ta.combined_weight = 1.0;
         ctx.add_edge(edge_ta);
 
         let mut edge_at = Edge::new_in_dimension(
             avignon_id.clone(), travel_id.clone(), "may_be_related", dimension::SEMANTIC,
         );
-        edge_at.raw_weight = 1.0;
+        edge_at.combined_weight = 1.0;
         ctx.add_edge(edge_at);
 
         let enrichment = CoOccurrenceEnrichment::new();
@@ -438,7 +438,7 @@ mod tests {
         assert!(has_gf, "glide→flow with co_exhibited");
 
         // Verify contribution is normalized score
-        let score = emission.edges[0].edge.raw_weight;
+        let score = emission.edges[0].edge.combined_weight;
         assert_eq!(score, 1.0, "2 shared / 2 max = 1.0");
     }
 

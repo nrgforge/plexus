@@ -223,6 +223,9 @@ impl PlexusEngine {
     /// Removes the adapter's contribution slot from every edge in the context,
     /// prunes zero-evidence edges, recomputes raw weights, and persists.
     /// Returns graph events (ContributionsRetracted + EdgesRemoved for pruned edges).
+    ///
+    /// Bypasses the adapter pipeline intentionally — retraction is an engine-level
+    /// operation that reverses a prior adapter's effect without re-running the pipeline.
     pub fn retract_contributions(
         &self,
         context_id: &ContextId,
@@ -441,7 +444,7 @@ impl PlexusEngine {
             .ok_or_else(|| PlexusError::ContextNotFound(context_id.clone()))?;
 
         context.add_edge(edge);
-        context.recompute_raw_weights();
+        context.recompute_combined_weights();
 
         // Persist if storage configured
         if let Some(ref store) = self.store {
@@ -476,7 +479,7 @@ impl PlexusEngine {
             context.add_edge(edge);
         }
         if edge_count > 0 {
-            context.recompute_raw_weights();
+            context.recompute_combined_weights();
         }
 
         // Persist once at the end

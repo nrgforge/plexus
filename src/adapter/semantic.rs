@@ -265,7 +265,7 @@ impl SemanticAdapter {
                     dimension::SEMANTIC,
                     "tagged_with",
                 );
-                edge.raw_weight = 1.0;
+                edge.combined_weight = 1.0;
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
             }
         }
@@ -298,7 +298,7 @@ impl SemanticAdapter {
                 let mut edge = Edge::new(source_id, target_id, relationship);
                 edge.source_dimension = dimension::SEMANTIC.to_string();
                 edge.target_dimension = dimension::SEMANTIC.to_string();
-                edge.raw_weight = weight as f32;
+                edge.combined_weight = weight as f32;
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
             }
         }
@@ -447,7 +447,7 @@ impl SemanticAdapter {
                     dimension::SEMANTIC,
                     "tagged_with",
                 );
-                edge.raw_weight = 1.0;
+                edge.combined_weight = 1.0;
                 edge.contributions
                     .insert(contribution_key.to_string(), 1.0);
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
@@ -480,7 +480,7 @@ impl SemanticAdapter {
                 let mut edge = Edge::new(source_id, target_id, relationship);
                 edge.source_dimension = dimension::SEMANTIC.to_string();
                 edge.target_dimension = dimension::SEMANTIC.to_string();
-                edge.raw_weight = weight as f32;
+                edge.combined_weight = weight as f32;
                 edge.contributions
                     .insert(contribution_key.to_string(), weight as f32);
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
@@ -529,7 +529,7 @@ impl SemanticAdapter {
                     dimension::SEMANTIC,
                     "tagged_with",
                 );
-                edge.raw_weight = 1.0;
+                edge.combined_weight = 1.0;
                 edge.contributions
                     .insert(contribution_key.to_string(), 1.0);
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
@@ -558,7 +558,7 @@ impl SemanticAdapter {
                 let mut edge = Edge::new(source_id, target_id, relationship);
                 edge.source_dimension = dimension::SEMANTIC.to_string();
                 edge.target_dimension = dimension::SEMANTIC.to_string();
-                edge.raw_weight = 1.0;
+                edge.combined_weight = 1.0;
                 edge.contributions
                     .insert(contribution_key.to_string(), 1.0);
                 emission = emission.with_edge(AnnotatedEdge::new(edge));
@@ -582,7 +582,7 @@ impl SemanticAdapter {
                 let mut edge_ab = Edge::new(a_id.clone(), b_id.clone(), "may_be_related");
                 edge_ab.source_dimension = dimension::SEMANTIC.to_string();
                 edge_ab.target_dimension = dimension::SEMANTIC.to_string();
-                edge_ab.raw_weight = 1.0;
+                edge_ab.combined_weight = 1.0;
                 edge_ab
                     .contributions
                     .insert(contribution_key.to_string(), 1.0);
@@ -592,7 +592,7 @@ impl SemanticAdapter {
                 let mut edge_ba = Edge::new(b_id, a_id, "may_be_related");
                 edge_ba.source_dimension = dimension::SEMANTIC.to_string();
                 edge_ba.target_dimension = dimension::SEMANTIC.to_string();
-                edge_ba.raw_weight = 1.0;
+                edge_ba.combined_weight = 1.0;
                 edge_ba
                     .contributions
                     .insert(contribution_key.to_string(), 1.0);
@@ -649,7 +649,7 @@ impl SemanticAdapter {
                     dimension::SEMANTIC,
                     "tagged_with",
                 );
-                edge.raw_weight = 1.0;
+                edge.combined_weight = 1.0;
                 edge.contributions
                     .insert(contribution_key.to_string(), 1.0);
                 emission = emission.with_edge(AnnotatedEdge::new(edge));

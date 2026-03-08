@@ -317,7 +317,7 @@ impl SqliteStore {
             edge.source_dimension.clone(),
             edge.target_dimension.clone(),
             edge.relationship.clone(),
-            edge.raw_weight,
+            edge.combined_weight,
             edge.created_at.to_rfc3339(),
             serde_json::to_string(&edge.properties)?,
             serde_json::to_string(&edge.contributions)?,
@@ -349,7 +349,7 @@ impl SqliteStore {
             target_dimension,
             relationship,
             contributions: serde_json::from_str(&contributions_json)?,
-            raw_weight: raw_weight as f32,
+            combined_weight: raw_weight as f32,
             created_at: DateTime::parse_from_rfc3339(&created_at)
                 .map_err(|e| StorageError::DateParse(e.to_string()))?
                 .with_timezone(&chrono::Utc),
@@ -1087,7 +1087,7 @@ mod tests {
         let node_a = create_test_node("node:a", "function");
         let node_b = create_test_node("node:b", "function");
         let mut edge = Edge::new(node_a.id.clone(), node_b.id.clone(), "calls");
-        edge.raw_weight = 0.5;
+        edge.combined_weight = 0.5;
 
         ctx.add_node(node_a.clone());
         ctx.add_node(node_b);
@@ -1102,7 +1102,7 @@ mod tests {
         // Verify data is intact via load_context
         let loaded = store.load_context(&ctx_id).unwrap().unwrap();
         assert_eq!(loaded.edges.len(), 1);
-        assert!((loaded.edges[0].raw_weight - 0.5).abs() < f32::EPSILON);
+        assert!((loaded.edges[0].combined_weight - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]

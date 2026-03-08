@@ -871,7 +871,7 @@ fn interpret_create_edge(
     };
 
     let mut edge = edge;
-    edge.raw_weight = ce.weight.unwrap_or(1.0);
+    edge.combined_weight = ce.weight.unwrap_or(1.0);
     Ok(edge)
 }
 
@@ -1134,7 +1134,7 @@ mod tests {
 
         for edge in &tagged_edges {
             assert_eq!(edge.source, NodeId::from_string("item:source"));
-            assert_eq!(edge.raw_weight, 1.0);
+            assert_eq!(edge.combined_weight, 1.0);
         }
     }
 
