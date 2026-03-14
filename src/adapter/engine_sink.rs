@@ -438,14 +438,14 @@ mod tests {
 
         let result = sink.emit(emission).await.unwrap();
 
-        assert_eq!(result.nodes_committed, 2);
-        assert_eq!(result.edges_committed, 1);
-        assert!(result.is_fully_committed());
+        assert_eq!(result.nodes_committed, 2, "both nodes should commit");
+        assert_eq!(result.edges_committed, 1, "one edge should commit");
+        assert!(result.is_fully_committed(), "emission should fully commit");
 
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
-        assert!(ctx.get_node(&NodeId::from_string("B")).is_some());
-        assert_eq!(ctx.edge_count(), 1);
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A should exist in context");
+        assert!(ctx.get_node(&NodeId::from_string("B")).is_some(), "node B should exist in context");
+        assert_eq!(ctx.edge_count(), 1, "one edge should exist");
     }
 
     // === Scenario: Edge referencing missing endpoint rejected; valid items commit ===
@@ -466,9 +466,9 @@ mod tests {
 
         let result = sink.emit(emission).await.unwrap();
 
-        assert_eq!(result.nodes_committed, 1); // B
-        assert_eq!(result.edges_committed, 1); // A→B
-        assert_eq!(result.rejections.len(), 1); // B→C rejected
+        assert_eq!(result.nodes_committed, 1, "node B should commit"); // B
+        assert_eq!(result.edges_committed, 1, "edge A→B should commit"); // A→B
+        assert_eq!(result.rejections.len(), 1, "edge B→C should be rejected"); // B→C rejected
 
         let rejection = &result.rejections[0];
         assert_eq!(
@@ -489,9 +489,9 @@ mod tests {
 
         let result = sink.emit(emission).await.unwrap();
 
-        assert!(result.is_fully_committed());
+        assert!(result.is_fully_committed(), "all items should commit when endpoints in same emission");
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.edge_count(), 1);
+        assert_eq!(ctx.edge_count(), 1, "one edge should exist");
     }
 
     // === Scenario: Edge endpoint from prior emission ===
@@ -510,7 +510,7 @@ mod tests {
             .with_edge(edge("A", "B"));
 
         let result = sink.emit(emission).await.unwrap();
-        assert!(result.is_fully_committed());
+        assert!(result.is_fully_committed(), "edge should commit when endpoint from prior emission");
     }
 
     // === Scenario: Duplicate node ID causes upsert ===
@@ -541,7 +541,7 @@ mod tests {
             Some(&crate::graph::PropertyValue::String("alpha-updated".to_string()))
         );
         // Only one node with ID A
-        assert_eq!(ctx.node_count(), 1);
+        assert_eq!(ctx.node_count(), 1, "duplicate ID should upsert, not create second node");
     }
 
     // === Scenario: Removal of non-existent node is no-op ===
@@ -552,11 +552,11 @@ mod tests {
         let emission = Emission::new().with_removal(NodeId::from_string("Z"));
         let result = sink.emit(emission).await.unwrap();
 
-        assert_eq!(result.removals_committed, 0);
-        assert!(result.rejections.is_empty());
+        assert_eq!(result.removals_committed, 0, "non-existent removal should be no-op");
+        assert!(result.rejections.is_empty(), "no-op removal should not produce rejection");
 
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.node_count(), 0);
+        assert_eq!(ctx.node_count(), 0, "context should remain empty");
     }
 
     // === Scenario: Empty emission is no-op ===
@@ -565,7 +565,7 @@ mod tests {
         let (sink, _ctx) = make_sink();
 
         let result = sink.emit(Emission::new()).await.unwrap();
-        assert!(result.is_noop());
+        assert!(result.is_noop(), "empty emission should be no-op");
     }
 
     // === Scenario: Self-referencing edge is allowed ===
@@ -579,10 +579,10 @@ mod tests {
 
         let result = sink.emit(emission).await.unwrap();
 
-        assert!(result.is_fully_committed());
+        assert!(result.is_fully_committed(), "self-referencing edge should commit");
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.edge_count(), 1);
-        assert_eq!(ctx.edges[0].source, ctx.edges[0].target);
+        assert_eq!(ctx.edge_count(), 1, "one self-referencing edge should exist");
+        assert_eq!(ctx.edges[0].source, ctx.edges[0].target, "edge source and target should be same node");
     }
 
     // === Scenario: Bad edge rejected; valid items in same emission commit ===
@@ -598,14 +598,14 @@ mod tests {
 
         let result = sink.emit(emission).await.unwrap();
 
-        assert_eq!(result.nodes_committed, 2);
-        assert_eq!(result.edges_committed, 1);
-        assert_eq!(result.rejections.len(), 1);
+        assert_eq!(result.nodes_committed, 2, "both nodes should commit");
+        assert_eq!(result.edges_committed, 1, "valid edge should commit");
+        assert_eq!(result.rejections.len(), 1, "invalid edge should be rejected");
 
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
-        assert!(ctx.get_node(&NodeId::from_string("B")).is_some());
-        assert_eq!(ctx.edge_count(), 1);
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A should exist");
+        assert!(ctx.get_node(&NodeId::from_string("B")).is_some(), "node B should exist");
+        assert_eq!(ctx.edge_count(), 1, "only valid edge should exist");
     }
 
     // === Scenario: Node removal cascades to connected edges ===
@@ -624,11 +624,11 @@ mod tests {
         let removal = Emission::new().with_removal(NodeId::from_string("A"));
         let result = sink.emit(removal).await.unwrap();
 
-        assert_eq!(result.removals_committed, 1);
+        assert_eq!(result.removals_committed, 1, "node A should be removed");
 
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("A")).is_none());
-        assert_eq!(ctx.edge_count(), 0); // cascade
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_none(), "node A should be gone");
+        assert_eq!(ctx.edge_count(), 0, "edge should cascade-delete with node"); // cascade
     }
 
     // === Scenario: Targeted edge removal removes specific edge ===
@@ -653,14 +653,14 @@ mod tests {
         );
         let result = sink.emit(removal).await.unwrap();
 
-        assert_eq!(result.edge_removals_committed, 1);
+        assert_eq!(result.edge_removals_committed, 1, "one edge removal should commit");
 
         let ctx = ctx.lock().unwrap();
         // A→C remains, A→B gone
-        assert_eq!(ctx.edge_count(), 1);
-        assert_eq!(ctx.edges[0].target, NodeId::from_string("C"));
+        assert_eq!(ctx.edge_count(), 1, "only A→C should remain");
+        assert_eq!(ctx.edges[0].target, NodeId::from_string("C"), "remaining edge should be A→C");
         // All nodes remain
-        assert_eq!(ctx.node_count(), 3);
+        assert_eq!(ctx.node_count(), 3, "all nodes should survive edge removal");
     }
 
     // === Scenario: All edges missing endpoints; nodes still commit ===
@@ -674,13 +674,13 @@ mod tests {
 
         let result = sink.emit(emission).await.unwrap();
 
-        assert_eq!(result.nodes_committed, 1);
-        assert_eq!(result.edges_committed, 0);
-        assert_eq!(result.rejections.len(), 1);
+        assert_eq!(result.nodes_committed, 1, "node A should commit");
+        assert_eq!(result.edges_committed, 0, "no edges should commit");
+        assert_eq!(result.rejections.len(), 1, "one edge should be rejected");
 
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
-        assert_eq!(ctx.edge_count(), 0);
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A should exist");
+        assert_eq!(ctx.edge_count(), 0, "no edges should exist");
     }
 
     // === Additional: Edge with raw weight is preserved ===
@@ -699,7 +699,7 @@ mod tests {
         sink.emit(emission).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.edges[0].combined_weight, 0.42);
+        assert_eq!(ctx.edges[0].combined_weight, 0.42, "raw weight 0.42 should be preserved");
     }
 
     // ================================================================
@@ -828,7 +828,7 @@ mod tests {
         ).await.unwrap();
 
         let nodes_added = result.events.iter().find(|e| matches!(e, GraphEvent::NodesAdded { .. }));
-        assert!(nodes_added.is_some());
+        assert!(nodes_added.is_some(), "NodesAdded event should fire");
         if let Some(GraphEvent::NodesAdded { node_ids, .. }) = nodes_added {
             assert_eq!(node_ids.len(), 2);
             assert!(node_ids.contains(&NodeId::from_string("A")));
@@ -852,7 +852,7 @@ mod tests {
         ).await.unwrap();
 
         let edges_added = result.events.iter().find(|e| matches!(e, GraphEvent::EdgesAdded { .. }));
-        assert!(edges_added.is_some());
+        assert!(edges_added.is_some(), "EdgesAdded event should fire");
         if let Some(GraphEvent::EdgesAdded { edge_ids, .. }) = edges_added {
             assert_eq!(edge_ids.len(), 1);
         }
@@ -873,7 +873,7 @@ mod tests {
         ).await.unwrap();
 
         let nodes_removed = result.events.iter().find(|e| matches!(e, GraphEvent::NodesRemoved { .. }));
-        assert!(nodes_removed.is_some());
+        assert!(nodes_removed.is_some(), "NodesRemoved event should fire");
         if let Some(GraphEvent::NodesRemoved { node_ids, .. }) = nodes_removed {
             assert_eq!(node_ids.len(), 1);
             assert!(node_ids.contains(&NodeId::from_string("A")));
@@ -899,10 +899,10 @@ mod tests {
         ).await.unwrap();
 
         let nodes_removed = result.events.iter().find(|e| matches!(e, GraphEvent::NodesRemoved { .. }));
-        assert!(nodes_removed.is_some());
+        assert!(nodes_removed.is_some(), "NodesRemoved event should fire");
 
         let edges_removed = result.events.iter().find(|e| matches!(e, GraphEvent::EdgesRemoved { .. }));
-        assert!(edges_removed.is_some());
+        assert!(edges_removed.is_some(), "EdgesRemoved event should fire on cascade");
         if let Some(GraphEvent::EdgesRemoved { edge_ids, reason, .. }) = edges_removed {
             assert_eq!(edge_ids.len(), 1);
             assert_eq!(reason, "cascade");
@@ -927,7 +927,7 @@ mod tests {
 
         // NodesAdded event fires for A
         let nodes_added = result.events.iter().find(|e| matches!(e, GraphEvent::NodesAdded { .. }));
-        assert!(nodes_added.is_some());
+        assert!(nodes_added.is_some(), "NodesAdded event should fire for committed node");
 
         // No EdgesAdded event
         let edges_added = result.events.iter().find(|e| matches!(e, GraphEvent::EdgesAdded { .. }));
@@ -968,9 +968,9 @@ mod tests {
                 .with_edge(edge("A", "B"))
         ).await.unwrap();
 
-        assert_eq!(result.events.len(), 2);
-        assert!(matches!(&result.events[0], GraphEvent::NodesAdded { .. }));
-        assert!(matches!(&result.events[1], GraphEvent::EdgesAdded { .. }));
+        assert_eq!(result.events.len(), 2, "should have exactly 2 events");
+        assert!(matches!(&result.events[0], GraphEvent::NodesAdded { .. }), "first event should be NodesAdded");
+        assert!(matches!(&result.events[1], GraphEvent::EdgesAdded { .. }), "second event should be EdgesAdded");
     }
 
     // ================================================================
@@ -1003,11 +1003,11 @@ mod tests {
         e.combined_weight = 5.0;
 
         let result = sink.emit(Emission::new().with_edge(e)).await.unwrap();
-        assert_eq!(result.edges_committed, 1);
+        assert_eq!(result.edges_committed, 1, "edge should commit");
 
         let ctx = ctx.lock().unwrap();
         let edge = &ctx.edges[0];
-        assert_eq!(edge.contributions.get("code-coverage"), Some(&5.0));
+        assert_eq!(edge.contributions.get("code-coverage"), Some(&5.0), "contribution slot should be created with value 5.0");
     }
 
     // === Scenario: Same adapter re-emits same value — idempotent ===
@@ -1032,8 +1032,8 @@ mod tests {
         let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.edge_count(), 1);
-        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&5.0));
+        assert_eq!(ctx.edge_count(), 1, "should still have one edge");
+        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&5.0), "contribution should remain 5.0");
 
         // No WeightsChanged event should fire
         let weights_changed = result.events.iter()
@@ -1061,7 +1061,7 @@ mod tests {
         let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&8.0));
+        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&8.0), "contribution should increase to 8.0");
 
         // WeightsChanged event should fire
         let weights_changed = result.events.iter()
@@ -1089,7 +1089,7 @@ mod tests {
         let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&3.0));
+        assert_eq!(ctx.edges[0].contributions.get("code-coverage"), Some(&3.0), "contribution should decrease to 3.0");
 
         let weights_changed = result.events.iter()
             .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
@@ -1132,10 +1132,10 @@ mod tests {
         let result = sink2.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.edge_count(), 1);
+        assert_eq!(ctx.edge_count(), 1, "same edge from two adapters should not duplicate");
         let edge = &ctx.edges[0];
-        assert_eq!(edge.contributions.get("code-coverage"), Some(&5.0));
-        assert_eq!(edge.contributions.get("systems-architecture"), Some(&0.7));
+        assert_eq!(edge.contributions.get("code-coverage"), Some(&5.0), "code-coverage contribution preserved");
+        assert_eq!(edge.contributions.get("systems-architecture"), Some(&0.7), "systems-architecture contribution added");
 
         let weights_changed = result.events.iter()
             .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
@@ -1229,9 +1229,9 @@ mod tests {
 
         let ctx = ctx.lock().unwrap();
         let edge = &ctx.edges[0];
-        assert_eq!(edge.contributions.get("enrichment-adapter"), Some(&0.2));
-        assert_eq!(edge.contributions.get("document-adapter"), Some(&0.85));
-        assert_eq!(edge.contributions.len(), 2);
+        assert_eq!(edge.contributions.get("enrichment-adapter"), Some(&0.2), "enrichment-adapter contribution preserved");
+        assert_eq!(edge.contributions.get("document-adapter"), Some(&0.85), "document-adapter contribution added");
+        assert_eq!(edge.contributions.len(), 2, "both adapter contributions should exist");
 
         // Raw weight: each adapter has one edge (degenerate case → 1.0 each)
         // raw_weight = 1.0 + 1.0 = 2.0
@@ -1241,7 +1241,7 @@ mod tests {
 
         let weights_changed = result.events.iter()
             .any(|e| matches!(e, GraphEvent::WeightsChanged { .. }));
-        assert!(weights_changed);
+        assert!(weights_changed, "cross-adapter reinforcement should fire WeightsChanged");
     }
 
     // ================================================================
