@@ -44,6 +44,7 @@ dirs = "5.0"
 
 # Logging
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 # Embeddings (optional, behind `embeddings` feature)
 fastembed = { version = "5", optional = true, default-features = false, features = ["ort-download-binaries", "hf-hub-native-tls"] }

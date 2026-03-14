@@ -10,6 +10,7 @@ use plexus::adapter::{GraphAnalysisAdapter, IngestPipeline, run_analysis};
 use plexus::llm_orc::SubprocessClient;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::{error, warn};
 
 #[derive(Parser)]
 #[command(
@@ -119,7 +120,7 @@ fn find_context_by_name(engine: &PlexusEngine, name: &str) -> Option<ContextId> 
 
 fn cmd_context_create(engine: &PlexusEngine, name: &str) -> i32 {
     if find_context_by_name(engine, name).is_some() {
-        eprintln!("Error: context '{}' already exists", name);
+        error!(name, "context already exists");
         return 1;
     }
     let context = Context::new(name);
@@ -129,7 +130,7 @@ fn cmd_context_create(engine: &PlexusEngine, name: &str) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            error!(error = %e, "operation failed");
             1
         }
     }
@@ -139,7 +140,7 @@ fn cmd_context_delete(engine: &PlexusEngine, name: &str) -> i32 {
     let id = match find_context_by_name(engine, name) {
         Some(id) => id,
         None => {
-            eprintln!("Error: context '{}' not found", name);
+            error!(name, "context not found");
             return 1;
         }
     };
@@ -149,11 +150,11 @@ fn cmd_context_delete(engine: &PlexusEngine, name: &str) -> i32 {
             0
         }
         Ok(false) => {
-            eprintln!("Error: context '{}' not found", name);
+            error!(name, "context not found");
             1
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            error!(error = %e, "operation failed");
             1
         }
     }
@@ -184,12 +185,12 @@ fn cmd_context_rename(engine: &PlexusEngine, old: &str, new: &str) -> i32 {
     let id = match find_context_by_name(engine, old) {
         Some(id) => id,
         None => {
-            eprintln!("Error: context '{}' not found", old);
+            error!(name = old, "context not found");
             return 1;
         }
     };
     if find_context_by_name(engine, new).is_some() {
-        eprintln!("Error: context '{}' already exists", new);
+        error!(name = new, "context already exists");
         return 1;
     }
     match engine.rename_context(&id, new) {
@@ -198,7 +199,7 @@ fn cmd_context_rename(engine: &PlexusEngine, old: &str, new: &str) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            error!(error = %e, "operation failed");
             1
         }
     }
@@ -208,14 +209,14 @@ fn cmd_context_add_source(engine: &PlexusEngine, name: &str, path: &PathBuf) -> 
     let id = match find_context_by_name(engine, name) {
         Some(id) => id,
         None => {
-            eprintln!("Error: context '{}' not found", name);
+            error!(name, "context not found");
             return 1;
         }
     };
     let canonical = match path.canonicalize() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Error: cannot resolve '{}': {}", path.display(), e);
+            error!(path = %path.display(), error = %e, "cannot resolve path");
             return 1;
         }
     };
@@ -231,7 +232,7 @@ fn cmd_context_add_source(engine: &PlexusEngine, name: &str, path: &PathBuf) -> 
             0
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            error!(error = %e, "operation failed");
             1
         }
     }
@@ -241,14 +242,14 @@ fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &PathBuf) 
     let id = match find_context_by_name(engine, name) {
         Some(id) => id,
         None => {
-            eprintln!("Error: context '{}' not found", name);
+            error!(name, "context not found");
             return 1;
         }
     };
     let canonical = match path.canonicalize() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Error: cannot resolve '{}': {}", path.display(), e);
+            error!(path = %path.display(), error = %e, "cannot resolve path");
             return 1;
         }
     };
@@ -264,7 +265,7 @@ fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &PathBuf) 
         }
         Ok(false) => {}
         Err(e) => {
-            eprintln!("Error: {}", e);
+            error!(error = %e, "operation failed");
             return 1;
         }
     }
@@ -274,11 +275,11 @@ fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &PathBuf) 
             0
         }
         Ok(false) => {
-            eprintln!("Warning: source not found in context '{}'", name);
+            warn!(name, "source not found in context");
             1
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            error!(error = %e, "operation failed");
             1
         }
     }
@@ -288,7 +289,7 @@ async fn cmd_analyze(engine: Arc<PlexusEngine>, context_name: &str, ensemble: &s
     let ctx_id = match find_context_by_name(&engine, context_name) {
         Some(id) => id,
         None => {
-            eprintln!("Error: context '{}' not found", context_name);
+            error!(name = context_name, "context not found");
             return 1;
         }
     };
@@ -296,7 +297,7 @@ async fn cmd_analyze(engine: Arc<PlexusEngine>, context_name: &str, ensemble: &s
     let ctx = match engine.get_context(&ctx_id) {
         Some(c) => c,
         None => {
-            eprintln!("Error: context '{}' not found", context_name);
+            error!(name = context_name, "context not found");
             return 1;
         }
     };
@@ -316,7 +317,7 @@ async fn cmd_analyze(engine: Arc<PlexusEngine>, context_name: &str, ensemble: &s
     let results = match run_analysis(&client, ensemble, &ctx).await {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Error: {}", e);
+            error!(error = %e, "operation failed");
             return 1;
         }
     };
@@ -342,7 +343,7 @@ async fn cmd_analyze(engine: Arc<PlexusEngine>, context_name: &str, ensemble: &s
                 total_updates += input.results.len();
             }
             Err(e) => {
-                eprintln!("  {} — failed: {}", algo_name, e);
+                error!(algorithm = %algo_name, error = %e, "analysis failed");
             }
         }
     }
@@ -352,11 +353,15 @@ async fn cmd_analyze(engine: Arc<PlexusEngine>, context_name: &str, ensemble: &s
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = Cli::parse();
     match cli.command {
         Commands::Mcp { transport, db } => {
             if transport != "stdio" {
-                eprintln!("error: only 'stdio' transport is currently supported");
+                error!("only 'stdio' transport is currently supported");
                 std::process::exit(1);
             }
             let db_path = db.unwrap_or_else(default_db_path);
@@ -367,7 +372,7 @@ fn main() {
             let engine = match open_engine(db) {
                 Ok(e) => e,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    error!(error = %e, "operation failed");
                     std::process::exit(1);
                 }
             };
@@ -381,7 +386,7 @@ fn main() {
             let engine = match open_engine(db) {
                 Ok(e) => e,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    error!(error = %e, "operation failed");
                     std::process::exit(1);
                 }
             };
