@@ -4,7 +4,8 @@
 mod tests {
     use crate::adapter::cancel::CancellationToken;
     use crate::adapter::cooccurrence::CoOccurrenceEnrichment;
-    use crate::adapter::engine_sink::{EngineSink, run_enrichment_loop};
+    use crate::adapter::engine_sink::EngineSink;
+    use crate::adapter::enrichment_loop::run_enrichment_loop;
     use crate::adapter::enrichment::{Enrichment, EnrichmentRegistry};
     use crate::graph::events::GraphEvent;
     use crate::adapter::content::{ContentAdapter, FragmentInput};

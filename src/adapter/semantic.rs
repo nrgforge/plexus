@@ -1726,7 +1726,7 @@ Cargo is the build system and package manager for Rust projects.
 
         // Run enrichment loop with accumulated events
         let primary_events = sink.drain_events();
-        crate::adapter::engine_sink::run_enrichment_loop(
+        crate::adapter::enrichment_loop::run_enrichment_loop(
             &engine, &context_id, &registry, &primary_events,
         ).unwrap();
 

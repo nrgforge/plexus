@@ -11,6 +11,7 @@ pub mod embedding;
 pub mod temporal_proximity;
 mod engine_sink;
 mod enrichment;
+mod enrichment_loop;
 pub mod extraction;
 pub mod content;
 pub mod graph_analysis;
@@ -28,7 +29,7 @@ mod types;
 
 pub use cancel::CancellationToken;
 pub use engine_sink::EngineSink;
-pub(crate) use engine_sink::run_enrichment_loop;
+pub(crate) use enrichment_loop::run_enrichment_loop;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use crate::graph::events::GraphEvent;
 pub use provenance::{FrameworkContext, ProvenanceEntry};
