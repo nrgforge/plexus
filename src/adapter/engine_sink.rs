@@ -272,14 +272,14 @@ fn commit_edges(
         // ADR-003: Detect contribution change for WeightsChanged event
         let mut contribution_changed = false;
         if !adapter_id.is_empty() {
-            if let Some(existing) = ctx.edges.iter().find(|e| {
-                e.source == edge_to_commit.source
-                    && e.target == edge_to_commit.target
-                    && e.relationship == edge_to_commit.relationship
-                    && e.source_dimension == edge_to_commit.source_dimension
-                    && e.target_dimension == edge_to_commit.target_dimension
-            }) {
-                let old_value = existing.contributions.get(adapter_id);
+            if let Some(idx) = ctx.find_edge_exact(
+                &edge_to_commit.source,
+                &edge_to_commit.target,
+                &edge_to_commit.relationship,
+                &edge_to_commit.source_dimension,
+                &edge_to_commit.target_dimension,
+            ) {
+                let old_value = ctx.edges[idx].contributions.get(adapter_id);
                 let new_value = Some(&contribution_value);
                 contribution_changed = old_value != new_value;
             }

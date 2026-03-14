@@ -154,6 +154,25 @@ impl Context {
         id
     }
 
+    /// Find the index of an edge that exactly matches all 5 fields:
+    /// source, target, relationship, source_dimension, target_dimension.
+    pub fn find_edge_exact(
+        &self,
+        source: &NodeId,
+        target: &NodeId,
+        relationship: &str,
+        source_dim: &str,
+        target_dim: &str,
+    ) -> Option<usize> {
+        self.edges.iter().position(|e| {
+            e.source == *source
+                && e.target == *target
+                && e.relationship == relationship
+                && e.source_dimension == source_dim
+                && e.target_dimension == target_dim
+        })
+    }
+
     /// Add an edge to the context.
     ///
     /// Merges contribution slots on exact duplicates but does **not** recompute
@@ -174,27 +193,29 @@ impl Context {
     pub fn add_edge(&mut self, edge: Edge) {
         use super::PropertyValue;
 
-        // Single-pass scan: find exact match index and count cross-dimensional matches
-        let mut exact_match_idx: Option<usize> = None;
-        let mut cross_dim_indices: Vec<usize> = Vec::new();
+        let exact_match_idx = self.find_edge_exact(
+            &edge.source,
+            &edge.target,
+            &edge.relationship,
+            &edge.source_dimension,
+            &edge.target_dimension,
+        );
 
-        for (i, e) in self.edges.iter().enumerate() {
-            let same_logical = e.source == edge.source
-                && e.target == edge.target
-                && e.relationship == edge.relationship;
-
-            if same_logical {
-                let same_dimensions = e.source_dimension == edge.source_dimension
-                    && e.target_dimension == edge.target_dimension;
-
-                if same_dimensions {
-                    exact_match_idx = Some(i);
-                    break;
-                } else {
-                    cross_dim_indices.push(i);
-                }
-            }
-        }
+        // Collect cross-dimensional matches (same logical edge, different dimensions)
+        let cross_dim_indices: Vec<usize> = if exact_match_idx.is_none() {
+            self.edges.iter().enumerate()
+                .filter(|(_, e)| {
+                    e.source == edge.source
+                        && e.target == edge.target
+                        && e.relationship == edge.relationship
+                        && (e.source_dimension != edge.source_dimension
+                            || e.target_dimension != edge.target_dimension)
+                })
+                .map(|(i, _)| i)
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         if let Some(idx) = exact_match_idx {
             // Exact duplicate - merge contributions per-adapter (ADR-003)
