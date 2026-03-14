@@ -92,10 +92,6 @@ cargo test --lib         # Run library tests (fast)
 cargo test               # Run all tests (includes integration)
 ```
 
-### Feature Flags
-
-- `real_llm` — enable real LLM calls for integration tests (default: mock responses)
-
 ### CLI
 
 ```bash
