@@ -4981,6 +4981,7 @@ emit:
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
             Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
             Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap")) as Arc<dyn Enrichment>,
+            // 60_000 ms = 60 seconds — tight window for test (production uses 24 h)
             Arc::new(TemporalProximityEnrichment::new("timestamp", 60_000, "temporal_proximity")) as Arc<dyn Enrichment>,
         ]));
 
@@ -5036,6 +5037,7 @@ emit:
 
         assert!(loop_result.quiesced,
             "production enrichments should converge by quiescence (ran {} rounds)", loop_result.rounds);
+        // 4 enrichments should converge in ≤3 rounds (quiescence = no new events)
         assert!(loop_result.rounds <= 3,
             "production enrichments should converge within 3 rounds, got {}", loop_result.rounds);
     }

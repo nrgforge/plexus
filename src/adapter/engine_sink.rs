@@ -1053,11 +1053,11 @@ mod tests {
         }
 
         let mut e1 = edge("A", "B");
-        e1.combined_weight = 5.0;
+        e1.combined_weight = 5.0; // arbitrary initial value
         sink.emit(Emission::new().with_edge(e1)).await.unwrap();
 
         let mut e2 = edge("A", "B");
-        e2.combined_weight = 8.0;
+        e2.combined_weight = 8.0; // higher than initial — tests increase
         let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1081,11 +1081,11 @@ mod tests {
         }
 
         let mut e1 = edge("A", "B");
-        e1.combined_weight = 8.0;
+        e1.combined_weight = 8.0; // arbitrary initial high value
         sink.emit(Emission::new().with_edge(e1)).await.unwrap();
 
         let mut e2 = edge("A", "B");
-        e2.combined_weight = 3.0;
+        e2.combined_weight = 3.0; // lower than initial — tests decrease
         let result = sink.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1116,7 +1116,7 @@ mod tests {
         let sink1 = EngineSink::new(ctx.clone()).with_framework_context(fw1);
 
         let mut e1 = edge("A", "B");
-        e1.combined_weight = 5.0;
+        e1.combined_weight = 5.0; // different scales: tests cross-adapter normalization
         sink1.emit(Emission::new().with_edge(e1)).await.unwrap();
 
         // Second adapter
@@ -1128,7 +1128,7 @@ mod tests {
         let sink2 = EngineSink::new(ctx.clone()).with_framework_context(fw2);
 
         let mut e2 = edge("A", "B");
-        e2.combined_weight = 0.7;
+        e2.combined_weight = 0.7; // different scale from first adapter
         let result = sink2.emit(Emission::new().with_edge(e2)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
@@ -1203,7 +1203,7 @@ mod tests {
             NodeId::from_string("abrupt"),
             "may_be_related",
         );
-        first_edge.combined_weight = 0.2;
+        first_edge.combined_weight = 0.2; // single-value degenerate: normalizes to 1.0
         first_sink.emit(Emission::new().with_edge(first_edge)).await.unwrap();
 
         {
@@ -1224,7 +1224,7 @@ mod tests {
             NodeId::from_string("abrupt"),
             "may_be_related",
         );
-        confirm_edge.combined_weight = 0.85;
+        confirm_edge.combined_weight = 0.85; // single-value degenerate: normalizes to 1.0
         let result = second_sink.emit(Emission::new().with_edge(confirm_edge)).await.unwrap();
 
         let ctx = ctx.lock().unwrap();
