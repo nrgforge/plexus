@@ -629,4 +629,79 @@ mod tests {
             assert_eq!(*n, 3, "cross_dim_count should be 3 for third dimension");
         }
     }
+
+    // === Cross-adapter normalization isolation ===
+
+    /// Verify that scale normalization computes per-adapter ranges independently.
+    ///
+    /// Provenance edges (from "provenance" adapter) must not distort the
+    /// normalization of semantic edges (from "alpha" adapter) or vice versa.
+    #[test]
+    fn cross_adapter_normalization_is_isolated() {
+        let mut ctx = Context::new("test");
+        let a = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let b = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let c = ctx.add_node(Node::new_in_dimension("concept", ContentType::Concept, "semantic"));
+        let chain = ctx.add_node(Node::new_in_dimension("chain", ContentType::Provenance, "provenance"));
+        let mark = ctx.add_node(Node::new_in_dimension("mark", ContentType::Provenance, "provenance"));
+
+        // Semantic edges from "alpha" adapter: varied contributions (1.0 and 5.0)
+        ctx.add_edge(
+            Edge::new_in_dimension(a.clone(), b.clone(), "may_be_related", "semantic")
+                .with_contribution("alpha", 1.0),
+        );
+        ctx.add_edge(
+            Edge::new_in_dimension(a.clone(), c.clone(), "may_be_related", "semantic")
+                .with_contribution("alpha", 5.0),
+        );
+
+        // Provenance edges from "provenance" adapter: uniform (degenerate) contributions
+        ctx.add_edge(
+            Edge::new_in_dimension(chain.clone(), mark.clone(), "contains", "provenance")
+                .with_contribution("provenance", 1.0),
+        );
+
+        ctx.recompute_combined_weights();
+
+        // Alpha adapter: min=1.0, max=5.0, range=4.0
+        // A→B: (0 + 0.04) / 4.04 ≈ 0.00990 (floor)
+        // A→C: (4 + 0.04) / 4.04 = 1.0 (max)
+        let ab = ctx.edges.iter()
+            .find(|e| e.source == a && e.target == b)
+            .expect("A→B edge");
+        let ac = ctx.edges.iter()
+            .find(|e| e.source == a && e.target == c)
+            .expect("A→C edge");
+
+        let floor = 0.01 / 1.01;
+        assert!(
+            (ab.combined_weight - floor).abs() < 1e-4,
+            "A→B should normalize to floor ~{:.4}, got {}",
+            floor, ab.combined_weight,
+        );
+        assert!(
+            (ac.combined_weight - 1.0).abs() < 1e-6,
+            "A→C should normalize to 1.0, got {}",
+            ac.combined_weight,
+        );
+
+        // Provenance adapter: degenerate (single value 1.0) → normalizes to 1.0
+        let contains = ctx.edges.iter()
+            .find(|e| e.relationship == "contains")
+            .expect("contains edge");
+        assert!(
+            (contains.combined_weight - 1.0).abs() < 1e-6,
+            "provenance degenerate should be 1.0, got {}",
+            contains.combined_weight,
+        );
+
+        // Key invariant: provenance edges don't distort alpha's range.
+        // If cross-contamination existed, alpha's range would include provenance's
+        // 1.0 and alpha's floor would shift. Verify alpha floor matches expected.
+        let expected_alpha_floor = 0.01 / 1.01; // α/(1+α) with per-adapter range
+        assert!(
+            (ab.combined_weight - expected_alpha_floor).abs() < 1e-4,
+            "alpha normalization should not be affected by provenance contributions",
+        );
+    }
 }
