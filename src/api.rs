@@ -494,6 +494,9 @@ impl PlexusApi {
     // --- Context management ---
 
     /// Create a context. Returns error if name is already taken.
+    ///
+    /// Intentionally bypasses the adapter pipeline: context lifecycle is
+    /// infrastructure, not content ingestion — no enrichment applies.
     pub fn context_create(&self, name: &str) -> PlexusResult<ContextId> {
         if self.resolve(name).is_ok() {
             return Err(PlexusError::Other(format!("context '{}' already exists", name)));

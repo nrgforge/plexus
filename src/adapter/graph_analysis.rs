@@ -9,6 +9,9 @@
 //!
 //! Each algorithm has a distinct adapter ID (e.g., `graph-analysis:pagerank`)
 //! for contribution tracking.
+//!
+//! Currently CLI-only (`plexus analyze` subcommand). The MCP transport's
+//! single write tool (`ingest`) does not cover on-demand analysis.
 
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};

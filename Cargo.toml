@@ -12,9 +12,12 @@ path = "src/bin/plexus.rs"
 
 [features]
 default = []
-# Enable real LLM calls for spike tests; when disabled, tests use mock responses
+# Declared but currently unused — spike tests that used this flag were removed.
+# Retained as a gate for future live LLM integration tests.
 real_llm = []
-# ONNX-based text embeddings (fastembed) and persistent vector search (sqlite-vec)
+# ONNX-based text embeddings (fastembed) and persistent vector search (sqlite-vec).
+# Used in 10 sites: mcp/mod.rs, storage/mod.rs, storage/sqlite_vec.rs,
+# adapter/mod.rs, adapter/embedding.rs.
 embeddings = ["dep:fastembed", "dep:sqlite-vec"]
 
 [dependencies]

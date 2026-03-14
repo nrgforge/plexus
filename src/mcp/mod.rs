@@ -75,7 +75,7 @@ impl PlexusMcpServer {
             Arc::new(TagConceptBridger::new()),
             Arc::new(CoOccurrenceEnrichment::new()),
             Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap")),
-            Arc::new(TemporalProximityEnrichment::new("created_at", 86400000, "temporal_proximity")),
+            Arc::new(TemporalProximityEnrichment::new("created_at", 86_400_000, "temporal_proximity")), // 24 hours in ms
         ];
 
         #[cfg(feature = "embeddings")]
