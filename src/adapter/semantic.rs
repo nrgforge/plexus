@@ -368,6 +368,28 @@ impl Adapter for SemanticAdapter {
     }
 }
 
+/// Build a tagged_with edge from a file node (structure) to a concept node (semantic).
+///
+/// Sets combined_weight = 1.0 and inserts a contribution under `contribution_key`.
+/// Used by all Phase 3 parsers (standard, SpaCy, themes).
+fn tagged_with_edge(
+    file_node_id: &NodeId,
+    concept_id: NodeId,
+    contribution_key: &str,
+) -> AnnotatedEdge {
+    let mut edge = Edge::new_cross_dimensional(
+        file_node_id.clone(),
+        dimension::STRUCTURE,
+        concept_id,
+        dimension::SEMANTIC,
+        "tagged_with",
+    );
+    edge.combined_weight = 1.0;
+    edge.contributions
+        .insert(contribution_key.to_string(), 1.0);
+    AnnotatedEdge::new(edge)
+}
+
 impl SemanticAdapter {
     /// Parse a single agent's JSON response into an emission with per-agent contribution keys.
     ///
@@ -429,18 +451,7 @@ impl SemanticAdapter {
                     );
                 }
                 emission = emission.with_node(AnnotatedNode::new(node));
-
-                let mut edge = Edge::new_cross_dimensional(
-                    file_node_id.clone(),
-                    dimension::STRUCTURE,
-                    concept_id,
-                    dimension::SEMANTIC,
-                    "tagged_with",
-                );
-                edge.combined_weight = 1.0;
-                edge.contributions
-                    .insert(contribution_key.to_string(), 1.0);
-                emission = emission.with_edge(AnnotatedEdge::new(edge));
+                emission = emission.with_edge(tagged_with_edge(&file_node_id, concept_id, contribution_key));
             }
         }
 
@@ -511,18 +522,7 @@ impl SemanticAdapter {
                     PropertyValue::String("spacy".to_string()),
                 );
                 emission = emission.with_node(AnnotatedNode::new(node));
-
-                let mut edge = Edge::new_cross_dimensional(
-                    file_node_id.clone(),
-                    dimension::STRUCTURE,
-                    concept_id,
-                    dimension::SEMANTIC,
-                    "tagged_with",
-                );
-                edge.combined_weight = 1.0;
-                edge.contributions
-                    .insert(contribution_key.to_string(), 1.0);
-                emission = emission.with_edge(AnnotatedEdge::new(edge));
+                emission = emission.with_edge(tagged_with_edge(file_node_id, concept_id, contribution_key));
             }
         }
 
@@ -631,18 +631,7 @@ impl SemanticAdapter {
                 }
                 emission = emission.with_node(AnnotatedNode::new(node));
 
-                // tagged_with edge: file → theme concept
-                let mut edge = Edge::new_cross_dimensional(
-                    file_node_id.clone(),
-                    dimension::STRUCTURE,
-                    concept_id,
-                    dimension::SEMANTIC,
-                    "tagged_with",
-                );
-                edge.combined_weight = 1.0;
-                edge.contributions
-                    .insert(contribution_key.to_string(), 1.0);
-                emission = emission.with_edge(AnnotatedEdge::new(edge));
+                emission = emission.with_edge(tagged_with_edge(file_node_id, concept_id, contribution_key));
             }
         }
 
