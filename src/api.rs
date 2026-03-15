@@ -830,9 +830,9 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // --- Annotate workflow (ADR-015) ---
+    // --- Ingest-based annotation workflow (ADR-015 / ADR-028) ---
 
-    use crate::adapter::{ContentAdapter, ProvenanceAdapter};
+    use crate::adapter::{ContentAdapter, ProvenanceAdapter, ProvenanceInput};
 
     fn setup_with_provenance() -> (Arc<PlexusEngine>, PlexusApi) {
         let engine = Arc::new(PlexusEngine::new());
@@ -843,23 +843,51 @@ mod tests {
         (engine, api)
     }
 
-    // === Scenario: Annotate creates fragment, chain, and mark in one call ===
+    // === Scenario: Ingest creates fragment, chain, and mark ===
     #[tokio::test]
-    async fn annotate_creates_fragment_chain_and_mark() {
+    async fn ingest_creates_fragment_chain_and_mark() {
         let (engine, api) = setup_with_provenance();
-        engine.upsert_context(Context::new("research")).unwrap();
+        let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
+        let cid = ctx_id.as_str();
 
-        let events = api
-            .annotate("research", "field notes", "src/main.rs", 42, "interesting pattern", None, None, Some(vec!["refactor".into()]))
+        // Step 1: Ingest fragment (semantic content)
+        let fragment_input = FragmentInput::new("interesting pattern", vec!["refactor".into()])
+            .with_source("src/main.rs");
+        let frag_events = api
+            .ingest(cid, "content", Box::new(fragment_input))
+            .await
+            .unwrap();
+        assert!(!frag_events.is_empty(), "fragment ingest should produce events");
+
+        // Step 2: Create chain via provenance ingest
+        let chain_input = ProvenanceInput::CreateChain {
+            chain_id: normalize_chain_name("field notes"),
+            name: "field notes".to_string(),
+            description: None,
+        };
+        let chain_events = api
+            .ingest(cid, "provenance", Box::new(chain_input))
+            .await
+            .unwrap();
+        assert!(!chain_events.is_empty(), "chain ingest should produce events");
+
+        // Step 3: Create mark via provenance ingest
+        let mark_input = ProvenanceInput::AddMark {
+            mark_id: "mark:provenance:test-1".to_string(),
+            chain_id: normalize_chain_name("field notes"),
+            file: "src/main.rs".to_string(),
+            line: 42,
+            annotation: "interesting pattern".to_string(),
+            column: None,
+            mark_type: None,
+            tags: Some(vec!["refactor".into()]),
+        };
+        api.ingest(cid, "provenance", Box::new(mark_input))
             .await
             .unwrap();
 
-        // Should have outbound events from fragment, chain, and mark creation
-        assert!(!events.is_empty());
-
-        let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
-
         // Verify fragment node exists (semantic content)
+        let ctx = engine.get_context(&ctx_id).unwrap();
         let fragments: Vec<_> = ctx.nodes.values()
             .filter(|n| n.node_type == "fragment")
             .collect();
@@ -872,12 +900,12 @@ mod tests {
         // Verify concept node exists (from tags)
         assert!(ctx.get_node(&NodeId::from("concept:refactor")).is_some());
 
-        // Verify user's chain exists
+        // Verify chain exists
         let chains = api.list_chains("research", None).unwrap();
         let user_chain = chains.iter().find(|c| c.id == "chain:provenance:field-notes");
         assert!(user_chain.is_some(), "user's chain should exist");
 
-        // Verify user's mark exists in the chain
+        // Verify mark exists in the chain
         let marks = api.list_marks("research", Some("chain:provenance:field-notes"), None, None, None).unwrap();
         assert_eq!(marks.len(), 1);
         assert_eq!(marks[0].annotation, "interesting pattern");
@@ -885,23 +913,64 @@ mod tests {
         assert_eq!(marks[0].line, 42);
     }
 
-    // === Scenario: Annotate reuses existing chain ===
+    // === Scenario: Second ingest reuses existing chain ===
     #[tokio::test]
-    async fn annotate_reuses_existing_chain() {
+    async fn ingest_reuses_existing_chain() {
         let (engine, api) = setup_with_provenance();
-        engine.upsert_context(Context::new("research")).unwrap();
+        let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
+        let cid = ctx_id.as_str();
 
-        // First annotate creates the chain
-        api.annotate("research", "field notes", "src/main.rs", 42, "first", None, None, None)
-            .await
-            .unwrap();
+        let chain_id = normalize_chain_name("field notes");
 
-        // Second annotate reuses it
-        api.annotate("research", "field notes", "src/lib.rs", 10, "second", None, None, None)
-            .await
-            .unwrap();
+        // First: create chain + mark
+        api.ingest(cid, "content", Box::new(
+            FragmentInput::new("first", vec![]),
+        )).await.unwrap();
+        api.ingest(cid, "provenance", Box::new(
+            ProvenanceInput::CreateChain {
+                chain_id: chain_id.clone(),
+                name: "field notes".to_string(),
+                description: None,
+            },
+        )).await.unwrap();
+        api.ingest(cid, "provenance", Box::new(
+            ProvenanceInput::AddMark {
+                mark_id: "mark:provenance:test-1".to_string(),
+                chain_id: chain_id.clone(),
+                file: "src/main.rs".to_string(),
+                line: 42,
+                annotation: "first".to_string(),
+                column: None,
+                mark_type: None,
+                tags: None,
+            },
+        )).await.unwrap();
 
-        // Still only one user chain (ContentAdapter's internal chains are separate)
+        // Second: reuse chain (upsert is idempotent), add another mark
+        api.ingest(cid, "content", Box::new(
+            FragmentInput::new("second", vec![]),
+        )).await.unwrap();
+        api.ingest(cid, "provenance", Box::new(
+            ProvenanceInput::CreateChain {
+                chain_id: chain_id.clone(),
+                name: "field notes".to_string(),
+                description: None,
+            },
+        )).await.unwrap();
+        api.ingest(cid, "provenance", Box::new(
+            ProvenanceInput::AddMark {
+                mark_id: "mark:provenance:test-2".to_string(),
+                chain_id: chain_id.clone(),
+                file: "src/lib.rs".to_string(),
+                line: 10,
+                annotation: "second".to_string(),
+                column: None,
+                mark_type: None,
+                tags: None,
+            },
+        )).await.unwrap();
+
+        // Still only one user chain
         let chains = api.list_chains("research", None).unwrap();
         let user_chains: Vec<_> = chains.iter()
             .filter(|c| c.id.starts_with("chain:provenance:"))
@@ -935,11 +1004,12 @@ mod tests {
         );
     }
 
-    // === Scenario: Annotate triggers enrichment loop ===
+    // === Scenario: Content ingest triggers enrichment loop ===
     #[tokio::test]
-    async fn annotate_triggers_enrichment() {
+    async fn content_ingest_triggers_enrichment() {
         let engine = Arc::new(PlexusEngine::new());
-        engine.upsert_context(Context::new("research")).unwrap();
+        let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
+        let cid = ctx_id.as_str();
 
         // Set up pipeline with both adapters and enrichments
         let mut pipeline = IngestPipeline::new(engine.clone());
@@ -950,13 +1020,37 @@ mod tests {
         );
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
-        api.annotate("research", "notes", "src/main.rs", 1, "cleanup", None, None, Some(vec!["refactor".into()]))
+        // Ingest content with tags
+        let fragment_input = FragmentInput::new("cleanup", vec!["refactor".into()]);
+        api.ingest(cid, "content", Box::new(fragment_input))
             .await
             .unwrap();
 
+        // Add provenance mark with same tags so TagConceptBridger can bridge
+        let chain_id = normalize_chain_name("notes");
+        api.ingest(cid, "provenance", Box::new(
+            ProvenanceInput::CreateChain {
+                chain_id: chain_id.clone(),
+                name: "notes".to_string(),
+                description: None,
+            },
+        )).await.unwrap();
+        api.ingest(cid, "provenance", Box::new(
+            ProvenanceInput::AddMark {
+                mark_id: "mark:provenance:test-1".to_string(),
+                chain_id,
+                file: "src/main.rs".to_string(),
+                line: 1,
+                annotation: "cleanup".to_string(),
+                column: None,
+                mark_type: None,
+                tags: Some(vec!["refactor".into()]),
+            },
+        )).await.unwrap();
+
         // ContentAdapter creates concept:refactor from the tag.
         // TagConceptBridger creates a references edge from the mark to the concept.
-        let ctx = engine.get_context(&api.resolve("research").unwrap()).unwrap();
+        let ctx = engine.get_context(&ctx_id).unwrap();
         assert!(ctx.get_node(&NodeId::from("concept:refactor")).is_some(),
             "concept should be created from tag");
         let has_ref = ctx.edges.iter().any(|e| e.relationship == "references");
@@ -974,21 +1068,43 @@ mod tests {
         let _ = api; // use to prevent unused warning
     }
 
-    // === Scenario: Annotate returns merged outbound events ===
+    // === Scenario: Each ingest step produces outbound events ===
     #[tokio::test]
-    async fn annotate_returns_merged_events() {
+    async fn ingest_steps_produce_outbound_events() {
         let (engine, api) = setup_with_provenance();
-        engine.upsert_context(Context::new("research")).unwrap();
+        let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
+        let cid = ctx_id.as_str();
 
-        // First call creates fragment + chain + mark → events from all three
-        let events = api
-            .annotate("research", "notes", "src/main.rs", 1, "note", None, None, None)
+        let frag_events = api
+            .ingest(cid, "content", Box::new(FragmentInput::new("note", vec![])))
             .await
             .unwrap();
+        assert!(!frag_events.is_empty(), "fragment ingest should produce events");
 
-        // Should be a single merged list (not separate batches)
-        // Fragment, chain, and mark creation each produce events
-        assert!(events.len() >= 3, "should have events from fragment, chain, and mark creation");
+        let chain_events = api
+            .ingest(cid, "provenance", Box::new(ProvenanceInput::CreateChain {
+                chain_id: normalize_chain_name("notes"),
+                name: "notes".to_string(),
+                description: None,
+            }))
+            .await
+            .unwrap();
+        assert!(!chain_events.is_empty(), "chain ingest should produce events");
+
+        let mark_events = api
+            .ingest(cid, "provenance", Box::new(ProvenanceInput::AddMark {
+                mark_id: "mark:provenance:test-1".to_string(),
+                chain_id: normalize_chain_name("notes"),
+                file: "src/main.rs".to_string(),
+                line: 1,
+                annotation: "note".to_string(),
+                column: None,
+                mark_type: None,
+                tags: None,
+            }))
+            .await
+            .unwrap();
+        assert!(!mark_events.is_empty(), "mark ingest should produce events");
     }
 
     // === Scenario: Shared concepts via deterministic ID intersection (ADR-017 §4) ===
@@ -1059,29 +1175,8 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // === Scenario: Annotate rejects empty chain name ===
-    #[tokio::test]
-    async fn annotate_rejects_empty_chain_name() {
-        let (engine, api) = setup_with_provenance();
-        engine.upsert_context(Context::new("research")).unwrap();
-
-        let result = api
-            .annotate("research", "", "src/main.rs", 1, "note", None, None, None)
-            .await;
-
-        assert!(result.is_err());
-
-        // Also reject whitespace-only
-        let result = api
-            .annotate("research", "   ", "src/main.rs", 1, "note", None, None, None)
-            .await;
-
-        assert!(result.is_err());
-
-        // No chain should have been created
-        let chains = api.list_chains("research", None).unwrap();
-        assert_eq!(chains.len(), 0);
-    }
+    // (annotate_rejects_empty_chain_name removed — annotate() is being retired;
+    //  chain name validation is caller responsibility per ADR-028)
 
     // === ADR-027: Contribution Retraction via PlexusApi ===
 

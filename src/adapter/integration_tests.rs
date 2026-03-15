@@ -4440,17 +4440,19 @@ mod tests {
     // Integration Debt: ADR-009/015 — Tag Bridging with # Prefix
     // ================================================================
 
-    // === Scenario: annotate() with #-prefixed tags bridges correctly ===
+    // === Scenario: ingest with #-prefixed tags bridges correctly ===
     #[tokio::test]
-    async fn annotate_with_hash_prefixed_tags_bridges_to_concepts() {
+    async fn ingest_with_hash_prefixed_tags_bridges_to_concepts() {
         use crate::adapter::ingest::IngestPipeline;
-        use crate::adapter::provenance_adapter::ProvenanceAdapter;
+        use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
         use crate::adapter::tag_bridger::TagConceptBridger;
+        use crate::adapter::content::normalize_chain_name;
         use crate::api::PlexusApi;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store.clone()));
-        engine.upsert_context(Context::new("research")).unwrap();
+        let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
+        let cid = ctx_id.as_str();
 
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
@@ -4460,16 +4462,37 @@ mod tests {
         );
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
-        // Call annotate with #-prefixed tags — exercises the # stripping in api.rs:77
-        api.annotate(
-            "research", "notes", "src/main.rs", 1, "travel observations",
-            None, None, Some(vec!["#travel".into(), "#avignon".into()]),
-        ).await.unwrap();
+        // Step 1: Ingest fragment with #-stripped tags (caller responsibility)
+        let stripped_tags: Vec<String> = vec!["#travel", "#avignon"]
+            .iter()
+            .map(|s| s.strip_prefix('#').unwrap_or(s).to_string())
+            .collect();
+        let fragment_input = FragmentInput::new("travel observations", stripped_tags)
+            .with_source("src/main.rs");
+        api.ingest(cid, "content", Box::new(fragment_input))
+            .await.unwrap();
 
-        // Resolve context by name (api.resolve is private, so use engine directly)
-        let ctx_id = engine.list_contexts().into_iter()
-            .find(|id| engine.get_context(id).map(|c| c.name == "research").unwrap_or(false))
-            .expect("research context should exist");
+        // Step 2: Create chain + mark with original #-prefixed tags
+        let chain_id = normalize_chain_name("notes");
+        api.ingest(cid, "provenance", Box::new(
+            ProvenanceInput::CreateChain {
+                chain_id: chain_id.clone(),
+                name: "notes".to_string(),
+                description: None,
+            },
+        )).await.unwrap();
+        api.ingest(cid, "provenance", Box::new(
+            ProvenanceInput::AddMark {
+                mark_id: "mark:provenance:test-1".to_string(),
+                chain_id,
+                file: "src/main.rs".to_string(),
+                line: 1,
+                annotation: "travel observations".to_string(),
+                column: None,
+                mark_type: None,
+                tags: Some(vec!["#travel".into(), "#avignon".into()]),
+            },
+        )).await.unwrap();
         let ctx = engine.get_context(&ctx_id).unwrap();
 
         // ContentAdapter should create concepts WITHOUT the # prefix
@@ -4487,22 +4510,17 @@ mod tests {
             "concept:#travel should NOT exist"
         );
 
-        // annotate() creates two marks: one from ContentAdapter (provenance for the
-        // fragment) and one from ProvenanceAdapter (the user's annotation mark).
-        // Both should exist; TagConceptBridger should bridge tags from both to concepts.
+        // ContentAdapter creates one mark (fragment provenance), ProvenanceAdapter
+        // creates another (user's annotation mark). Both should exist.
         let marks: Vec<_> = ctx.nodes()
             .filter(|n| n.node_type == "mark")
             .collect();
         assert_eq!(marks.len(), 2, "should have 2 mark nodes (fragment + provenance)");
 
-        // The provenance mark (from ProvenanceAdapter) has the #-prefixed tags.
-        // TagConceptBridger strips # and bridges to concepts created by ContentAdapter.
-        // Verify references edges exist from marks to concept nodes.
+        // TagConceptBridger strips # and bridges marks to concepts.
         let all_refs: Vec<_> = ctx.edges()
             .filter(|e| e.relationship == "references")
             .collect();
-        // Both marks should bridge to concepts (ContentAdapter mark has lowercased tags,
-        // ProvenanceAdapter mark has #-prefixed tags — both should bridge)
         let ref_targets: std::collections::HashSet<String> = all_refs.iter()
             .map(|e| e.target.to_string()).collect();
         assert!(ref_targets.contains("concept:travel"), "should reference concept:travel");
