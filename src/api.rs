@@ -1,16 +1,17 @@
 //! Transport-independent API layer (ADR-014).
 //!
-//! `PlexusApi` is the single entry point for all consumer-facing operations.
-//! Transports (MCP, gRPC, REST, direct embedding) call `PlexusApi` methods —
-//! they never reach into `ProvenanceApi`, `IngestPipeline`, or `PlexusEngine`
-//! directly.
+//! `PlexusApi` is a thin routing facade: every method resolves a context name
+//! and delegates to `IngestPipeline`, `ProvenanceApi`, or the query system.
+//! No business logic lives here. Transports (MCP, gRPC, REST, direct
+//! embedding) call `PlexusApi` methods — they never reach into the
+//! underlying components directly.
 //!
 //! # Async vs sync boundary
 //!
 //! **Async** (`async fn`): operations that route through `IngestPipeline` —
-//! `ingest`, `annotate`, `update_mark`, `archive_chain`, `delete_mark`,
-//! `delete_chain`, `link_marks`, `unlink_marks`. These involve adapter
-//! execution and potentially I/O-bound enrichment.
+//! `ingest`, `update_mark`, `archive_chain`, `delete_mark`, `delete_chain`,
+//! `link_marks`, `unlink_marks`. These involve adapter execution and
+//! potentially I/O-bound enrichment.
 //!
 //! **Sync** (`fn`): read-only operations that query the in-memory `DashMap`
 //! cache — `list_chains`, `get_chain`, `list_marks`, `list_tags`, `get_links`,

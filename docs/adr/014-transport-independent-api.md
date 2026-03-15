@@ -81,4 +81,4 @@ Each transport maps protocol-specific requests to `PlexusApi` calls. The MCP tra
 
 **Neutral:**
 
-- Non-ingest mutations (`update_mark`, `update_chain`, `archive_chain`) remain outside the adapter pipeline. They're read-modify-write operations that don't produce new knowledge. `PlexusApi` routes them directly to `ProvenanceApi`. This is a known design smell (Essay 14) but not something this ADR resolves.
+- Non-ingest mutations (`update_mark`, `archive_chain`) remain outside the adapter pipeline. They're read-modify-write operations that don't produce new knowledge. `PlexusApi` routes them directly to `ProvenanceApi`. (`update_chain` was never implemented — see struck-through entry above.) This is a known design smell (Essay 14) but not something this ADR resolves.
