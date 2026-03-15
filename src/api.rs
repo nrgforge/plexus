@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use crate::adapter::{AdapterError, FragmentInput, IngestPipeline, OutboundEvent, ProvenanceInput, normalize_chain_name};
+use crate::adapter::{AdapterError, IngestPipeline, OutboundEvent, ProvenanceInput};
 use crate::graph::{
     Context, ContextId, NodeId, PlexusEngine, PlexusError, PlexusResult, PropertyValue, Source,
 };
@@ -67,96 +67,6 @@ impl PlexusApi {
         data: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<Vec<OutboundEvent>, AdapterError> {
         self.pipeline.ingest(context_id, input_kind, data).await
-    }
-
-    /// Annotate a file location, auto-creating a chain if needed (ADR-015).
-    ///
-    /// Returns merged outbound events from chain creation (if any) and mark creation.
-    pub async fn annotate(
-        &self,
-        context_id: &str,
-        chain_name: &str,
-        file: &str,
-        line: u32,
-        annotation: &str,
-        column: Option<u32>,
-        mark_type: Option<&str>,
-        tags: Option<Vec<String>>,
-    ) -> Result<Vec<OutboundEvent>, AnnotateError> {
-        // Reject empty/whitespace-only chain names
-        if chain_name.trim().is_empty() {
-            return Err(AnnotateError::EmptyChainName);
-        }
-
-        let chain_id = normalize_chain_name(chain_name);
-        let ctx_id = self
-            .resolve(context_id)
-            .map_err(AnnotateError::Plexus)?;
-        let resolved = ctx_id.as_str().to_string();
-        let mut all_events = Vec::new();
-
-        // Step 1: Create fragment from annotation text (semantic content).
-        // The annotation text IS a fragment — bidirectional dual obligation.
-        let normalized_tags: Vec<String> = tags
-            .as_ref()
-            .map(|t| {
-                t.iter()
-                    .map(|s| s.strip_prefix('#').unwrap_or(s).to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let fragment_input = FragmentInput::new(annotation, normalized_tags)
-            .with_source(file);
-        let fragment_events = self
-            .pipeline
-            .ingest(&resolved, "content", Box::new(fragment_input))
-            .await
-            .map_err(AnnotateError::Adapter)?;
-        all_events.extend(fragment_events);
-
-        // Step 2: Check if chain already exists in the context
-        let chain_exists = self
-            .engine
-            .get_context(&ctx_id)
-            .map(|ctx| ctx.get_node(&NodeId::from(chain_id.as_str())).is_some())
-            .unwrap_or(false);
-
-        // Step 2b: Create chain if it doesn't exist
-        if !chain_exists {
-            let input = ProvenanceInput::CreateChain {
-                chain_id: chain_id.clone(),
-                name: chain_name.to_string(),
-                description: None,
-            };
-            let events = self
-                .pipeline
-                .ingest(&resolved, "provenance", Box::new(input))
-                .await
-                .map_err(AnnotateError::Adapter)?;
-            all_events.extend(events);
-        }
-
-        // Step 3: Create the mark
-        let mark_id = format!("mark:provenance:{}", uuid::Uuid::new_v4());
-        let input = ProvenanceInput::AddMark {
-            mark_id,
-            chain_id,
-            file: file.to_string(),
-            line,
-            annotation: annotation.to_string(),
-            column,
-            mark_type: mark_type.map(|s| s.to_string()),
-            tags,
-        };
-        let events = self
-            .pipeline
-            .ingest(&resolved, "provenance", Box::new(input))
-            .await
-            .map_err(AnnotateError::Adapter)?;
-        all_events.extend(events);
-
-        Ok(all_events)
     }
 
     // --- Provenance reads ---
@@ -621,29 +531,6 @@ impl PlexusApi {
     }
 }
 
-/// Error from the `annotate` workflow.
-#[derive(Debug)]
-pub enum AnnotateError {
-    /// Chain name was empty or whitespace-only.
-    EmptyChainName,
-    /// Underlying adapter error.
-    Adapter(AdapterError),
-    /// Underlying engine error.
-    Plexus(PlexusError),
-}
-
-impl std::fmt::Display for AnnotateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::EmptyChainName => write!(f, "chain name must not be empty"),
-            Self::Adapter(e) => write!(f, "adapter error: {}", e),
-            Self::Plexus(e) => write!(f, "engine error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for AnnotateError {}
-
 /// Error from `delete_chain`.
 #[derive(Debug)]
 pub enum DeleteChainError {
@@ -697,8 +584,6 @@ pub struct ContextInfo {
     pub id: ContextId,
     pub sources: Vec<Source>,
 }
-
-// normalize_chain_name moved to adapter::fragment (ADR-028)
 
 #[cfg(test)]
 mod tests {
@@ -832,7 +717,7 @@ mod tests {
 
     // --- Ingest-based annotation workflow (ADR-015 / ADR-028) ---
 
-    use crate::adapter::{ContentAdapter, ProvenanceAdapter, ProvenanceInput};
+    use crate::adapter::{ContentAdapter, FragmentInput, ProvenanceAdapter, normalize_chain_name};
 
     fn setup_with_provenance() -> (Arc<PlexusEngine>, PlexusApi) {
         let engine = Arc::new(PlexusEngine::new());
@@ -1174,9 +1059,6 @@ mod tests {
         let result = api.shared_concepts("real", "imaginary");
         assert!(result.is_err());
     }
-
-    // (annotate_rejects_empty_chain_name removed — annotate() is being retired;
-    //  chain name validation is caller responsibility per ADR-028)
 
     // === ADR-027: Contribution Retraction via PlexusApi ===
 
