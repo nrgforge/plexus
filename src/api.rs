@@ -612,21 +612,7 @@ impl PlexusApi {
             .get_context(&id_b)
             .ok_or_else(|| PlexusError::ContextNotFound(id_b))?;
 
-        let concepts_a: std::collections::HashSet<&NodeId> = ctx_a
-            .nodes
-            .iter()
-            .filter(|(_, n)| n.node_type == "concept")
-            .map(|(id, _)| id)
-            .collect();
-
-        let shared: Vec<NodeId> = ctx_b
-            .nodes
-            .iter()
-            .filter(|(id, n)| n.node_type == "concept" && concepts_a.contains(id))
-            .map(|(id, _)| id.clone())
-            .collect();
-
-        Ok(shared)
+        Ok(query::shared_concepts(&ctx_a, &ctx_b))
     }
 
     fn prov(&self, context_name: &str) -> PlexusResult<ProvenanceApi> {
