@@ -38,7 +38,7 @@ pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 pub use types::{
     Annotation, AnnotatedEdge, AnnotatedNode, EdgeRemoval, Emission, OutboundEvent,
-    PropertyUpdate, Removal, concept_node,
+    PropertyUpdate, Removal, chain_node, concept_node, file_node, mark_node,
 };
 pub use cooccurrence::CoOccurrenceEnrichment;
 pub use declarative::DeclarativeAdapter;

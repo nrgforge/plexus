@@ -842,13 +842,7 @@ mod tests {
         // Pre-populate with a file node (from Phase 1)
         {
             let mut c = ctx.lock().unwrap();
-            let mut file_node = Node::new_in_dimension(
-                "file",
-                ContentType::Document,
-                dimension::STRUCTURE,
-            );
-            file_node.id = NodeId::from_string("file:/docs/example.md");
-            c.add_node(file_node);
+            c.add_node(crate::adapter::file_node("/docs/example.md"));
         }
 
         let sink = test_sink(ctx.clone());
@@ -1075,13 +1069,7 @@ mod tests {
         // Pre-populate with file node (from Phase 1)
         {
             let mut c = ctx.lock().unwrap();
-            let mut file_node = Node::new_in_dimension(
-                "file",
-                ContentType::Document,
-                dimension::STRUCTURE,
-            );
-            file_node.id = NodeId::from_string("file:/docs/hamlet.txt");
-            c.add_node(file_node);
+            c.add_node(crate::adapter::file_node("/docs/hamlet.txt"));
         }
 
         let sink = test_sink(ctx.clone());
@@ -1192,13 +1180,7 @@ mod tests {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         {
             let mut c = ctx.lock().unwrap();
-            let mut file_node = Node::new_in_dimension(
-                "file",
-                ContentType::Document,
-                dimension::STRUCTURE,
-            );
-            file_node.id = NodeId::from_string("file:/docs/test.rs");
-            c.add_node(file_node);
+            c.add_node(crate::adapter::file_node("/docs/test.rs"));
         }
 
         let sink = test_sink(ctx.clone());
@@ -1285,13 +1267,7 @@ mod tests {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         {
             let mut c = ctx.lock().unwrap();
-            let mut file_node = Node::new_in_dimension(
-                "file",
-                ContentType::Document,
-                dimension::STRUCTURE,
-            );
-            file_node.id = NodeId::from_string("file:/docs/fanout.md");
-            c.add_node(file_node);
+            c.add_node(crate::adapter::file_node("/docs/fanout.md"));
         }
 
         let sink = test_sink(ctx.clone());
@@ -1779,13 +1755,7 @@ Cargo is the build system and package manager for Rust projects.
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         {
             let mut c = ctx.lock().unwrap();
-            let mut file_node = Node::new_in_dimension(
-                "file",
-                ContentType::Document,
-                dimension::STRUCTURE,
-            );
-            file_node.id = NodeId::from_string("file:test.md");
-            c.add_node(file_node);
+            c.add_node(crate::adapter::file_node("test.md"));
         }
 
         let sink = test_sink(ctx.clone());
@@ -1864,13 +1834,7 @@ Cargo is the build system and package manager for Rust projects.
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         {
             let mut c = ctx.lock().unwrap();
-            let mut file_node = Node::new_in_dimension(
-                "file",
-                ContentType::Document,
-                dimension::STRUCTURE,
-            );
-            file_node.id = NodeId::from_string("file:test.md");
-            c.add_node(file_node);
+            c.add_node(crate::adapter::file_node("test.md"));
         }
 
         let sink = test_sink(ctx.clone());
@@ -1967,13 +1931,7 @@ Cargo is the build system and package manager for Rust projects.
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         {
             let mut c = ctx.lock().unwrap();
-            let mut file_node = Node::new_in_dimension(
-                "file",
-                ContentType::Document,
-                dimension::STRUCTURE,
-            );
-            file_node.id = NodeId::from_string("file:test.md");
-            c.add_node(file_node);
+            c.add_node(crate::adapter::file_node("test.md"));
         }
 
         let sink = test_sink(ctx.clone());

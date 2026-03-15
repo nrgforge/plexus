@@ -284,6 +284,38 @@ pub fn concept_node(label: &str) -> (NodeId, Node) {
     (id, node)
 }
 
+/// Create a chain node with the given ID.
+///
+/// Sets `node_type = "chain"`, `ContentType::Provenance`, `dimension::PROVENANCE`.
+/// Caller is responsible for setting `name`, `status`, and other properties.
+pub fn chain_node(id: &str) -> Node {
+    use crate::graph::{dimension, ContentType};
+    let mut node = Node::new_in_dimension("chain", ContentType::Provenance, dimension::PROVENANCE);
+    node.id = NodeId::from(id);
+    node
+}
+
+/// Create a mark node with the given ID.
+///
+/// Sets `node_type = "mark"`, `ContentType::Provenance`, `dimension::PROVENANCE`.
+/// Caller is responsible for setting `file`, `line`, `annotation`, and other properties.
+pub fn mark_node(id: &str) -> Node {
+    use crate::graph::{dimension, ContentType};
+    let mut node = Node::new_in_dimension("mark", ContentType::Provenance, dimension::PROVENANCE);
+    node.id = NodeId::from(id);
+    node
+}
+
+/// Create a file node with a deterministic `file:{path}` ID.
+///
+/// Sets `node_type = "file"`, `ContentType::Document`, `dimension::STRUCTURE`.
+pub fn file_node(path: &str) -> Node {
+    use crate::graph::{dimension, ContentType};
+    let mut node = Node::new_in_dimension("file", ContentType::Document, dimension::STRUCTURE);
+    node.id = NodeId::from_string(format!("file:{}", path));
+    node
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

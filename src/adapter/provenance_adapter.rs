@@ -104,12 +104,7 @@ impl Adapter for ProvenanceAdapter {
                 name,
                 description,
             } => {
-                let mut node = Node::new_in_dimension(
-                    "chain",
-                    ContentType::Provenance,
-                    dimension::PROVENANCE,
-                );
-                node.id = NodeId::from(chain_id.as_str());
+                let mut node = crate::adapter::chain_node(chain_id);
                 node.properties
                     .insert("name".to_string(), PropertyValue::String(name.clone()));
                 if let Some(desc) = description {
@@ -139,12 +134,7 @@ impl Adapter for ProvenanceAdapter {
                 let mark_node_id = NodeId::from(mark_id.as_str());
                 let chain_node_id = NodeId::from(chain_id.as_str());
 
-                let mut mark_node = Node::new_in_dimension(
-                    "mark",
-                    ContentType::Provenance,
-                    dimension::PROVENANCE,
-                );
-                mark_node.id = mark_node_id.clone();
+                let mut mark_node = crate::adapter::mark_node(mark_id);
                 mark_node.properties.insert(
                     "chain_id".to_string(),
                     PropertyValue::String(chain_id.clone()),
