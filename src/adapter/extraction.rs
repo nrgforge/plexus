@@ -456,6 +456,12 @@ impl Adapter for ExtractionCoordinator {
             let bg_mutex = self.shared_context.clone();
 
             let has_backend = bg_engine.is_some() || bg_mutex.is_some();
+            if !has_backend {
+                tracing::warn!(
+                    file_path = %file_path,
+                    "skipping phases 2-3: no engine backend configured on ExtractionCoordinator"
+                );
+            }
             if has_backend {
                 let adapter = phase2_adapter.clone();
                 let semaphore = self.analysis_semaphore.clone();
