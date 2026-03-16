@@ -8,8 +8,6 @@ use uuid::Uuid;
 /// Core dimensions for the multi-dimensional knowledge graph
 ///
 /// See ADR-009: Multi-Dimensional Knowledge Graph Architecture
-/// These constants are staged for Phase 5.1+ (Analyzer Framework)
-#[allow(dead_code)]
 pub mod dimension {
     /// Structure dimension: AST, headers, sections, code blocks
     pub const STRUCTURE: &str = "structure";
