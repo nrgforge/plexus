@@ -1,5 +1,9 @@
 # Two-Consumer Validation Revisited: Real Data, Three Consumers, Epistemological Infrastructure
 
+## Abstract
+
+This essay scales up the two-consumer validation from Essay 11 to three consumers, real data from public arXiv sources, and ultimately a full creative writing scenario at 297 nodes and 1,335 edges. The research runs two independent spikes: a research-domain experiment using real arXiv abstracts and informal writer fragments that converge through shared concept vocabulary, and a creative writing experiment with 82 fragments, 15 processed sources, and 11 researcher annotations producing recognizable thematic clusters. The key finding is that the co-occurrence analysis independently identified the novelist's thematic architecture — naming memory as the hub concept with the most connections — without being told what the novel was about, and surfaced five narrative threads as emergent structure from the raw material. Neither spike required changes to the enrichment code; TagConceptBridger and CoOccurrenceEnrichment handled both domains, confirming the enrichment design's generality.
+
 Essay 11 proved the core thesis: two independent consumers contributing to the same Plexus context with shared tag vocabulary produce cross-dimensional connections that neither could produce alone. 19 nodes, 45 edges, 8 cross-dimensional bridges. The architecture worked.
 
 Essay 12 changed what adapters produce. FragmentAdapter now emits provenance alongside semantics — a chain and mark for every fragment, carrying source evidence and tags. TagConceptBridger bridges those marks to concepts automatically. The graph became epistemological: every concept can trace its origin back to source material.

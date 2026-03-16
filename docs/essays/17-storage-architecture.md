@@ -1,5 +1,9 @@
 # Where Knowledge Lives: Storage Architecture for a Knowledge Graph That Spans Modes, Hosts, and Trust Boundaries
 
+## Abstract
+
+This essay investigates the storage architecture for a knowledge graph engine that must serve at least four deployment modes — local dev tool, embedded library, managed service, and federated engine — with radically different requirements for path management, multi-application sharing, and cross-host replication. The research establishes the library rule (storage path decisions belong in the host layer, never the engine), surveys how embeddable databases handle this, and works out the practical architecture for both shared-access (SQLite shared-DB model with data_version polling) and federated scenarios (emission-level replication via a ReplicatedStore trait wrapping the base GraphStore). A key finding is that Plexus's data model has strong natural alignment with CRDT semantics — per-adapter contribution HashMaps are structurally LWW-register maps, and deterministic concept node IDs make add-only convergence automatic — though removals require tombstones and raw weight is derived state needing recomputation after merge. The essay concludes that the shared context changes what Plexus is: from a single-user knowledge tool to infrastructure for collaborative sensemaking where understanding converges across independent contributors without requiring shared source material.
+
 ## The Problem Has Three Shapes
 
 ADR-002 was deferred with a single question: should Plexus's SQLite database live in the project working directory (discoverable but polluting) or somewhere centralized (clean but needing project identity)? That question assumed one deployment mode — Plexus as a local dev tool, one database per project directory.

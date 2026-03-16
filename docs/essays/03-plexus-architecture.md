@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay describes the architecture of Plexus, a live knowledge graph engine designed to provide ambient structural feedback during creative composition across multiple domains. The research examines the design constraints imposed by heterogeneous update latency, domain independence, and ambient operation, then describes how those constraints produce a three-layer architecture: a domain-agnostic graph engine, domain-specific semantic adapters, and domain consumers such as Manza and Trellis. The key finding is that a four-tier multi-frequency update model — ranging from millisecond structural parsing to multi-second LLM extraction — is the correct architectural response to latency heterogeneity, supported by experimental validation establishing a ~10-second floor for semantic-layer LLM extraction. The essay provides an honest inventory of what is built, what is partially implemented, and what remains as design specification, establishing the baseline for subsequent research essays.
+
+---
+
 ## What Plexus Is
 
 Plexus is a knowledge graph engine designed for live creative composition. Unlike batch-processing knowledge graph systems that index finished documents (GraphRAG [1], LightRAG [2], iText2KG [22]), Plexus integrates with the creative environment and builds a semantic graph that evolves as content is composed. It receives data from domain-specific clients, processes it at multiple frequencies, and emits events that clients use to render ambient structural feedback.

@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay investigates whether a knowledge graph can improve its own utility over time by learning which relationships are structurally important, rather than treating all extracted edges as equally weighted. The research examines biological models of synaptic strengthening, decay dynamics from memory science, and the limitations of access-frequency weighting, using these as motivational frameworks for a proposed graph update rule. The central finding is that validation-based reinforcement — where edges strengthen only when a domain-appropriate outcome confirms the relationship — is more likely to converge on useful structure than frequency-based approaches, which conflate confusion and habit with genuine importance. Three mechanisms are proposed (validation-based reinforcement, temporal decay, and emergent co-occurrence edges) and specified as a design that requires empirical simulation before implementation.
+
+---
+
 ## The Problem: Static Graphs in Dynamic Work
 
 Knowledge graphs built by LLM extraction have a signal problem. Every relationship extracted carries equal weight — an import statement and a deep architectural dependency look the same. A co-occurrence between two concepts mentioned in the same paragraph is indistinguishable from a conceptual relationship that the author has deliberately developed across chapters. The graph doesn't know the difference between noise and structure.

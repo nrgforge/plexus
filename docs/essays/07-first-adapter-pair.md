@@ -1,5 +1,9 @@
 # The First Adapter Pair: From Infrastructure to Evidence
 
+## Abstract
+
+This essay designs the first concrete adapter pair for Plexus — a FragmentAdapter for tagged text fragments and a CoOccurrenceAdapter for detecting concept co-occurrence — with the goal of validating the adapter infrastructure end-to-end on the simplest useful input rather than pioneering new extraction techniques. The research examines deterministic concept node IDs as the mechanism that allows multiple adapter instances to accumulate evidence on the same node, and identifies that multiple source types (manual tagging, LLM tagging, OCR) need separate adapter identities rather than separate adapter types to maintain provenance. A scale normalization bug is identified and fixed with a dynamic epsilon that maps the minimum contribution to a small but non-zero floor, ensuring weak evidence remains visible without introducing per-adapter unfairness. The essay concludes that this adapter pair exercises the infrastructure's contribution tracking, proposal semantics, and reflexive trigger model without requiring any engine changes, validating the adapter interface as an effective isolation boundary.
+
 The Plexus adapter layer is a machine for turning domain-specific observations into shared knowledge. ADR-001 defined its architecture: self-organizing adapters, sink-based progressive emission, two-layer provenance, Hebbian normalization. ADR-003 added the reinforcement mechanics: per-adapter contributions, scale normalization, latest-value-replace. Fifty-seven tests prove the infrastructure works. But infrastructure without adapters is plumbing without water. This essay describes the design of the first concrete adapter pair — a fragment adapter and a co-occurrence adapter — that will validate the plumbing end-to-end.
 
 ## The simplest useful input

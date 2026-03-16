@@ -1,5 +1,9 @@
 # Building the Redesigned Surface: From Design to Working API
 
+## Abstract
+
+This essay reports the build phase implementing the redesigned public surface from Essay 14 across four ADRs: StepQuery as a typed multi-hop traversal primitive, PlexusApi as the single transport-facing entry point, the annotate workflow, and the elimination of the __provenance__ context. The research validates that StepQuery's two-branch composition correctly expresses the evidence trail query, that all provenance write operations route through the ingest pipeline, and that session context via set_context enables marks to live alongside semantic nodes rather than in an isolated global container. A notable finding is that the reduction from 19 to 14 MCP tools matters less than the architectural change: every tool now calls PlexusApi which delegates correctly, making the transport layer truly thin and future transports a matter of writing handler functions without domain logic. The essay also documents two surprises from the build: a partially-applied commit state that broke compilation, and the need for existence checks in context_create that only surfaced when the session model was implemented.
+
 Essay 14 described the public surface that emerged from analyzing what consumers need: a transport-independent API layer, a typed multi-hop traversal for cross-dimensional queries, and a workflow-oriented write surface that hides graph primitives behind user intent. Three ADRs captured the decisions (013, 014, 015). A fourth (008) prescribed eliminating the `__provenance__` context — a historical artifact that isolated provenance marks from semantic nodes and prevented the cross-dimensional connections that are the whole point of the system. This essay describes what happened when those decisions were built.
 
 ## What Was Built

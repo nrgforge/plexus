@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay investigates the consumer-facing surface of declarative adapter specifications — how the YAML syntax should look, how it connects to llm-orc extraction pipelines, and how enrichments should be declared — building on the primitive definitions from ADR-020. The research surveys five prior-art systems (YARRRML, Nodestream, LinkML, Koza, Neo4j) and finds that two-layer separation (domain-specific extraction from domain-agnostic graph mapping) is industry-standard, though Plexus's create_provenance primitive and dual-obligation enforcement have no precedent. The key finding on enrichments is that the planned "Tier 1 declarative enrichment DSL" is unnecessary: llm-orc ensemble YAML already handles custom computation patterns, and the correct distinction is between core enrichments (Rust-native, reactive, in the enrichment loop) and external enrichments (llm-orc ensembles, background, results re-enter via ingest). Four core enrichments are specified — co-occurrence, tag bridging, discovery gap, and temporal proximity — as the engine's built-in discovery capabilities applicable to every domain.
+
+---
+
 ## The Problem
 
 Plexus is a knowledge graph engine where all knowledge enters through adapters — Rust structs that validate domain data, map it to graph nodes and edges, and enforce invariants. This works well when the adapter developer writes Rust. But Plexus aspires to serve external consumers — Sketchbin (visual art metadata), EDDI (movement analysis), Carrel (academic citation) — who shouldn't need a Rust toolchain to describe how their data maps to a graph.

@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay maps the research space for applying a live knowledge graph to interactive performance, where a performer's accumulated movement history drives environmental responses such as lighting, sound, and projection. The research examines three bodies of prior work — movement classification systems, dance ontologies, and real-time performance systems — and identifies that each solves part of the problem but none provides cross-session memory or a pathway from gesture data to semantic graph structure. The central challenge identified is distinguishing intentional compositional repetition from accidental recurrence: unlike the code domain where tests provide objective validation signals, the movement domain has no reliable mechanism for confirming that a recurring gesture reflects artistic choice rather than habit or fatigue. The essay concludes that EDDI remains a research direction requiring four prerequisite investigations before a prototype is viable, and frames it as an architectural test of Plexus's content-agnosticism claim.
+
+---
+
 ## A Research Direction, Not a System
 
 This essay describes a research direction: applying a live knowledge graph to interactive performance, where a performer's movement history drives environmental response (lighting, sound, projection). The system described — EDDI (Emergent Dynamic Design Interface) — does not exist as an implementation. What exists is the graph engine it would build on (Plexus, described in a companion essay), a body of movement analysis research that informs the design, and earlier prototype work on gesture segmentation. This essay is a map of the research space, not a report on a built system.

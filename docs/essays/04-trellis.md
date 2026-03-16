@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay investigates how a creative writing tool can provide structural awareness to writers without generating text or interpreting meaning, addressing the tension between useful AI assistance and preserving the writer's sense of ownership and authorship. The research reviews empirical studies on human-AI co-writing, finding consistent evidence that text generation increases volume but reduces ownership satisfaction, particularly for writers who care about voice. The resulting design for Trellis centers on a "mirror, not oracle" principle: the system surfaces structural connections between fragments through graph-backed juxtaposition and coaching prompts, while explicitly prohibiting theme-naming or meaning-making. The essay concludes that validation signals in the writing domain (sorting, seed promotion, revisitation) can drive self-reinforcing edge dynamics, though whether these signals are strong enough to differentiate graph structure from noise remains an open empirical question.
+
+---
+
 ## The Design Constraint
 
 AI writing tools generate text. Trellis does not. This is not a limitation — it is the core design decision, grounded in emerging research on how AI interaction affects creative ownership and in a specific theory of what writers actually need.

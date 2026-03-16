@@ -1,5 +1,9 @@
 # Essay 14: The Public Surface Redesign
 
+## Abstract
+
+This essay investigates the gap between Plexus's internal architecture — which correctly handles multi-dimensional cross-consumer knowledge accumulation — and its public surface, which at the time of writing still exposed 19 tools inherited from a pre-adapter era and lacked any query primitive capable of expressing typed multi-hop traversals. The research maps the concrete queries that four representative consumers (Trellis, Carrel, Manza, Sketchbin) would need, finding that all four converge on a single question — "what is the evidence trail for this node?" — that the existing query system cannot express without manual post-filtering. The key findings are that MCP is a transport rather than an API (motivating a transport-independent API layer), that the evidence trail requires a typed multi-hop step query as a new graph primitive, and that the annotate workflow should auto-create chains rather than requiring callers to manage chain lifecycle explicitly. The essay closes by defining the three-layer public surface (transport shells, API layer, core engine) and identifying four items that remain out of scope for this cycle.
+
 ## The gap between architecture and interface
 
 Plexus's internal architecture settled into a clean shape across Essays 10–13. Writes flow through a unified ingest pipeline. Adapters produce both semantic output and provenance trails (the "dual obligation" from Essay 12). Enrichments run until quiescence, bridging tags to concepts and detecting co-occurrences. The graph accumulates knowledge across three dimensions — structure, semantic, provenance — with cross-dimensional edges connecting them.

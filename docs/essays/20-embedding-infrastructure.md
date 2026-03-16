@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay investigates how to integrate vector embeddings into Plexus's knowledge graph as a second evidence layer that can surface latent relationships invisible to explicit tag-based structure. The research identifies three complementary embedding paths (Rust-native via fastembed-rs for reactive in-process embedding, llm-orc ensemble for batch and experimentation, Ollama direct for prototyping), all converging at the same ingest endpoint, and establishes that embedding is categorically an enrichment rather than an adapter because it operates on existing graph nodes rather than bridging external domain data. A key finding is that Plexus's existing contribution tracking already handles multi-model composition: model identity lives in adapter IDs, scale normalization handles different value ranges, and the only genuinely new primitive needed is ContributionRetraction — batch removal of a model's contributions across all edges — to support model replacement and drift management. The essay also examines cross-modal embedding paths for EDDI, concluding that Viewpoints-as-text conversion is the pragmatic immediate path while a projection fine-tuning approach for mathematical movement parameters remains a deeper research question.
+
+---
+
 ## The Problem
 
 Plexus builds knowledge graphs from fragments, tags, and adapter-produced semantic structure. Every connection in the graph is explicit — a `tagged_with` edge exists because a human or LLM applied a tag; a `may_be_related` edge exists because CoOccurrenceEnrichment detected shared sources. You can trace any edge back to the adapter and source that produced it.

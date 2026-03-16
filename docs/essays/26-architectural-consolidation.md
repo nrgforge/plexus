@@ -2,6 +2,10 @@
 
 *2026-03-04*
 
+## Abstract
+
+This essay reports findings from three independent codebase audits conducted when Plexus reached 32,500 lines, investigating what structural debt accumulates in a research-driven system and how to address it without mixing structure changes with behavior changes. All three audits — using different analytical methods and framing — converged on the same issues: roughly 3,000 lines of dead code in src/analysis/ (superseded by the adapter pipeline but never removed), EngineSink accumulating five responsibilities including redundant enrichment orchestration that already lives in IngestPipeline, three undocumented pipeline bypasses (one historical accident, two legitimate design choices), and PlexusApi growing orchestration logic that violates its intended role as a thin routing facade. The central finding is that research-driven codebases accumulate "succession debt" — not shortcuts from knowing the right design but shipping the fast one, but correct designs superseded by better ones without the predecessors being removed — which looks intentional from the outside (public re-exports, passing tests) but isn't. The consolidation plan separates eleven commits into nine pure structure changes and two behavior changes, each behavior change preceded by caller migration to make the deletion mechanically safe.
+
 Twenty-five essays built a knowledge graph engine from first principles. Each essay added something: reinforcement mechanics, extraction pipelines, adapter architecture, enrichment loops, provenance tracking. The additions were deliberate — each solved a real problem validated through research spikes. But deliberate additions accumulate incidental structure. Code that was the right answer in Essay 8 becomes dead weight by Essay 25.
 
 This essay reports what three independent codebase audits found when they examined Plexus at the 32,500-line mark, and what the convergence of their findings reveals about how research-driven systems grow.

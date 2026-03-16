@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay investigates why the full extraction pipeline could not be run on literary text (Macbeth) despite all individual components being built and tested, tracing the failure to six integration gaps that accumulated across five ADRs of parallel component development. The research identifies the gaps through code tracing: DeclarativeAdapter stores an ensemble field but never invokes it, the ExtractionCoordinator passes ExtractFileInput to Phase 3 while SemanticAdapter expects SemanticInput, background phases emit to bare in-memory contexts rather than PlexusEngine, no Phase 2 adapters exist, and SemanticAdapter produces no provenance in violation of the dual-obligation invariant. The core finding is that the gaps are an artifact of the RDD process's component-by-component validation discipline: each component was tested with stubs against its own interface, never against real adjacent components, so integration failures were invisible until the system was exercised end-to-end. The essay proposes an integration checkpoint — an end-to-end spike after each build cycle — as an optimization to the RDD workflow, and specifies an ordered dependency chain for the next build cycle with Macbeth as the acceptance test.
+
+---
+
 ## The Experiment We Tried to Run (and What Stopped Us)
 
 Essay 21 proved the enrichment pipeline works at scale: 234 concepts, five enrichment types, 39 seconds. It also proved that extraction quality is the bottleneck — regex pulls out names but not meaning, while the LLM ensemble extracts genuine concepts but needs structured integration with the graph.

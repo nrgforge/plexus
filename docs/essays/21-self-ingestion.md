@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay investigates whether Plexus produces genuine insight about a codebase by pointing it at its own source code, using three layers of analysis: regex tag extraction, LLM extraction via llm-orc, and graph querying. The research finds that regex extraction faithfully reports what the code contains but cannot capture what the code does: module path tags create spurious hubs (adapter appearing in 23 files tells you where files live, not what they mean), and impl-for relationships become untyped co-occurrences rather than structural edges. LLM extraction by contrast produces purpose descriptions, typed relationships, and noise filtering that adapts to the codebase's own vocabulary — the model distinguishes AdapterSink as a trait (high signal) from adapter as a path component (noise) by reading context. The key implication is that discovery gaps in the regex graph surface extraction failures rather than architectural insights: PlexusApi and PlexusEngine appear as a gap (similarity 0.76, no structural connection) because the extraction couldn't capture the wrapping relationship, not because the relationship doesn't exist. The essay concludes with a three-agent CodeAdapter design and a summary that the graph engine is ready for codebase intelligence but extraction quality is the bottleneck.
+
+---
+
 ## The Experiment
 
 We pointed Plexus at its own source code. The question was simple: does the knowledge graph engine produce useful intelligence about a codebase, or does it just rearrange syntax?

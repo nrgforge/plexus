@@ -1,5 +1,9 @@
 # Essay 23: Universal Ingest — One Tool, One Ensemble, One Graph
 
+## Abstract
+
+This essay investigates whether the extraction pipeline's complexity — multiple domain-specific ensembles, a proliferating MCP surface, and specialized adapters per content type — is necessary, or whether a single general-purpose approach can achieve comparable results. A spike tested the same generic extraction prompt on Macbeth Act 1 Scene 7 and a Rust pipeline module using both llama3 8B and mistral 7B, finding that both models produced valid, meaningful extractions from Shakespeare and code without domain-specific routing — the model's training already contains knowledge of literature, code, and science. The key finding is that convergence is a graph-level phenomenon: individual extractions from different domains rarely share concepts, but the enrichment loop discovers connections when diverse sources share a context, making domain-specific routing actively counterproductive by preventing cross-domain concept nodes from forming. The essay concludes with a unified architecture: one MCP `ingest` tool, one universal extraction ensemble (potentially composing domain-specific sub-ensembles inside llm-orc), and adapters that become thin YAML specs rather than Rust code.
+
 ## The problem
 
 Plexus has a structural bottleneck at its MCP transport layer. The internal API has `PlexusApi.ingest()` — a universal write endpoint that routes by `input_kind` to matching adapters, runs enrichments, and returns outbound events. But the MCP server exposes only `annotate`, a narrow tool that creates a text fragment, a provenance chain, and a mark. File extraction is impossible from MCP. Semantic analysis is impossible from MCP. The eight tools registered in the MCP server (one write, six context management, one graph read) reflect the first thing Plexus was built to do (annotations for Trellis), not what it's become.

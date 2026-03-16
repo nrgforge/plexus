@@ -1,5 +1,9 @@
 # Provenance as Epistemological Infrastructure
 
+## Abstract
+
+This essay investigates the question of whether provenance is a separate concern from semantic extraction, arguing through a failed design attempt that the correct answer is no — every adapter that introduces knowledge into a graph must also produce a provenance trail for that knowledge. The research begins with a committed implementation of pipeline-level operational metadata (ingest_record nodes) and then examines why that design is categorically different from the epistemological grounding that makes a knowledge graph trustworthy rather than merely complete. The key finding is that provenance must live at the adapter level because only the adapter understands the source material well enough to produce meaningful marks — pipeline and sink levels can record that knowledge arrived but not why it should be believed. The design is validated through a multi-phase processing spike showing that two adapter instances processing the same source at different resolutions produce independent contribution slots on the same concept node, making the weight explicable through provenance traversal.
+
 Essay 11 demonstrated that two consumers — Trellis (fragments) and Carrel (provenance marks) — produce cross-dimensional connections through shared tag vocabulary. The graph structure was satisfying: 19 nodes, 45 edges, clean dimension separation. But a question lingered. Why were there two separate adapter-shaped things producing provenance? And could you actually trace a concept back to its source?
 
 ## The Wrong Question

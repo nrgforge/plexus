@@ -1,5 +1,9 @@
 # Invariant Propagation: When Process Artifacts Outlive Their Assumptions
 
+## Abstract
+
+This essay investigates a failure mode in Research-Driven Development where an invariant that was correctly specified and clearly documented was violated during implementation because it competed for attention against thousands of lines of context across fifteen artifacts. The research identifies the root cause as information-theoretic: LLMs have exponential mutual-information decay with document distance, so an invariant in a domain model document loses authority to procedural instructions in recently-read ADRs that use contradictory language. Three structural interventions are proposed and built into the RDD skill set: invariants-first reading order at every phase (primacy bias exploited in the correct direction), mandatory backward propagation when invariants change, and tension detection at every phase including a constitutional-violation severity level in argument audits. The essay concludes by observing that the problem solved procedurally — sweep documents for invariant contradictions — is structurally identical to the problem Plexus solves with cross-dimensional traversal, suggesting a future path from manual sweeps to graph-backed invariant tracking.
+
 Plexus has been developed through Research-Driven Development — a phased process where research produces essays, essays produce domain models, domain models inform architecture decisions, and decisions drive implementation. Each phase produces durable artifacts. Those artifacts accumulate. And that accumulation, it turns out, creates a failure mode the process wasn't designed to handle.
 
 ## What Was Working

@@ -8,6 +8,10 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay investigates how a multi-adapter knowledge graph should handle the case where two independent adapters emit the same edge — a question that turns on whether repeated emission is noise or signal, and whose answer depends entirely on what the adapter represents. The research surveys multi-source weight management in knowledge graph systems (Google Knowledge Vault, NELL), Hebbian learning with normalization, and CRDT merge semantics, finding that a per-adapter contribution HashMap with latest-value-replace semantics is the correct model because it preserves adapter independence, supports both increases and decreases, and is naturally idempotent. A critical failure mode is identified when adapters emit on fundamentally different scales — a numerical spike showed scale dominance causing lower-quality edges to outrank better ones — motivating per-adapter scale normalization via divide-by-range before summing contributions into a raw weight. The design is specified as a three-layer weight model (per-adapter contributions, engine-computed raw weight, consumer-computed normalized weight) that resolves the reinforcement mechanics open question in ADR-001.
+
 ## Why This Matters for Plexus
 
 Plexus is a knowledge graph engine designed for live creative composition. Unlike batch-processing systems that index finished documents, Plexus integrates with creative environments and builds a semantic graph that evolves as content is composed. It receives data from domain-specific *adapters* — pluggable components that extract structure from code, documents, movement, and other domains — and emits events that drive ambient structural feedback. Three applications sit on the engine: Manza (AI-assisted code generation), Trellis (long-form writing), and EDDI (interactive movement performance).

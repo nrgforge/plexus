@@ -1,5 +1,9 @@
 # Building the Public Surface: From Architecture to Working Pipeline
 
+## Abstract
+
+This essay reports the build phase that implemented the public surface architecture from Essay 09 across three ADRs: an enrichment trait and loop, a bidirectional adapter interface, and a unified ingest pipeline. The research validates that provenance operations fit cleanly into the adapter model — CreateChain and AddMark express naturally as emissions — and that the enrichment loop reaches quiescence reliably within two rounds when enrichments implement idempotency by checking context state. A notable finding is that migrating CoOccurrenceAdapter to an enrichment-loop-based CoOccurrenceEnrichment replaced three unbuilt or partially-built components (reflexive adapter, ProposalSink, schedule monitor) with one simpler concept, illustrating how architectural clarity can retroactively simplify prior designs. The essay concludes with a detailed map of what was validated (the adapter-as-contract model, thin MCP transport), what was deferred (event persistence, wire protocol schema), and what the architecture means for the first two potential real consumers.
+
 Essay 09 described the architecture that emerged from examining what consumers need, how protocols should work, and where graph-level intelligence belongs. The answer was three independent extension points — adapters for domain translation, enrichments for reactive graph intelligence, transports for protocol shells — unified by a single ingest pipeline. This essay describes what happened when that architecture was built.
 
 ## What Was Built

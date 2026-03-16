@@ -1,5 +1,9 @@
 # The Adapter as Integration Contract: Plexus's Public Surface
 
+## Abstract
+
+This essay investigates what public interface Plexus should expose to consumers, examining four representative applications (Trellis, EDDI, Manza, Carrel) and the protocol implications of MCP as a transport. The research finds that all four consumers, despite radically different domains, converge on the same six needs — ingestion, processing, storage, query, events, and validation signals — and that MCP is the right interface for LLM-mediated interactive use but wrong for app-to-app integration that has no LLM host. A spike testing whether provenance operations can route through the adapter pipeline as domain input confirms that five of nine operations fit cleanly, motivating a unified ingest endpoint that collapses 19 MCP tools into approximately seven. The essay concludes that the adapter should be a bidirectional integration contract — transforming domain data inbound and translating raw graph events into domain-meaningful feedback outbound — with enrichments and transports as independently extensible dimensions.
+
 Plexus has a working graph engine. Adapters transform domain data into nodes and edges. Contributions are tracked per-adapter and normalized across scales. Provenance marks connect to semantic concepts through cross-dimensional edges. Storage persists everything to SQLite. 218 tests pass, zero failures. But no external consumer can use any of it. Trellis cannot push fragments. Carrel cannot query the graph. EDDI cannot receive events. The engine is internally complete and externally invisible.
 
 This essay describes the public surface that emerged from examining what consumers actually need, whether the current protocol (MCP) is the right one, and where graph-level intelligence should live.

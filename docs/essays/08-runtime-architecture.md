@@ -1,5 +1,9 @@
 # Wiring the Graph: Plexus as a Persistent, Connected Runtime
 
+## Abstract
+
+This essay identifies and closes five architectural gaps that prevented Plexus's adapter layer, graph engine, and provenance system from working together as a unified runtime. The research traces each gap through the codebase — adapters writing to bare in-memory contexts, contributions not persisted to SQLite, provenance marks isolated from semantic nodes in a separate context — and evaluates the compatibility of concurrency models to determine viable integration paths. The key finding is that wiring EngineSink to PlexusEngine via a closure-based accessor, adding a contributions_json column to SQLite, and eliminating the __provenance__ context in favor of project-scoped marks are sufficient to unify all three layers without changing any adapter, enrichment, or consumer code. The build phase validated all 20 behavior scenarios with an end-to-end acceptance test demonstrating that fragment ingestion, provenance creation, cross-dimensional bridging, and contribution tracking all survive an engine restart.
+
 Plexus is a knowledge graph engine that maintains weighted, multi-dimensional relationships between concepts. It has an adapter layer that transforms external data into graph nodes and edges, a provenance layer that tracks human annotations (marks, chains, links), and a persistent storage backend. These three layers share the same data model — nodes, edges, dimensions, contexts — but they are not connected. Nothing an adapter produces reaches persistent storage. Nothing a user marks connects to the concepts the adapters discovered. This essay describes the wiring needed to unify them.
 
 ## The Problem: Two Disconnected Surfaces

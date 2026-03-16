@@ -8,6 +8,12 @@ nate@nate.green | ORCID: 0000-0003-0157-7744
 
 ---
 
+## Abstract
+
+This essay investigates why creators — particularly those using AI-assisted tools — progressively lose structural awareness of their own work as it grows in complexity, a phenomenon termed the "opacity problem." The research draws on cognitive load theory, situation awareness research, and empirical studies of AI-assisted programming to establish both the cognitive mechanism and the extent of the problem. The central finding is that opacity is not a storage problem but a structural one: the knowledge exists in the artifact but lacks an external representation that the creator can perceive without interrupting their work. The essay concludes that external structural representations — specifically live knowledge graphs that evolve alongside the creative process — are a principled remedy, while acknowledging important caveats about cognitive offloading that distinguish structural awareness from reasoning outsourcing.
+
+---
+
 ## The Problem
 
 Knowledge accumulates faster than understanding. A developer "vibe-coding" with an AI assistant produces working software but may not fully grasp the architectural decisions embedded in the generated code. A researcher's personal knowledge base grows to thousands of notes whose interconnections are invisible. A team's documentation sprawls across wikis, repos, and chat histories with no unified structural map. In each case, knowledge exists but cognitive context — the awareness of what you know, how it connects, and where the gaps are — erodes.

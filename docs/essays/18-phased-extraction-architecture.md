@@ -1,5 +1,9 @@
 # Essay 18: Phased Extraction Architecture
 
+## Abstract
+
+This essay investigates how Plexus should support multi-phase extraction from raw source files where early phases are fast and blocking while later phases are slow and background, so that the graph becomes immediately useful from cheap operations and grows richer as expensive analysis completes. The research surveys universal cheap-first ordering in extraction pipelines (Elasticsearch, Tika, Spotlight, Unstructured.io) and identifies that Plexus's deterministic node IDs and per-adapter contribution tracking make progressive async phased extraction — an architectural novelty — both feasible and natural. Four phases are specified (file registration, metadata extraction, heuristic analysis, LLM semantic extraction) with the key finding that Phase 4 should delegate to llm-orc as a persistent external service rather than being ported to Rust, because LLM inference latency (~2-20 seconds) dwarfs framework overhead (<200ms). The essay also introduces declarative YAML adapter specs as a mechanism for external consumers to describe graph mappings without a Rust toolchain, with a create_provenance primitive that structurally enforces the dual-obligation invariant.
+
 How Plexus should support multi-phase, progressively-deeper extraction from source files — where early phases are fast and blocking, later phases are slow and background, and each phase's contribution strengthens the graph independently.
 
 ---

@@ -6,6 +6,12 @@ How small language models extract knowledge from text when each model handles ex
 
 ---
 
+## Abstract
+
+This essay investigates whether decomposing semantic extraction into single-concern subtasks (entities, relationships, themes) improves quality when each 7-8B model handles exactly one concern, what DAG topology best composes those subtasks, and whether classical ML pre-extraction improves what language models find. The research ran controlled experiments on two essays from the Plexus corpus using Qwen3:8b and Mistral:7b, measuring recall against Claude-produced gold standards, and discovered that the two models have complementary extraction biases — Qwen favors abstract compound terms, Mistral favors short structural terms — producing 85% entity recall in union versus 54-69% alone. The synthesized topology (specialists feeding a 14B synthesizer) failed due to GPU memory contention causing timeouts on consumer hardware, establishing that sequential single-model runs are the only reliably completing topology. The essay concludes with an architecture of parallel extraction with deterministic merge: TextRank, Qwen:8b, and Mistral:7b running independently, each contributing to the graph through separate adapter IDs, with the graph's existing contribution tracking and scale normalization surfacing stable core entities through convergence.
+
+---
+
 ## The question
 
 Essay 23 established universal ingest and a single general-purpose llm-orc ensemble as Plexus's semantic extraction path. The ensemble works: a generic prompt pulls valid concepts from Shakespeare and Rust alike. But "works" at what quality? Essay 23 tested with llama3 8B and mistral 7B on two texts and observed valid-looking output. It did not measure recall against a reference, test whether decomposing extraction into subtasks improves quality, or ask whether multiple models finding different things could be composed into something better than either alone.
