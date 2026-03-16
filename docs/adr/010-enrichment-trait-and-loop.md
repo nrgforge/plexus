@@ -27,6 +27,8 @@ trait Enrichment: Send + Sync {
 
 ### Enrichment loop
 
+*(Updated by ADR-029:)* Enrichment loop now runs at pipeline level after all adapter emissions complete, not per-emission.
+
 After each primary emission (adapter → sink → commit → events), the engine runs the enrichment loop:
 
 1. Snapshot the context.
@@ -49,7 +51,7 @@ The enrichment loop terminates via idempotency. Each enrichment checks context s
 
 ### Safety valve
 
-The enrichment loop enforces a maximum round count (default: 10). If quiescence is not reached within the limit, the loop aborts and logs a warning. This prevents a buggy enrichment from causing an infinite loop. The limit is configurable but its existence is a framework guarantee.
+The enrichment loop enforces a maximum round count (default: 10). If quiescence is not reached within the limit, the loop aborts and logs a warning. This prevents a buggy enrichment from causing an infinite loop. The limit is configurable but its existence is a framework guarantee. The limit is currently hardcoded at 10 in `EnrichmentRegistry::new()`. No public API exposes configuration.
 
 ### Migration
 

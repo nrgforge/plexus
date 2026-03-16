@@ -53,7 +53,7 @@ Introduce a `PlexusApi` struct that is the single entry point for all consumer-f
 - `context_add_sources(name, paths)`
 - `context_remove_sources(name, paths)`
 
-`PlexusApi` holds references to `PlexusEngine`, `IngestPipeline`, and `ProvenanceApi`. It delegates to each but presents a unified surface.
+`PlexusApi` holds references to `PlexusEngine` and `IngestPipeline`. `ProvenanceApi` is constructed transiently per call. It delegates to each but presents a unified surface.
 
 ### Transport derivation
 

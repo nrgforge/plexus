@@ -41,9 +41,11 @@ ContentAdapter and ExtractionCoordinator are **sibling adapters** — each handl
 
 Adding a new domain means writing two YAML files: a semantic adapter spec and an llm-orc ensemble spec. No Rust code.
 
-**~~`PlexusApi.annotate()` is removed.~~** *(Retained — March 2026.)* `annotate()` remains as a convenience method in `PlexusApi` for the composite annotation workflow (chain name normalization, auto-creation, fragment + chain + mark emission). The MCP transport exposes `ingest` as the single write tool; `annotate()` is an internal API path that routes through ContentAdapter. The annotation workflow's logic lives in ContentAdapter as designed; `annotate()` composes it for callers who don't want to construct `FragmentInput` JSON manually.
+**`PlexusApi.annotate()` has been removed.** The annotation workflow routes through ContentAdapter via `ingest()`. Chain name normalization and auto-creation live in ContentAdapter. The MCP transport exposes `ingest` as the single write tool.
 
 **DeclarativeAdapter (ADR-020) is renamed to SemanticAdapter.** The YAML-spec-driven adapter that maps JSON to graph primitives retains its declarative mechanism but takes a name that describes its purpose: semantic extraction. ADR-020's architectural decisions (YAML specs, template expressions, two-layer extraction) remain valid — only the name changes. The term `DeclarativeAdapter` is retired from the domain vocabulary.
+
+*(Implementation note, March 2026:)* The rename has not been executed. DeclarativeAdapter (`declarative.rs` — YAML spec interpreter) and SemanticAdapter (`semantic.rs` — llm-orc ensemble invoker) exist as independent types. Convergence is deferred — see Phase 5 discussion in Essay 26.
 
 **SemanticAdapter is reimplemented as a declarative YAML engine.** The existing `SemanticAdapter` Rust struct (519 lines with hardcoded `parse_response()` logic) becomes a YAML spec interpreter. Its orchestration responsibility (calling llm-orc) and its mapping responsibility (JSON → graph primitives) are both expressed declaratively. The Rust code becomes infrastructure for interpreting specs, not domain-specific extraction logic.
 
@@ -98,4 +100,4 @@ All transport-facing input arrives as `serde_json::Value`. The input classifier 
 - The annotation workflow's behavior is unchanged — same output, different entry point
 - ADR-015 is superseded: the workflow is still a single call, but the transport no longer names individual workflows
 - The internal API signature `PlexusApi.ingest(context_id, input_kind, data)` is unchanged
-- SemanticAdapter retains its name but changes implementation: from hardcoded Rust to declarative YAML spec engine. DeclarativeAdapter (ADR-020) is renamed, not removed — the mechanism survives, the name changes.
+- SemanticAdapter retains its name but changes implementation: from hardcoded Rust to declarative YAML spec engine. DeclarativeAdapter (ADR-020) is renamed, not removed — the mechanism survives, the name changes. *(March 2026: convergence has not occurred — DeclarativeAdapter and SemanticAdapter remain independent types. See implementation note above.)*
