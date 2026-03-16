@@ -24,6 +24,9 @@ pub enum StorageError {
 
     #[error("Date parsing error: {0}")]
     DateParse(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 /// Result type for storage operations

@@ -124,7 +124,11 @@ impl PlexusMcpServer {
     fn context(&self) -> Result<String, McpError> {
         self.active_context
             .lock()
-            .unwrap()
+            .map_err(|_| McpError {
+                code: rmcp::model::ErrorCode::INTERNAL_ERROR,
+                message: "active_context mutex poisoned".into(),
+                data: None,
+            })?
             .clone()
             .ok_or_else(|| McpError {
                 code: rmcp::model::ErrorCode::INVALID_REQUEST,
@@ -144,7 +148,11 @@ impl PlexusMcpServer {
                 return err_text(format!("failed to create context '{}': {}", p.name, e));
             }
         }
-        *self.active_context.lock().unwrap() = Some(p.name.clone());
+        *self.active_context.lock().map_err(|_| McpError {
+            code: rmcp::model::ErrorCode::INTERNAL_ERROR,
+            message: "active_context mutex poisoned".into(),
+            data: None,
+        })? = Some(p.name.clone());
         ok_text(format!("active context set to '{}'", p.name))
     }
 

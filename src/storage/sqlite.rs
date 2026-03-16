@@ -389,7 +389,7 @@ impl GraphStore for SqliteStore {
     // === Context Operations ===
 
     fn save_context_metadata(&self, context: &Context) -> StorageResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
         let metadata_json = serde_json::to_string(&context.metadata)?;
 
         conn.execute(
@@ -416,7 +416,7 @@ impl GraphStore for SqliteStore {
         // Save the context row (name, description, metadata) — single upsert, atomic by itself
         self.save_context_metadata(context)?;
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
 
         // Incremental upsert (ADR-017 §3): upsert nodes/edges that are in
         // the context, then delete only those that the context explicitly
@@ -488,7 +488,7 @@ impl GraphStore for SqliteStore {
             // Nodes/edges added by other engines are NOT in our baseline, so
             // they survive this save.
             {
-                let baselines = self.baselines.lock().unwrap();
+                let baselines = self.baselines.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
                 if let Some((baseline_nodes, baseline_edges)) = baselines.get(context.id.as_str()) {
                     // Delete edges first (foreign key safety)
                     for baseline_edge_id in baseline_edges {
@@ -518,7 +518,7 @@ impl GraphStore for SqliteStore {
             Ok((context_node_ids, context_edge_ids)) => {
                 conn.execute_batch("COMMIT")?;
                 // Update baseline to match current context state
-                self.baselines.lock().unwrap().insert(
+                self.baselines.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?.insert(
                     context.id.as_str().to_string(),
                     (context_node_ids, context_edge_ids),
                 );
@@ -532,7 +532,7 @@ impl GraphStore for SqliteStore {
     }
 
     fn load_context(&self, id: &ContextId) -> StorageResult<Option<Context>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
 
         // Load context metadata
         let context_row: Option<(String, Option<String>, String)> = conn
@@ -601,7 +601,7 @@ impl GraphStore for SqliteStore {
         // Record baseline for incremental save_context (ADR-017 §3)
         let baseline_nodes: HashSet<String> = nodes.keys().map(|k| k.to_string()).collect();
         let baseline_edges: HashSet<String> = edges.iter().map(|e| e.id.to_string()).collect();
-        self.baselines.lock().unwrap().insert(
+        self.baselines.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?.insert(
             id.as_str().to_string(),
             (baseline_nodes, baseline_edges),
         );
@@ -617,13 +617,13 @@ impl GraphStore for SqliteStore {
     }
 
     fn delete_context(&self, id: &ContextId) -> StorageResult<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
         let rows = conn.execute("DELETE FROM contexts WHERE id = ?1", params![id.as_str()])?;
         Ok(rows > 0)
     }
 
     fn list_contexts(&self) -> StorageResult<Vec<ContextId>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
         let mut stmt = conn.prepare("SELECT id FROM contexts")?;
         let ids = stmt
             .query_map([], |row| row.get::<_, String>(0))?
@@ -633,7 +633,7 @@ impl GraphStore for SqliteStore {
     }
 
     fn data_version(&self) -> StorageResult<u64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
         let version: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
         Ok(version as u64)
     }
