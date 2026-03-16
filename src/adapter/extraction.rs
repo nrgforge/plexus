@@ -45,15 +45,6 @@ impl ExtractFileInput {
     }
 }
 
-/// Phase completion status for tracking.
-#[derive(Debug, Clone, PartialEq)]
-pub enum PhaseStatus {
-    Pending,
-    Complete,
-    Failed(String),
-    Skipped,
-}
-
 /// A Phase 2 adapter registered for a specific MIME type prefix.
 pub struct Phase2Registration {
     /// MIME type prefix (e.g., "text/", "audio/")
