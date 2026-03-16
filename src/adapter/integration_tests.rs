@@ -45,18 +45,18 @@ mod tests {
         // E1: committed successfully
         let e1 = Emission::new().with_node(node("A"));
         let r1 = sink.emit(e1).await.unwrap();
-        assert_eq!(r1.nodes_committed, 1);
+        assert_eq!(r1.nodes_committed, 1, "first emission commits one node");
 
         // Framework signals cancellation
         token.cancel();
 
         // Adapter checks token before next emission
-        assert!(token.is_cancelled());
+        assert!(token.is_cancelled(), "token is cancelled after cancel() call");
 
         // Adapter stops — no further emissions
         // E1 remains committed
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A committed before cancellation");
     }
 
     // === Scenario: Committed emissions survive cancellation ===
@@ -72,14 +72,14 @@ mod tests {
 
         // Cancel before E3
         token.cancel();
-        assert!(token.is_cancelled());
+        assert!(token.is_cancelled(), "token is cancelled after cancel() call");
 
         // E3 never emitted — adapter checks token and stops
         // E1 and E2 remain
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
-        assert!(ctx.get_node(&NodeId::from_string("B")).is_some());
-        assert_eq!(ctx.node_count(), 2);
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A survives cancellation");
+        assert!(ctx.get_node(&NodeId::from_string("B")).is_some(), "node B survives cancellation");
+        assert_eq!(ctx.node_count(), 2, "exactly 2 nodes committed before cancellation");
     }
 
     // === Scenario: Cancellation during emission has no effect until next check ===
@@ -95,10 +95,10 @@ mod tests {
 
         // Adapter may still emit E2 if it hasn't checked the token yet
         let r2 = sink.emit(Emission::new().with_node(node("X"))).await.unwrap();
-        assert_eq!(r2.nodes_committed, 1); // committed, because emit() doesn't check token
+        assert_eq!(r2.nodes_committed, 1, "committed, because emit() doesn't check token");
 
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("X")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("X")).is_some(), "node X committed despite prior cancellation");
     }
 
     // ================================================================
@@ -117,13 +117,13 @@ mod tests {
             .with_node(node("section-1"))
             .with_node(node("section-2"));
         let r1 = sink.emit(e1).await.unwrap();
-        assert_eq!(r1.nodes_committed, 3);
+        assert_eq!(r1.nodes_committed, 3, "first emission commits 3 structural nodes");
 
         // After E1: structural nodes exist
         {
             let ctx = ctx.lock().unwrap();
-            assert!(ctx.get_node(&NodeId::from_string("file")).is_some());
-            assert!(ctx.get_node(&NodeId::from_string("section-1")).is_some());
+            assert!(ctx.get_node(&NodeId::from_string("file")).is_some(), "file node exists after first emission");
+            assert!(ctx.get_node(&NodeId::from_string("section-1")).is_some(), "section-1 node exists after first emission");
         }
 
         // E2: semantic nodes + edges
@@ -131,13 +131,13 @@ mod tests {
             .with_node(node("concept-sudden"))
             .with_edge(edge("section-1", "concept-sudden"));
         let r2 = sink.emit(e2).await.unwrap();
-        assert_eq!(r2.nodes_committed, 1);
-        assert_eq!(r2.edges_committed, 1);
+        assert_eq!(r2.nodes_committed, 1, "second emission commits 1 semantic node");
+        assert_eq!(r2.edges_committed, 1, "second emission commits 1 edge");
 
         // After E2: both structural and semantic exist
         let ctx = ctx.lock().unwrap();
-        assert_eq!(ctx.node_count(), 4);
-        assert_eq!(ctx.edge_count(), 1);
+        assert_eq!(ctx.node_count(), 4, "four nodes total after both emissions");
+        assert_eq!(ctx.edge_count(), 1, "one edge total after both emissions");
     }
 
     // === Scenario: Graph events fire per emission ===
@@ -154,9 +154,9 @@ mod tests {
         let r1 = sink.emit(e1).await.unwrap();
 
         let nodes_event = r1.events.iter().find(|e| matches!(e, GraphEvent::NodesAdded { .. }));
-        assert!(nodes_event.is_some());
+        assert!(nodes_event.is_some(), "NodesAdded event fired for first emission");
         if let Some(GraphEvent::NodesAdded { node_ids, .. }) = nodes_event {
-            assert_eq!(node_ids.len(), 3);
+            assert_eq!(node_ids.len(), 3, "NodesAdded event contains 3 node ids");
         }
 
         // E2: 2 edges
@@ -166,9 +166,9 @@ mod tests {
         let r2 = sink.emit(e2).await.unwrap();
 
         let edges_event = r2.events.iter().find(|e| matches!(e, GraphEvent::EdgesAdded { .. }));
-        assert!(edges_event.is_some());
+        assert!(edges_event.is_some(), "EdgesAdded event fired for second emission");
         if let Some(GraphEvent::EdgesAdded { edge_ids, .. }) = edges_event {
-            assert_eq!(edge_ids.len(), 2);
+            assert_eq!(edge_ids.len(), 2, "EdgesAdded event contains 2 edge ids");
         }
     }
 
@@ -184,9 +184,9 @@ mod tests {
         // Node A is visible immediately
         {
             let ctx = ctx.lock().unwrap();
-            assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
+            assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A visible after first emission");
             // E2 not yet emitted — concept-X doesn't exist
-            assert!(ctx.get_node(&NodeId::from_string("concept-X")).is_none());
+            assert!(ctx.get_node(&NodeId::from_string("concept-X")).is_none(), "concept-X absent before second emission");
         }
 
         // E2: concept-X
@@ -194,8 +194,8 @@ mod tests {
 
         // Now both exist
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
-        assert!(ctx.get_node(&NodeId::from_string("concept-X")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A still visible after second emission");
+        assert!(ctx.get_node(&NodeId::from_string("concept-X")).is_some(), "concept-X visible after second emission");
     }
 
     // ================================================================
@@ -229,17 +229,17 @@ mod tests {
 
         // Emit a single node
         let result = sink.emit(Emission::new().with_node(node("concept:travel"))).await.unwrap();
-        assert_eq!(result.nodes_committed, 1);
+        assert_eq!(result.nodes_committed, 1, "single node committed via engine-backed sink");
 
         // Node exists in engine's in-memory context
         let ctx = engine.get_context(&ctx_id).unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some(), "node exists in in-memory context");
 
         // After restarting (new engine from same store, hydrate from storage)
         let engine2 = PlexusEngine::with_store(store);
         engine2.load_all().unwrap();
         let ctx2 = engine2.get_context(&ctx_id).unwrap();
-        assert!(ctx2.get_node(&NodeId::from_string("concept:travel")).is_some());
+        assert!(ctx2.get_node(&NodeId::from_string("concept:travel")).is_some(), "node survives storage round-trip");
     }
 
     // === Scenario: Emission through engine-backed sink persists edges with contributions ===
@@ -266,13 +266,13 @@ mod tests {
         let mut e = edge("concept:travel", "concept:avignon");
         e.combined_weight = 0.75;
         let result = sink.emit(Emission::new().with_edge(e)).await.unwrap();
-        assert_eq!(result.edges_committed, 1);
+        assert_eq!(result.edges_committed, 1, "edge committed via engine-backed sink");
 
         // After restarting, edge exists with correct contribution
         let engine2 = PlexusEngine::with_store(store);
         engine2.load_all().unwrap();
         let ctx2 = engine2.get_context(&ctx_id).unwrap();
-        assert_eq!(ctx2.edges.len(), 1);
+        assert_eq!(ctx2.edges.len(), 1, "one edge survives storage round-trip");
         assert_eq!(
             ctx2.edges[0].contributions.get("fragment-manual"),
             Some(&0.75),
@@ -290,7 +290,7 @@ mod tests {
         let sink = EngineSink::for_engine(engine.clone(), ContextId::from("does-not-exist"));
 
         let result = sink.emit(Emission::new().with_node(node("concept:travel"))).await;
-        assert!(result.is_err());
+        assert!(result.is_err(), "emission to missing context returns an error");
         assert!(
             matches!(result.unwrap_err(), AdapterError::ContextNotFound(_)),
             "should be ContextNotFound error"
@@ -299,7 +299,7 @@ mod tests {
         // No data persisted
         let engine2 = PlexusEngine::with_store(store);
         engine2.load_all().unwrap();
-        assert_eq!(engine2.context_count(), 0);
+        assert_eq!(engine2.context_count(), 0, "no contexts persisted when emission failed");
     }
 
     // === Scenario: Persist-per-emission writes once per emit call ===
@@ -322,15 +322,15 @@ mod tests {
             .with_edge(edge("B", "C"));
 
         let result = sink.emit(emission).await.unwrap();
-        assert_eq!(result.nodes_committed, 3);
-        assert_eq!(result.edges_committed, 2);
+        assert_eq!(result.nodes_committed, 3, "three nodes committed in one emission");
+        assert_eq!(result.edges_committed, 2, "two edges committed in one emission");
 
         // All survive a restart (single persist, not per-item)
         let engine2 = PlexusEngine::with_store(store);
         engine2.load_all().unwrap();
         let ctx2 = engine2.get_context(&ctx_id).unwrap();
-        assert_eq!(ctx2.node_count(), 3);
-        assert_eq!(ctx2.edge_count(), 2);
+        assert_eq!(ctx2.node_count(), 3, "three nodes survive storage round-trip");
+        assert_eq!(ctx2.edge_count(), 2, "two edges survive storage round-trip");
     }
 
     // === Scenario: Scale normalization works after reload (ADR-007) ===
@@ -419,8 +419,8 @@ mod tests {
             let fragments: Vec<_> = ctx.nodes().filter(|n| n.dimension == dimension::STRUCTURE).collect();
             assert_eq!(fragments.len(), 1, "should have 1 fragment node");
 
-            assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
-            assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some());
+            assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some(), "concept:travel node created from tags");
+            assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some(), "concept:avignon node created from tags");
 
             let tagged_with: Vec<_> = ctx.edges().filter(|e| e.relationship == "tagged_with").collect();
             assert_eq!(tagged_with.len(), 2, "should have 2 tagged_with edges");
@@ -477,16 +477,16 @@ mod tests {
 
             let targets: std::collections::HashSet<String> = refs.iter()
                 .map(|e| e.target.to_string()).collect();
-            assert!(targets.contains("concept:travel"));
-            assert!(targets.contains("concept:avignon"));
+            assert!(targets.contains("concept:travel"), "references include concept:travel");
+            assert!(targets.contains("concept:avignon"), "references include concept:avignon");
 
             // Traverse from concept:avignon via incoming references to reach the mark
             let avignon_id = NodeId::from_string("concept:avignon");
             let incoming_refs: Vec<_> = ctx.edges().filter(|e| {
                 e.target == avignon_id && e.relationship == "references"
             }).collect();
-            assert_eq!(incoming_refs.len(), 1);
-            assert_eq!(incoming_refs[0].source, mark_node_id);
+            assert_eq!(incoming_refs.len(), 1, "exactly one mark references concept:avignon");
+            assert_eq!(incoming_refs[0].source, mark_node_id, "incoming reference source is the mark");
         }
 
         // Step 3: Verify persistence after restart
@@ -496,19 +496,19 @@ mod tests {
         let ctx2 = engine2.get_context(&ctx_id).unwrap();
 
         // All nodes survive
-        assert!(ctx2.get_node(&NodeId::from_string("concept:travel")).is_some());
-        assert!(ctx2.get_node(&NodeId::from_string("concept:avignon")).is_some());
-        assert!(ctx2.get_node(&NodeId::from(mark_id.as_str())).is_some());
+        assert!(ctx2.get_node(&NodeId::from_string("concept:travel")).is_some(), "concept:travel survives restart");
+        assert!(ctx2.get_node(&NodeId::from_string("concept:avignon")).is_some(), "concept:avignon survives restart");
+        assert!(ctx2.get_node(&NodeId::from(mark_id.as_str())).is_some(), "mark node survives restart");
 
         // All edges survive
         let tagged_with: Vec<_> = ctx2.edges().filter(|e| e.relationship == "tagged_with").collect();
-        assert_eq!(tagged_with.len(), 2);
+        assert_eq!(tagged_with.len(), 2, "two tagged_with edges survive restart");
         let references: Vec<_> = ctx2.edges().filter(|e| e.relationship == "references").collect();
-        assert_eq!(references.len(), 2);
+        assert_eq!(references.len(), 2, "two references edges survive restart");
 
         // Contributions survive
         for edge in &tagged_with {
-            assert_eq!(edge.contributions.get("manual-fragment"), Some(&1.0));
+            assert_eq!(edge.contributions.get("manual-fragment"), Some(&1.0), "tagged_with edge has full contribution from manual-fragment adapter");
         }
     }
 
@@ -519,10 +519,10 @@ mod tests {
         let sink = EngineSink::new(ctx.clone());
 
         let result = sink.emit(Emission::new().with_node(node("A"))).await.unwrap();
-        assert_eq!(result.nodes_committed, 1);
+        assert_eq!(result.nodes_committed, 1, "mutex-backed sink commits one node");
 
         let ctx = ctx.lock().unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("A")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A exists in mutex-backed context");
         // No persistence (no GraphStore involved) — this is tested implicitly
         // by the fact that no store setup is needed
     }
@@ -594,7 +594,7 @@ mod tests {
             .emit(Emission::new().with_node(node("concept:travel")))
             .await
             .unwrap();
-        assert_eq!(result.nodes_committed, 1);
+        assert_eq!(result.nodes_committed, 1, "primary emission commits one node");
 
         // Run enrichment loop with primary events
         let _enrichment_result = run_enrichment_loop(
@@ -602,18 +602,18 @@ mod tests {
         ).unwrap();
 
         // Enrichment was called exactly once (one round, then quiescent)
-        assert_eq!(enrichment.call_count(), 1);
+        assert_eq!(enrichment.call_count(), 1, "enrichment called once before quiescence");
 
         // It received the NodesAdded event
         let (events, snapshot) = enrichment.last_call().unwrap();
         assert!(events
             .iter()
-            .any(|e| matches!(e, GraphEvent::NodesAdded { .. })));
+            .any(|e| matches!(e, GraphEvent::NodesAdded { .. })), "enrichment received NodesAdded event");
 
         // The snapshot contains the newly added node
         assert!(snapshot
             .get_node(&NodeId::from_string("concept:travel"))
-            .is_some());
+            .is_some(), "snapshot contains the newly added node");
     }
 
     /// Test enrichment that emits a may_be_related edge once, then returns None.
@@ -698,8 +698,8 @@ mod tests {
         ).unwrap();
 
         // Primary emission: 1 node. Enrichment: 1 edge.
-        assert!(primary_result.nodes_committed >= 1);
-        assert_eq!(enrichment_result.result.edges_committed, 1);
+        assert!(primary_result.nodes_committed >= 1, "primary emission commits at least one node");
+        assert_eq!(enrichment_result.result.edges_committed, 1, "enrichment commits one edge");
 
         // The may_be_related edge exists in the context
         let ctx = engine.get_context(&ctx_id).unwrap();
@@ -709,11 +709,11 @@ mod tests {
             .find(|e| e.relationship == "may_be_related")
             .expect("may_be_related edge should exist");
 
-        assert_eq!(edge.source, NodeId::from_string("concept:travel"));
-        assert_eq!(edge.target, NodeId::from_string("concept:avignon"));
+        assert_eq!(edge.source, NodeId::from_string("concept:travel"), "may_be_related edge source is concept:travel");
+        assert_eq!(edge.target, NodeId::from_string("concept:avignon"), "may_be_related edge target is concept:avignon");
 
         // The edge has a contribution from the enrichment's id with the emitted value
-        assert_eq!(edge.contributions.get("co-occurrence"), Some(&0.75));
+        assert_eq!(edge.contributions.get("co-occurrence"), Some(&0.75), "enrichment contribution value is 0.75");
     }
 
     // === Scenario: Enrichment returning None means quiescent ===
@@ -750,11 +750,11 @@ mod tests {
         ).unwrap();
 
         // Loop completed in one round (enrichment called once, returned None)
-        assert_eq!(enrichment.call_count(), 1);
+        assert_eq!(enrichment.call_count(), 1, "enrichment called once before quiescence");
 
         // No additional mutations beyond the primary emission
-        assert_eq!(result.nodes_committed, 1);
-        assert_eq!(result.edges_committed, 0);
+        assert_eq!(result.nodes_committed, 1, "primary emission commits one node");
+        assert_eq!(result.edges_committed, 0, "no edges committed when enrichment returns none");
     }
 
     /// Enrichment that emits a node on the first call (round 0), then returns None.
@@ -888,18 +888,18 @@ mod tests {
         // Round 1: enrichment B sees new-node event, emits edge.
         // Round 2: both return None → quiescence.
         let ctx = engine.get_context(&ctx_id).unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("new-node")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("new-node")).is_some(), "enrichment A created new-node");
         assert!(ctx
             .edges
             .iter()
             .any(|e| e.source == NodeId::from_string("existing-node")
                 && e.target == NodeId::from_string("new-node")
-                && e.relationship == "depends_on"));
+                && e.relationship == "depends_on"), "enrichment B created depends_on edge after new-node appeared");
 
         // Total: trigger (primary) = 1 node; enrichment: 1 node + 1 edge
-        assert_eq!(primary_result.nodes_committed, 1);
-        assert_eq!(enrichment_result.result.nodes_committed, 1);
-        assert_eq!(enrichment_result.result.edges_committed, 1);
+        assert_eq!(primary_result.nodes_committed, 1, "primary emission commits one node");
+        assert_eq!(enrichment_result.result.nodes_committed, 1, "enrichment commits one node across rounds");
+        assert_eq!(enrichment_result.result.edges_committed, 1, "enrichment commits one edge across rounds");
     }
 
     // === Scenario: Per-round events — enrichment sees only previous round's events ===
@@ -966,14 +966,14 @@ mod tests {
         // Round 0 saw primary events (NodesAdded for primary-node)
         assert!(calls[0]
             .iter()
-            .any(|e| matches!(e, GraphEvent::NodesAdded { .. })));
+            .any(|e| matches!(e, GraphEvent::NodesAdded { .. })), "round 0 received NodesAdded event");
 
         // Round 1 saw enrichment events (NodesAdded for enrichment-node), NOT primary events
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 2, "enrichment called exactly 2 times (round 0 + round 1)");
         if let GraphEvent::NodesAdded { node_ids, adapter_id, .. } = &calls[1][0] {
             // Round 1 events come from the enrichment, not the primary adapter
-            assert_eq!(adapter_id, "recorder");
-            assert!(node_ids.iter().any(|id| id.to_string() == "enrichment-node"));
+            assert_eq!(adapter_id, "recorder", "round 1 events come from the enrichment");
+            assert!(node_ids.iter().any(|id| id.to_string() == "enrichment-node"), "round 1 contains enrichment-node");
         } else {
             panic!("expected NodesAdded in round 1");
         }
@@ -1037,11 +1037,11 @@ mod tests {
         ).unwrap();
 
         // Safety valve at 3 rounds: primary (1 node) + 3 enrichment rounds (3 nodes) = 4
-        assert_eq!(primary_result.nodes_committed, 1);
-        assert_eq!(enrichment_result.result.nodes_committed, 3);
+        assert_eq!(primary_result.nodes_committed, 1, "primary emission commits one node");
+        assert_eq!(enrichment_result.result.nodes_committed, 3, "enrichment commits 3 nodes across 3 capped rounds");
 
         // The enrichment was called exactly 3 times (the max rounds)
-        assert_eq!(*enrichment.counter.lock().unwrap(), 3);
+        assert_eq!(*enrichment.counter.lock().unwrap(), 3, "enrichment called exactly max_rounds times");
     }
 
     // === Scenario: Enrichments shared across integrations are deduplicated ===
@@ -1077,8 +1077,8 @@ mod tests {
         run_enrichment_loop(&engine, &ctx_id, &registry, &primary_result.events).unwrap();
 
         // Only the first enrichment instance was called (dedup by id)
-        assert_eq!(enrichment_a.call_count(), 1);
-        assert_eq!(enrichment_b.call_count(), 0);
+        assert_eq!(enrichment_a.call_count(), 1, "first enrichment instance called once");
+        assert_eq!(enrichment_b.call_count(), 0, "duplicate enrichment id skipped");
     }
 
     // ================================================================
@@ -1118,7 +1118,7 @@ mod tests {
         }];
 
         let outbound = adapter.transform_events(&events, &ctx);
-        assert!(outbound.is_empty());
+        assert!(outbound.is_empty(), "default transform_events returns no outbound events");
     }
 
     /// Adapter that translates NodesAdded events to "concepts_detected" outbound events.
@@ -1189,9 +1189,9 @@ mod tests {
         }];
 
         let outbound = adapter.transform_events(&events, &ctx);
-        assert_eq!(outbound.len(), 1);
-        assert_eq!(outbound[0].kind, "concepts_detected");
-        assert_eq!(outbound[0].detail, "travel, avignon");
+        assert_eq!(outbound.len(), 1, "one outbound event produced for two concept nodes");
+        assert_eq!(outbound[0].kind, "concepts_detected", "outbound event kind is concepts_detected");
+        assert_eq!(outbound[0].detail, "travel, avignon", "outbound event detail lists detected concepts");
     }
 
     // ================================================================
@@ -1293,12 +1293,12 @@ mod tests {
 
         // Adapter processed — concept nodes exist
         let ctx = engine.get_context(&ctx_id).unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
-        assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some(), "concept:travel created by adapter");
+        assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some(), "concept:avignon created by adapter");
 
         // Outbound events from transform_events
-        assert!(!outbound.is_empty());
-        assert!(outbound.iter().any(|e| e.kind == "concepts_detected"));
+        assert!(!outbound.is_empty(), "outbound events produced by adapter");
+        assert!(outbound.iter().any(|e| e.kind == "concepts_detected"), "outbound events include concepts_detected");
     }
 
     // === Scenario: ingest with unknown input_kind returns error ===
@@ -1317,7 +1317,7 @@ mod tests {
             .ingest("provence-research", "unknown", data)
             .await;
 
-        assert!(result.is_err());
+        assert!(result.is_err(), "unknown input_kind returns an error");
         let err = result.unwrap_err();
         assert!(
             err.to_string().contains("no adapter"),
@@ -1360,8 +1360,8 @@ mod tests {
 
         // Primary: concept nodes created
         let ctx = engine.get_context(&ctx_id).unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
-        assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some(), "concept:travel created by adapter");
+        assert!(ctx.get_node(&NodeId::from_string("concept:avignon")).is_some(), "concept:avignon created by adapter");
 
         // Enrichment: may_be_related edge created
         let edge = ctx
@@ -1369,11 +1369,11 @@ mod tests {
             .iter()
             .find(|e| e.relationship == "may_be_related")
             .expect("enrichment should create may_be_related edge");
-        assert_eq!(edge.source, NodeId::from_string("concept:travel"));
-        assert_eq!(edge.target, NodeId::from_string("concept:avignon"));
+        assert_eq!(edge.source, NodeId::from_string("concept:travel"), "may_be_related edge source is concept:travel");
+        assert_eq!(edge.target, NodeId::from_string("concept:avignon"), "may_be_related edge target is concept:avignon");
 
         // Outbound: includes events from both primary and enrichment rounds
-        assert!(!outbound.is_empty());
+        assert!(!outbound.is_empty(), "outbound events produced by pipeline");
 
         // Return type is Vec<OutboundEvent>, not GraphEvent — consumer contract
         let _: Vec<OutboundEvent> = outbound;
@@ -1413,10 +1413,10 @@ mod tests {
 
         // Both adapters processed (each creates concept:travel)
         let ctx = engine.get_context(&ctx_id).unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some(), "concept:travel created by fan-out adapters");
 
         // Enrichment loop ran ONCE (not per-adapter)
-        assert_eq!(enrichment.call_count(), 1);
+        assert_eq!(enrichment.call_count(), 1, "enrichment loop runs once after all adapters complete");
 
         // Both adapters' transform_events were called — each sees the full event set.
         // Two adapters × two NodesAdded events (one from each adapter) = 4 outbound events.
@@ -1460,13 +1460,13 @@ mod tests {
 
         // Adapter processed
         let ctx = engine.get_context(&ctx_id).unwrap();
-        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some());
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some(), "concept:travel created via integration");
 
         // Enrichment ran (via register_integration, not separate with_enrichments)
         assert!(ctx
             .edges
             .iter()
-            .any(|e| e.relationship == "may_be_related"));
+            .any(|e| e.relationship == "may_be_related"), "enrichment fired via register_integration");
     }
 
     // === Scenario: Enrichments from multiple integrations are deduplicated ===
@@ -1504,8 +1504,8 @@ mod tests {
             .unwrap();
 
         // Only the first enrichment instance was called (dedup by id)
-        assert_eq!(enrichment_a.call_count(), 1);
-        assert_eq!(enrichment_b.call_count(), 0);
+        assert_eq!(enrichment_a.call_count(), 1, "first registration of enrichment id is called");
+        assert_eq!(enrichment_b.call_count(), 0, "duplicate enrichment id from second integration is skipped");
     }
 
     // === Scenario: Consumer receives outbound events, never raw graph events ===
@@ -1531,8 +1531,8 @@ mod tests {
             .unwrap();
 
         // The consumer gets domain-meaningful events, not raw GraphEvents
-        assert!(!outbound.is_empty());
-        assert_eq!(outbound[0].kind, "concepts_detected");
+        assert!(!outbound.is_empty(), "consumer receives outbound events");
+        assert_eq!(outbound[0].kind, "concepts_detected", "outbound event kind is concepts_detected");
     }
 
     // ================================================================
@@ -1606,8 +1606,8 @@ mod tests {
             })
             .collect();
         assert_eq!(refs.len(), 1, "should have exactly one references edge");
-        assert_eq!(refs[0].source_dimension, dimension::PROVENANCE);
-        assert_eq!(refs[0].target_dimension, dimension::SEMANTIC);
+        assert_eq!(refs[0].source_dimension, dimension::PROVENANCE, "references edge source is in provenance dimension");
+        assert_eq!(refs[0].target_dimension, dimension::SEMANTIC, "references edge target is in semantic dimension");
     }
 
     // === Scenario: TagConceptBridger is idempotent through enrichment loop ===
@@ -1816,7 +1816,7 @@ mod tests {
         let ctx = engine.get_context(&ctx_id).unwrap();
 
         // Mark node exists
-        assert!(ctx.get_node(&NodeId::from("mark-1")).is_some());
+        assert!(ctx.get_node(&NodeId::from("mark-1")).is_some(), "mark node created by AddMark");
 
         // Contains edge: chain → mark
         let contains: Vec<_> = ctx
@@ -1827,7 +1827,7 @@ mod tests {
                     && e.relationship == "contains"
             })
             .collect();
-        assert_eq!(contains.len(), 1);
+        assert_eq!(contains.len(), 1, "one contains edge from chain to mark");
 
         // TagConceptBridger should have created references edge: mark → concept:travel
         let refs: Vec<_> = ctx
@@ -1843,8 +1843,8 @@ mod tests {
             1,
             "TagConceptBridger should bridge mark to concept:travel"
         );
-        assert_eq!(refs[0].source_dimension, dimension::PROVENANCE);
-        assert_eq!(refs[0].target_dimension, dimension::SEMANTIC);
+        assert_eq!(refs[0].source_dimension, dimension::PROVENANCE, "references edge source is in provenance dimension");
+        assert_eq!(refs[0].target_dimension, dimension::SEMANTIC, "references edge target is in semantic dimension");
     }
 
     // === Scenario: CreateChain through ingest produces chain node ===
@@ -1875,8 +1875,8 @@ mod tests {
         let chain = ctx
             .get_node(&NodeId::from("chain-1"))
             .expect("chain node should exist");
-        assert_eq!(chain.node_type, "chain");
-        assert_eq!(chain.dimension, dimension::PROVENANCE);
+        assert_eq!(chain.node_type, "chain", "created node has type chain");
+        assert_eq!(chain.dimension, dimension::PROVENANCE, "chain node is in provenance dimension");
     }
 
     // === Scenario: CoOccurrenceEnrichment fires through the pipeline on new fragments ===
@@ -1917,7 +1917,7 @@ mod tests {
             .collect();
 
         // Symmetric pair: travel↔avignon
-        assert_eq!(may_be_related.len(), 2);
+        assert_eq!(may_be_related.len(), 2, "symmetric may_be_related pair created for co-occurring concepts");
 
         // Verify contribution tracking
         for edge in &may_be_related {
@@ -1997,7 +1997,7 @@ mod tests {
         let chain = ctx.get_node(&NodeId::from_string("chain:journal:journal-2026-02"));
         assert!(chain.is_some(), "chain node should exist");
         let chain = chain.unwrap();
-        assert_eq!(chain.dimension, dimension::PROVENANCE);
+        assert_eq!(chain.dimension, dimension::PROVENANCE, "chain node is in provenance dimension");
 
         let marks: Vec<_> = ctx
             .nodes()
@@ -2033,8 +2033,8 @@ mod tests {
 
         // Each references edge is cross-dimensional: provenance → semantic
         for ref_edge in &references {
-            assert_eq!(ref_edge.source_dimension, dimension::PROVENANCE);
-            assert_eq!(ref_edge.target_dimension, dimension::SEMANTIC);
+            assert_eq!(ref_edge.source_dimension, dimension::PROVENANCE, "references edge source is in provenance dimension");
+            assert_eq!(ref_edge.target_dimension, dimension::SEMANTIC, "references edge target is in semantic dimension");
         }
 
         // --- The key test: concept → provenance traversal ---
@@ -2141,8 +2141,8 @@ mod tests {
             .iter()
             .flat_map(|e| e.contributions.keys().cloned())
             .collect();
-        assert!(adapter_ids.contains("manual-journal"));
-        assert!(adapter_ids.contains("llm-extract"));
+        assert!(adapter_ids.contains("manual-journal"), "manual-journal has a contribution on distributed-ai edge");
+        assert!(adapter_ids.contains("llm-extract"), "llm-extract has a contribution on distributed-ai edge");
 
         // --- Separate chains for same source but different adapters ---
         let manual_chain = ctx.get_node(&NodeId::from_string("chain:manual-journal:paper-chen-2025"));
@@ -2210,7 +2210,7 @@ mod tests {
             .edges()
             .filter(|e| e.target == *source_mark && e.relationship == "contains")
             .collect();
-        assert_eq!(chain_edge.len(), 1);
+        assert_eq!(chain_edge.len(), 1, "one chain contains the source mark for federated-learning");
         assert_eq!(
             chain_edge[0].source,
             NodeId::from_string("chain:llm-extract:paper-chen-2025"),
@@ -2892,7 +2892,7 @@ mod tests {
             .execute(&ctx);
 
         // Level 0: concept:ai-safety
-        assert_eq!(traversal.levels[0].len(), 1);
+        assert_eq!(traversal.levels[0].len(), 1, "level 0 contains only the start node");
 
         // Level 1: fragments (via tagged_with) + marks (via references) + co-occurring concepts
         assert!(
@@ -3563,7 +3563,7 @@ mod tests {
             .edges()
             .filter(|e| e.source == heraclitus_chain && e.relationship == "contains")
             .collect();
-        assert_eq!(heraclitus_mark_edges.len(), 1);
+        assert_eq!(heraclitus_mark_edges.len(), 1, "Heraclitus chain contains one mark");
 
         let heraclitus_mark = &heraclitus_mark_edges[0].target;
         let heraclitus_concepts: std::collections::HashSet<String> = ctx
@@ -3572,10 +3572,10 @@ mod tests {
             .map(|e| e.target.to_string())
             .collect();
 
-        assert!(heraclitus_concepts.contains("concept:water"));
-        assert!(heraclitus_concepts.contains("concept:identity"));
-        assert!(heraclitus_concepts.contains("concept:transformation"));
-        assert!(heraclitus_concepts.contains("concept:time"));
+        assert!(heraclitus_concepts.contains("concept:water"), "Heraclitus mark references concept:water");
+        assert!(heraclitus_concepts.contains("concept:identity"), "Heraclitus mark references concept:identity");
+        assert!(heraclitus_concepts.contains("concept:transformation"), "Heraclitus mark references concept:transformation");
+        assert!(heraclitus_concepts.contains("concept:time"), "Heraclitus mark references concept:time");
 
         // From concept:transformation, how many fragments from different consumers?
         let transformation_id = NodeId::from_string("concept:transformation");
@@ -3666,15 +3666,15 @@ mod tests {
             .edges()
             .filter(|e| e.source == borges_chain && e.relationship == "contains")
             .collect();
-        assert_eq!(borges_marks.len(), 1);
+        assert_eq!(borges_marks.len(), 1, "Borges chain contains one mark");
 
         let borges_concepts: std::collections::HashSet<String> = ctx
             .edges()
             .filter(|e| e.source == borges_marks[0].target.clone() && e.relationship == "references")
             .map(|e| e.target.to_string())
             .collect();
-        assert!(borges_concepts.contains("concept:labyrinth"));
-        assert!(borges_concepts.contains("concept:naming"));
+        assert!(borges_concepts.contains("concept:labyrinth"), "Borges mark references concept:labyrinth");
+        assert!(borges_concepts.contains("concept:naming"), "Borges mark references concept:naming");
 
         // From concept:labyrinth, reach the myth cluster
         let lab_id = NodeId::from_string("concept:labyrinth");
@@ -4648,7 +4648,7 @@ mod tests {
         let file_node_id = NodeId::from_string(format!("file:{}", tmp.to_str().unwrap()));
         let file_node = ctx.get_node(&file_node_id);
         assert!(file_node.is_some(), "Phase 1 should create a file node");
-        assert_eq!(file_node.unwrap().node_type, "file");
+        assert_eq!(file_node.unwrap().node_type, "file", "file node has correct node_type");
         // Note: ExtractionCoordinator doesn't implement transform_events,
         // so outbound events may be empty. The file node in the graph is the proof.
         let _ = events;
