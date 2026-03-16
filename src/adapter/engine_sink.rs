@@ -824,7 +824,31 @@ mod tests {
         let (sink, _ctx) = make_sink();
 
         let result = sink.emit(Emission::new().with_node(node("A"))).await.unwrap();
-        assert!(result.provenance.is_empty());
+        assert!(result.provenance.is_empty(), "no provenance entries without framework context");
+    }
+
+    // === Edges emitted without FrameworkContext have empty contributions ===
+    #[tokio::test]
+    async fn anonymous_emission_has_empty_contributions() {
+        let (sink, ctx) = make_sink();
+        // No framework context set — anonymous emission
+
+        {
+            let mut c = ctx.lock().unwrap();
+            c.add_node(node("A"));
+            c.add_node(node("B"));
+        }
+
+        sink.emit(Emission::new().with_edge(edge("A", "B"))).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        let ab = snapshot.edges.iter()
+            .find(|e| e.source == NodeId::from_string("A") && e.target == NodeId::from_string("B"))
+            .expect("edge A→B should exist");
+        assert!(
+            ab.contributions.is_empty(),
+            "edge from anonymous emission should have no contribution slots"
+        );
     }
 
     // ================================================================

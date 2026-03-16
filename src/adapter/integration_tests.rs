@@ -1040,6 +1040,10 @@ mod tests {
         assert_eq!(primary_result.nodes_committed, 1, "primary emission commits one node");
         assert_eq!(enrichment_result.result.nodes_committed, 3, "enrichment commits 3 nodes across 3 capped rounds");
 
+        // Safety valve: loop did NOT quiesce, stopped by max_rounds
+        assert!(!enrichment_result.quiesced, "loop should not reach quiescence");
+        assert_eq!(enrichment_result.rounds, 3, "loop should run exactly max_rounds");
+
         // The enrichment was called exactly 3 times (the max rounds)
         assert_eq!(*enrichment.counter.lock().unwrap(), 3, "enrichment called exactly max_rounds times");
     }

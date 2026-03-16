@@ -725,4 +725,23 @@ mod tests {
             "alpha normalization should not be affected by provenance contributions",
         );
     }
+
+    // Documents current behavior: add_edge does NOT validate endpoints.
+    // This is a canary test — if validation is later added, update this test.
+    #[test]
+    fn add_edge_accepts_dangling_endpoints() {
+        let mut ctx = Context::new("test");
+        // No nodes added — endpoints don't exist
+        let edge = Edge::new(
+            NodeId::from_string("nonexistent-a"),
+            NodeId::from_string("nonexistent-b"),
+            "related_to",
+        );
+        ctx.add_edge(edge);
+        assert_eq!(ctx.edge_count(), 1, "edge with dangling endpoints accepted");
+        assert!(
+            ctx.get_node(&NodeId::from_string("nonexistent-a")).is_none(),
+            "source node should not exist"
+        );
+    }
 }
