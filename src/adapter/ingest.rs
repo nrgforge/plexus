@@ -177,6 +177,11 @@ impl IngestPipeline {
                 &self.enrichments,
                 &all_events,
             )?;
+            tracing::debug!(
+                rounds = enrichment_result.rounds,
+                quiesced = enrichment_result.quiesced,
+                "enrichment loop complete"
+            );
             all_events.extend(enrichment_result.result.events);
         }
 
@@ -220,6 +225,12 @@ impl IngestPipeline {
             .filter(|a| a.input_kind() == input_kind)
             .collect();
 
+        tracing::debug!(
+            input_kind,
+            adapter_count = matching.len(),
+            "routing ingest"
+        );
+
         if matching.is_empty() {
             return Err(AdapterError::Internal(format!(
                 "no adapter registered for input_kind '{}'",
@@ -249,6 +260,11 @@ impl IngestPipeline {
                 &self.enrichments,
                 &all_events,
             )?;
+            tracing::debug!(
+                rounds = enrichment_result.rounds,
+                quiesced = enrichment_result.quiesced,
+                "enrichment loop complete"
+            );
             all_events.extend(enrichment_result.result.events);
         }
 

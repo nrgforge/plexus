@@ -376,6 +376,12 @@ impl AdapterSink for EngineSink {
                     AdapterError::Internal(format!("lock poisoned: {}", e))
                 })?;
                 let result = Self::emit_inner(&mut ctx, emission, &self.framework)?;
+                tracing::debug!(
+                    nodes = result.nodes_committed,
+                    edges = result.edges_committed,
+                    rejections = result.rejections.len(),
+                    "emission committed"
+                );
                 self.accumulated_events.lock().unwrap()
                     .extend(result.events.clone());
                 Ok(result)
@@ -385,6 +391,13 @@ impl AdapterSink for EngineSink {
                 let result = engine.with_context_mut(context_id, |ctx| {
                     Self::emit_inner(ctx, emission, &framework)
                 }).map_err(Self::map_engine_error)??;
+
+                tracing::debug!(
+                    nodes = result.nodes_committed,
+                    edges = result.edges_committed,
+                    rejections = result.rejections.len(),
+                    "emission committed"
+                );
 
                 // Accumulate events for pipeline collection
                 self.accumulated_events.lock().unwrap()

@@ -157,6 +157,8 @@ impl PlexusMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let context_id = self.context()?;
 
+        tracing::debug!(context = %context_id, "mcp ingest");
+
         // Resolve input_kind: explicit or classified from JSON
         let input_kind = match p.input_kind {
             Some(ref kind) => kind.clone(),
