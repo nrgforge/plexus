@@ -10,13 +10,13 @@ These are conformance gaps — the decisions already exist. No new ADRs are need
 
 ## Conformance Debt Table (Step 3.5)
 
-| # | ADR | Violation | Type | Location | Resolution |
-|---|-----|-----------|------|----------|------------|
-| 1 | **019/021** | Coordinator sends `ExtractFileInput` to Phase 3; `SemanticAdapter` expects `SemanticInput`. Phase 3 always fails with `InvalidInput` when dispatched by the coordinator. | wrong-structure | `extraction.rs:447-451`, `semantic.rs:322-324` | Coordinator constructs `SemanticInput` from Phase 2 output (file path, section boundaries). |
-| 2 | **025** | `SemanticAdapter::process()` stores `spec.ensemble` but never invokes it. The two-layer architecture (ensemble extractor → declarative mapper) is structurally absent. | missing | `declarative.rs:329` (field), `declarative.rs:638-665` (process, no invocation) | Add ensemble invocation: check `self.spec.ensemble` → call `LlmOrcClient::invoke()` → merge response into template context → proceed with emit primitives. |
-| 3 | **019** (Inv 30, 46) | Background phases use `EngineSink::new(Arc<Mutex<Context>>)` — in-memory test path. Emissions accumulate in a Mutex-held context clone that is never persisted. Persist-per-emission (Invariant 30) violated. | wrong-structure | `extraction.rs:57` (field), `extraction.rs:405, 439` (construction) | Pass `Arc<PlexusEngine>` + `ContextId` to background tasks. Use `EngineSink::for_engine()`. Remove `shared_context` field. |
-| 4 | **019** (Inv 5, 7) | `SemanticAdapter::process()` emits concept nodes and relationship edges but no provenance trail. No chain, mark, or contains edges. Dual obligation (Invariant 7) violated. | missing | `semantic.rs:317-375` (process), `semantic.rs:207-304` (parse_response — concepts only) | Add provenance: chain scoped to adapter run, mark per passage with concept tags, contains edges from chain to marks. |
-| 5 | **019** | No concrete Phase 2 adapter for `text/*` MIME types. Coordinator's `register_phase2()` API works; tests use stubs. No real text analysis adapter exists. | missing | `extraction.rs:91-98` (registration API only) | Build `TextAnalysisAdapter`: detect section boundaries, extract proper nouns, compute term frequency. Output feeds Phase 3 via `SemanticInput.sections`. |
+| # | ADR | Violation | Type | Location | Resolution | Status (March 2026) |
+|---|-----|-----------|------|----------|------------|---------------------|
+| 1 | **019/021** | Coordinator sends `ExtractFileInput` to Phase 3; `SemanticAdapter` expects `SemanticInput`. Phase 3 always fails with `InvalidInput` when dispatched by the coordinator. | wrong-structure | `extraction.rs:447-451`, `semantic.rs:322-324` | Coordinator constructs `SemanticInput` from Phase 2 output (file path, section boundaries). | **Resolved** — coordinator constructs `SemanticInput::for_file()` at `extraction.rs:524`. |
+| 2 | **025** | `SemanticAdapter::process()` stores `spec.ensemble` but never invokes it. The two-layer architecture (ensemble extractor → declarative mapper) is structurally absent. | missing | `declarative.rs:329` (field), `declarative.rs:638-665` (process, no invocation) | Add ensemble invocation: check `self.spec.ensemble` → call `LlmOrcClient::invoke()` → merge response into template context → proceed with emit primitives. | **Resolved differently** — `SemanticAdapter` (`semantic.rs`) is a separate type from `DeclarativeAdapter` (`declarative.rs`); `process()` invokes llm-orc directly. File refs to `declarative.rs` are stale. |
+| 3 | **019** (Inv 30, 46) | Background phases use `EngineSink::new(Arc<Mutex<Context>>)` — in-memory test path. Emissions accumulate in a Mutex-held context clone that is never persisted. Persist-per-emission (Invariant 30) violated. | wrong-structure | `extraction.rs:57` (field), `extraction.rs:405, 439` (construction) | Pass `Arc<PlexusEngine>` + `ContextId` to background tasks. Use `EngineSink::for_engine()`. Remove `shared_context` field. | **Partially resolved** — `create_sink()` uses `for_engine()` when available; `shared_context` field retained for tests. |
+| 4 | **019** (Inv 5, 7) | `SemanticAdapter::process()` emits concept nodes and relationship edges but no provenance trail. No chain, mark, or contains edges. Dual obligation (Invariant 7) violated. | missing | `semantic.rs:317-375` (process), `semantic.rs:207-304` (parse_response — concepts only) | Add provenance: chain scoped to adapter run, mark per passage with concept tags, contains edges from chain to marks. | **Resolved** — `add_provenance()` at `semantic.rs:647` creates chain + marks + contains. |
+| 5 | **019** | No concrete Phase 2 adapter for `text/*` MIME types. Coordinator's `register_phase2()` API works; tests use stubs. No real text analysis adapter exists. | missing | `extraction.rs:91-98` (registration API only) | Build `TextAnalysisAdapter`: detect section boundaries, extract proper nouns, compute term frequency. Output feeds Phase 3 via `SemanticInput.sections`. | **Open/Deferred** — `TextAnalysisAdapter` was built then removed (ADR-029). No Phase 2 adapter exists. Deferred to Phase 5 architectural discussion. |
 
 ---
 
@@ -209,13 +209,13 @@ Addresses: ADR-019 — modality-dispatched Phase 2 adapters. No concrete `text/*
 
 ## Conformance Debt Table (Step 3.5)
 
-| # | ADR | Violation | Type | Location | Resolution |
-|---|-----|-----------|------|----------|------------|
-| 1 | **028** | MCP server exposes `annotate` tool instead of `ingest` | exists | `mcp/mod.rs:106-134` | Replace with `ingest(data, input_kind?)` accepting JSON |
-| 2 | **028** | `PlexusApi.annotate()` still exists (86-line composite method) | exists | `api.rs:48-133` | Remove; migrate composite logic into ContentAdapter |
-| 3 | **028** | Pipeline registers only FragmentAdapter + ProvenanceAdapter | wrong-structure | `mcp/mod.rs:55-63` | Register three core adapters (ContentAdapter, ExtractionCoordinator, SemanticAdapter) + all core enrichments |
-| 4 | **028** | No input classifier component exists | missing | — | Build input classifier for `input_kind` detection from JSON |
-| 5 | **028** | MCP params are domain-specific structs (`AnnotateParams`) | wrong-structure | `mcp/params.rs` | Replace with generic `serde_json::Value` input |
+| # | ADR | Violation | Type | Location | Resolution | Status (March 2026) |
+|---|-----|-----------|------|----------|------------|---------------------|
+| 1 | **028** | MCP server exposes `annotate` tool instead of `ingest` | exists | `mcp/mod.rs:106-134` | Replace with `ingest(data, input_kind?)` accepting JSON | **Resolved** — MCP exposes `ingest` tool; `annotate` removed. |
+| 2 | **028** | `PlexusApi.annotate()` still exists (86-line composite method) | exists | `api.rs:48-133` | Remove; migrate composite logic into ContentAdapter | **Resolved** — `PlexusApi.annotate()` removed (ADR-014 update). |
+| 3 | **028** | Pipeline registers only FragmentAdapter + ProvenanceAdapter | wrong-structure | `mcp/mod.rs:55-63` | Register three core adapters (ContentAdapter, ExtractionCoordinator, SemanticAdapter) + all core enrichments | **Resolved** — ContentAdapter, ExtractionCoordinator, and ProvenanceAdapter registered; core enrichments registered. |
+| 4 | **028** | No input classifier component exists | missing | — | Build input classifier for `input_kind` detection from JSON | **Resolved** — `classify_input` free function exists in adapter layer. |
+| 5 | **028** | MCP params are domain-specific structs (`AnnotateParams`) | wrong-structure | `mcp/params.rs` | Replace with generic `serde_json::Value` input | **Resolved** — MCP accepts `serde_json::Value` via `IngestParams`. |
 
 ---
 

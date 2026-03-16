@@ -46,11 +46,11 @@ Each edge stores per-adapter contributions as `HashMap<AdapterId, f32>`. When an
 **Then** no contributions change
 **And** no `WeightsChanged` events fire
 
-### Scenario: Reflexive proposal then external confirmation — independent contribution slots
-**Given** reflexive adapter "normalization-adapter" has proposed edge concept:sudden→concept:abrupt via ProposalSink with contribution value 0.2
-**And** edge concept:sudden→concept:abrupt exists with contributions {"normalization-adapter": 0.2}
+### Scenario: Enrichment then external confirmation — independent contribution slots
+**Given** enrichment "co-occurrence" has emitted edge concept:sudden→concept:abrupt via enrichment loop with contribution value 0.2
+**And** edge concept:sudden→concept:abrupt exists with contributions {"co-occurrence": 0.2}
 **When** adapter "document-adapter" independently emits edge concept:sudden→concept:abrupt with contribution value 0.85
-**Then** edge contributions are {"normalization-adapter": 0.2, "document-adapter": 0.85}
+**Then** edge contributions are {"co-occurrence": 0.2, "document-adapter": 0.85}
 **And** a `WeightsChanged` event fires
 **And** the edge's raw weight reflects both contributions (stronger than either alone)
 
