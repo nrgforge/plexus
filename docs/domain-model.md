@@ -439,3 +439,8 @@ Latent evidence (embedding-derived similarity) enters the graph via two paths: (
 - **Cross-modal embeddings.** Open research direction. Text-motion alignment models (ImageBind, TMR) exist but are immature. Pragmatic path: Viewpoints-as-text (describe movement qualities in natural language, embed alongside text). See Essay 20 §Cross-modal.
 
 Does not block extraction architecture or external enrichment work. Shapes the future design of external enrichment ensembles and may introduce a new dimension (latent) alongside structure, semantic, and provenance.
+
+### Introduced by System Design v1.0 (Architectural Consolidation)
+
+**15. Context field encapsulation.**
+`Context.nodes` (`HashMap<NodeId, Node>`) and `Context.edges` (`Vec<Edge>`) are public fields. This means any code with a `&mut Context` can modify the graph without going through `add_node()`/`add_edge()`. Future migration to encapsulated accessors (private fields + getter/setter methods) would enable structural changes (e.g., `Vec<Edge>` → `HashMap<EdgeId, Edge>` for O(1) lookup) without breaking consumers. Does not block current work — flagged as an architectural open question for a future performance pass.
