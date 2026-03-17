@@ -4345,6 +4345,83 @@ emit:
     }
 
     // ================================================================
+    // Feature: Provenance Input Validation
+    // ================================================================
+
+    // === Scenario: Empty chain name is rejected by ingest ===
+    #[tokio::test]
+    async fn ingest_empty_chain_name_returns_error() {
+        use crate::adapter::IngestPipeline;
+        use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
+        use crate::api::PlexusApi;
+
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
+        let cid = ctx_id.as_str();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_integration(Arc::new(ProvenanceAdapter::new()), vec![]);
+        let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
+
+        let result = api
+            .ingest(
+                cid,
+                "provenance",
+                Box::new(ProvenanceInput::CreateChain {
+                    chain_id: "".to_string(),
+                    name: "".to_string(),
+                    description: None,
+                }),
+            )
+            .await;
+
+        assert!(result.is_err(), "ingest with empty chain name should return an error");
+    }
+
+    // ================================================================
+    // Feature: Ingest Returns Outbound Events
+    // ================================================================
+
+    // === Scenario: Ingest returns non-empty outbound events ===
+    #[tokio::test]
+    async fn ingest_returns_outbound_events() {
+        use crate::adapter::IngestPipeline;
+        use crate::adapter::provenance_adapter::ProvenanceAdapter;
+        use crate::api::PlexusApi;
+
+        let engine = Arc::new(PlexusEngine::new());
+        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
+        let cid = ctx_id.as_str();
+
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
+        pipeline.register_integration(Arc::new(ProvenanceAdapter::new()), vec![]);
+        let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
+
+        // Content ingest should produce outbound events from ContentAdapter
+        let events = api
+            .ingest(
+                cid,
+                "content",
+                Box::new(FragmentInput::new("a thought about avignon", vec!["travel".to_string()])),
+            )
+            .await
+            .unwrap();
+
+        assert!(!events.is_empty(), "content ingest should return non-empty outbound events");
+
+        // At least one event should carry meaningful content (fragment_indexed or concepts_detected)
+        let has_meaningful_event = events
+            .iter()
+            .any(|e| e.kind == "fragment_indexed" || e.kind == "concepts_detected");
+        assert!(
+            has_meaningful_event,
+            "outbound events should include fragment_indexed or concepts_detected, got: {:?}",
+            events.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        );
+    }
+
+    // ================================================================
     // Enrichment Convergence Fitness (ADR-010 telemetry)
     // ================================================================
 
