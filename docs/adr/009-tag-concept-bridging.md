@@ -1,6 +1,6 @@
 # ADR-009: Automatic Tag-to-Concept Bridging
 
-**Status:** Accepted
+**Status:** Superseded
 
 > **Superseded.** TagConceptBridger was removed from the core engine. Tag bridging is domain-specific — domains that need tag-to-concept bridging implement their own adapter. The four remaining enrichments (CoOccurrence, DiscoveryGap, TemporalProximity, EmbeddingSimilarity) are all domain-agnostic structural algorithms.
 

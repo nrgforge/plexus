@@ -84,13 +84,13 @@ The `WeightsChanged` graph event (defined in ADR-001 Decision 10 but previously 
 
 **Neutral:**
 
-- The `raw_weight` field on `Edge` changes from a stored `f32` to a computed property. Code that reads `edge.raw_weight` continues to work; code that writes it must go through the contribution mechanism.
+- The `raw_weight` field on `Edge` changes from a stored `f32` to a computed property. Code that reads `edge.raw_weight` continues to work; code that writes it must go through the contribution mechanism. *(Implementation note: the Rust field is named `combined_weight` with `#[serde(rename = "raw_weight")]` for wire compatibility.)*
 
 ---
 
 ## Open Questions (deferred, not blocking)
 
 1. **Source diversity bonus.** Should edges confirmed by more adapters rank higher than edges with equal total weight from fewer adapters? The data structure supports it. The coefficient is empirical.
-2. **Scale normalization function.** The initial implementation uses divide-by-range (`(v - min) / (max - min)`). Divide-by-sum, z-score, or outlier-robust alternatives may be worth exploring if edge cases arise (e.g., a single outlier emission compressing all other edges from that adapter into a narrow band). Note that divide-by-range maps the adapter's minimum contribution to 0.0 — if an adapter's minimum is non-trivial (e.g., "one test covers this relationship"), the weakest-but-real evidence becomes invisible after scale normalization. Adapter-declared ranges or a shifted formula could address this if it proves problematic.
+2. **Scale normalization function.** The initial implementation uses divide-by-range (`(v - min) / (max - min)`). Divide-by-sum, z-score, or outlier-robust alternatives may be worth exploring if edge cases arise (e.g., a single outlier emission compressing all other edges from that adapter into a narrow band). Note that divide-by-range maps the adapter's minimum contribution to 0.0 — if an adapter's minimum is non-trivial (e.g., "one test covers this relationship"), the weakest-but-real evidence becomes invisible after scale normalization. Adapter-declared ranges or a shifted formula could address this if it proves problematic. *(Amended by ADR-005: floor parameter α=0.01 means min maps to ~0.01, not 0.0.)*
 3. **Scale normalization cache invalidation.** When a new edge extends an adapter's min or max, all of that adapter's scale-normalized contributions change. Cache strategy TBD during implementation.
 4. **Node property merge on multi-source upsert.** When two adapters emit the same node with different properties, what merge semantics apply? This sub-question from ADR-001 Open Question 1 is not resolved by this ADR.

@@ -26,7 +26,7 @@
 ### Module: graph
 **Purpose:** Core graph primitives — nodes, edges, contexts, events, dimensions, and the engine that manages them.
 **Provenance:** Invariants 1–4 (emission rules), 8–12 (weight rules), 30 (persist-per-emission); ADR-003, ADR-006
-**Owns:** Node, Edge, Context, ContextId, ContextMetadata, PlexusEngine, GraphEvent, ContentType, Dimension, Source, PropertyValue, NodeId, EdgeId
+**Owns:** Node, Edge, Context, ContextId, ContextMetadata, PlexusEngine, GraphEvent, ContentType, dimension (module of &str constants in node.rs), Source, PropertyValue, NodeId, EdgeId
 **Depends on:** storage (for persistence)
 **Depended on by:** adapter/sink, adapter/pipeline, query, provenance, api
 
@@ -40,7 +40,7 @@
 ### Module: adapter/enrichment
 **Purpose:** The enrichment contract and loop — reactive graph intelligence after each emission.
 **Provenance:** Invariants 35–36, 39, 50 (enrichment rules); ADR-010
-**Owns:** Enrichment (trait), EnrichmentRegistry, run_enrichment_loop, EnrichmentLoopResult, quiescence
+**Owns:** Enrichment (trait), EnrichmentRegistry; `run_enrichment_loop`, `EnrichmentLoopResult`, and `quiescence` are `pub(crate)` internals
 **Depends on:** graph, adapter/sink (for EngineSink in the loop)
 **Depended on by:** adapter/pipeline, adapter/enrichments (implementations)
 
@@ -94,14 +94,14 @@ The key architectural insight: when DeclarativeAdapter was introduced (ADR-028),
 **Purpose:** Core enrichment implementations — reactive graph intelligence algorithms.
 **Provenance:** Invariants 27, 39, 50 (enrichment behavior); ADR-010, ADR-024, ADR-026
 **Owns:** CoOccurrenceEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment, EmbeddingSimilarityEnrichment (+ Embedder trait, VectorStore, FastEmbedEmbedder)
-**Removed:** TagConceptBridger — tag bridging is domain-specific; domains needing it declare `tag_concept_bridger` in their adapter spec's `enrichments:` section.
+**Removed:** TagConceptBridger — tag bridging is domain-specific; domains needing it implement their own adapter.
 **Depends on:** graph, adapter/enrichment (trait), adapter/types
 **Depended on by:** (registered into adapter/pipeline at construction time)
 
 ### Module: query
 **Purpose:** Read-only graph traversal, search, normalization, and evidence trail computation.
 **Provenance:** Invariant 37 (outbound events flow through adapter); ADR-003 (normalized weight)
-**Owns:** FindQuery, TraverseQuery, PathQuery, StepQuery, NormalizationStrategy, OutgoingDivisive, Softmax, evidence_trail, shared_concepts, QueryResult, TraversalResult, PathResult, EvidenceTrailResult, Direction
+**Owns:** FindQuery, TraverseQuery, PathQuery, StepQuery, NormalizationStrategy, OutgoingDivisive, Softmax, NormalizedEdge, normalized_weights, evidence_trail, shared_concepts, QueryResult, TraversalResult, PathResult, EvidenceTrailResult, Direction
 **Depends on:** graph
 **Depended on by:** api
 
@@ -130,7 +130,7 @@ The key architectural insight: when DeclarativeAdapter was introduced (ADR-028),
 **Purpose:** MCP transport — thin shell that forwards requests to PlexusApi.
 **Provenance:** Invariant 38 (transports are thin shells); ADR-028
 **Owns:** PlexusMcpServer, MCP tool handlers, MCP params
-**Depends on:** api, adapter/pipeline (for pipeline construction — **this is a divergence being addressed**)
+**Depends on:** api (pipeline is constructed via `PipelineBuilder::default_pipeline()` in the binary entry point and passed in — divergence resolved)
 **Depended on by:** (binary entry point)
 
 ### Module: llm_orc
@@ -336,7 +336,7 @@ emit:
 
 Declared enrichments are **global** — they fire after any adapter emission, not just the declaring adapter's (Invariant 35). The registry deduplicates by `id()` across multiple specs.
 
-Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `temporal_proximity`, `embedding_similarity`. *(`tag_concept_bridger` was removed from the built-in set — tag bridging is domain-specific. Domains that need it can still declare it via this mechanism if a custom implementation is registered.)*
+Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `temporal_proximity`, `embedding_similarity`. *(TagConceptBridger was fully removed — tag bridging is domain-specific; domains that need it implement their own adapter.)*
 
 ## Responsibility Matrix
 
@@ -346,11 +346,11 @@ Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `t
 | Edge, EdgeId, contributions, raw_weight | graph | ADR-003, ADR-006 |
 | Context, ContextId, ContextMetadata | graph | ADR-006 |
 | PlexusEngine (cache, persistence delegation) | graph | ADR-006, Essay 08 |
-| GraphEvent (5 event types) | graph | ADR-001 |
-| ContentType, Dimension | graph | ADR-001 |
+| GraphEvent (6 event types) | graph | ADR-001, ADR-027 |
+| ContentType, dimension (&str constants module) | graph | ADR-001 |
 | Source | graph | Essay 17 |
 | PropertyValue | graph | ADR-006 |
-| Scale normalization (recompute_raw_weights) | graph | ADR-003 |
+| Scale normalization (recompute_combined_weights) | graph | ADR-003 |
 | AdapterSink (trait) | adapter/sink | ADR-001 |
 | EngineSink | adapter/sink | ADR-001, ADR-006 |
 | EmitResult, Rejection, RejectionReason | adapter/sink | ADR-001 |
@@ -365,7 +365,7 @@ Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `t
 | Adapter (trait), AdapterInput | adapter/traits | ADR-011 |
 | Enrichment (trait) | adapter/enrichment | ADR-010 |
 | EnrichmentRegistry, max_rounds | adapter/enrichment | ADR-010 |
-| run_enrichment_loop, quiescence | adapter/enrichment | ADR-010 |
+| run_enrichment_loop, EnrichmentLoopResult, quiescence (`pub(crate)` internals) | adapter/enrichment | ADR-010 |
 | IngestPipeline | adapter/pipeline | ADR-012 |
 | classify_input, input routing | adapter/pipeline | ADR-012, ADR-028 |
 | ContentAdapter (fragment — Rust-native) | adapter/adapters | ADR-001, ADR-028 |
@@ -455,12 +455,12 @@ flowchart TD
 **Layering rules:**
 1. **Inner → Outer prohibited:** graph never imports adapter, query, provenance, api, or mcp
 2. **Sibling isolation:** adapter/adapters and adapter/enrichments never import each other
-3. **Transport thin shell:** mcp imports only api (+ pipeline construction, which is the divergence to fix)
+3. **Transport thin shell:** mcp imports only api (pipeline is constructed via PipelineBuilder in the binary entry point — divergence resolved)
 4. **Query is read-only:** query never imports adapter or storage
 5. **Enrichment contract is separate from adapter contract:** adapter/enrichment does not import adapter/traits
 
-**Known divergence (classified as Bug, will be fixed):**
-- mcp constructs the IngestPipeline directly instead of receiving it pre-built. The fix is to extract pipeline construction into a builder in adapter/pipeline and call it from the binary entry point, passing the built pipeline to both api and mcp.
+**Previously known divergence (resolved):**
+- mcp previously constructed IngestPipeline directly. Fixed: `PipelineBuilder::default_pipeline()` is implemented in adapter/pipeline and called from the binary entry point; the built pipeline is passed to both api and mcp.
 
 **Circular dependency (graph ↔ storage):**
 - graph::PlexusEngine holds `Option<Arc<dyn GraphStore>>`. GraphStore's methods accept `&Context`, `&ContextId`. Both types are defined in graph.
@@ -537,7 +537,7 @@ flowchart TD
 |----------------|-----------------|------------------|
 | adapter/pipeline → adapter/sink | `integration_tests::content_adapter_emits_*` (multiple) | Real ContentAdapter emits through real EngineSink, nodes/edges land in Context |
 | adapter/pipeline → adapter/enrichment | `integration_tests::enrichment_loop_*` | Real enrichments fire after real adapter emission, bridging/co-occurrence occurs |
-| adapter/sink → graph | `engine_sink::tests::*` (57 tests) | EngineSink validates and commits through real PlexusEngine with real Context |
+| adapter/sink → graph | `engine_sink::tests::*` (~43 test functions) | EngineSink validates and commits through real PlexusEngine with real Context |
 | graph → storage | `engine::tests::test_upsert_persists_to_store`, `test_load_all_hydrates_from_store` | Real PlexusEngine with real SqliteStore — save and reload |
 | api → adapter/pipeline | `api.rs` tests (via PlexusApi::ingest) | Real PlexusApi routes through real IngestPipeline with real adapters |
 | mcp → api | MCP integration tests (if present) | MCP tool handlers call real PlexusApi |
@@ -549,7 +549,7 @@ flowchart TD
 |-----------|---------------------|------|
 | Inv 1–4 (emission rules) | adapter/sink: EngineSink::emit_inner | `engine_sink::tests::*` — endpoint validation, upsert, partial commit |
 | Inv 7 (dual obligation) | adapter/adapters: each adapter's process() | `integration_tests::content_adapter_produces_provenance_*` |
-| Inv 8–12 (weight rules) | graph: Context::recompute_raw_weights | `integration_tests::contribution_*`, `scale_normalization_*` |
+| Inv 8–12 (weight rules) | graph: Context::recompute_combined_weights | `integration_tests::contribution_*`, `scale_normalization_*` |
 | Inv 19 (deterministic concept ID) | adapter/types: concept_node() | `integration_tests::content_adapter_emits_concept_nodes` |
 | Inv 22 (symmetric edge pairs) | adapter/enrichments: CoOccurrenceEnrichment | `cooccurrence::tests::*` |
 | Inv 30 (persist-per-emission) | adapter/sink: EngineSink::emit | `engine_sink::tests::*` with store verification |
@@ -559,7 +559,7 @@ flowchart TD
 ### Test Layers
 
 - **Unit:** Verify logic within a single module. Mocks acceptable for cross-module dependencies (e.g., mock LlmOrcClient in SemanticAdapter tests). Located in each module's `#[cfg(test)] mod tests`.
-- **Integration:** Verify real data flow across module boundaries. Real types on both sides. Located in `adapter/integration_tests.rs` (373 tests) and individual module test blocks with real PlexusEngine.
+- **Integration:** Verify real data flow across module boundaries. Real types on both sides. Located in `adapter/integration_tests.rs` (~53 test functions) and individual module test blocks with real PlexusEngine.
 - **Acceptance:** Verify end-to-end scenarios from `docs/scenarios.md`. Currently realized as integration tests that exercise the full pipeline (content → sink → enrichment → outbound events).
 
 ## Roadmap

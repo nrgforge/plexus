@@ -216,7 +216,7 @@ Addresses: ADR-019 — modality-dispatched Phase 2 adapters. No concrete `text/*
 |---|-----|-----------|------|----------|------------|---------------------|
 | 1 | **028** | MCP server exposes `annotate` tool instead of `ingest` | exists | `mcp/mod.rs:106-134` | Replace with `ingest(data, input_kind?)` accepting JSON | **Resolved** — MCP exposes `ingest` tool; `annotate` removed. |
 | 2 | **028** | `PlexusApi.annotate()` still exists (86-line composite method) | exists | `api.rs:48-133` | Remove; migrate composite logic into ContentAdapter | **Resolved** — `PlexusApi.annotate()` removed (ADR-014 update). |
-| 3 | **028** | Pipeline registers only FragmentAdapter + ProvenanceAdapter | wrong-structure | `mcp/mod.rs:55-63` | Register three core adapters (ContentAdapter, ExtractionCoordinator, SemanticAdapter) + all core enrichments | **Resolved** — ContentAdapter, ExtractionCoordinator, and ProvenanceAdapter registered; core enrichments registered. |
+| 3 | **028** | Pipeline registers only ContentAdapter + ProvenanceAdapter | wrong-structure | `mcp/mod.rs:55-63` | Register three core adapters (ContentAdapter, ExtractionCoordinator, SemanticAdapter) + all core enrichments | **Resolved** — ContentAdapter, ExtractionCoordinator, and ProvenanceAdapter registered; core enrichments registered. |
 | 4 | **028** | No input classifier component exists | missing | — | Build input classifier for `input_kind` detection from JSON | **Resolved** — `classify_input` free function exists in adapter layer. |
 | 5 | **028** | MCP params are domain-specific structs (`AnnotateParams`) | wrong-structure | `mcp/params.rs` | Replace with generic `serde_json::Value` input | **Resolved** — MCP accepts `serde_json::Value` via `IngestParams`. |
 
@@ -284,7 +284,7 @@ Addresses: ADR-028 — resolve `input_kind` from JSON structure when caller omit
 
 ## Feature: ContentAdapter — Fragment + Provenance (ADR-028, Gap 2)
 
-Addresses: ADR-028 — content is always fragment + provenance. ContentAdapter unifies the old FragmentAdapter and `PlexusApi.annotate()` composite. All content entering the graph produces both semantic content and provenance structures (Invariant 7).
+Addresses: ADR-028 — content is always fragment + provenance. ContentAdapter unifies the old fragment ingestion path and `PlexusApi.annotate()` composite. All content entering the graph produces both semantic content and provenance structures (Invariant 7).
 
 ### Scenario: Content with location creates fragment, chain, and mark
 **Given** the full adapter pipeline with ContentAdapter
@@ -338,6 +338,8 @@ Addresses: ADR-028 — server registers three core adapters and all core enrichm
 **And** EmbeddingSimilarityEnrichment
 **And** DiscoveryGapEnrichment
 **And** TemporalProximityEnrichment
+
+> **Note:** EmbeddingSimilarityEnrichment is behind the `embeddings` feature flag (ADR-026) and is not registered in the default test configuration.
 
 ### Scenario: File extraction reachable from transport
 **Given** the server with the full pipeline
@@ -419,11 +421,12 @@ Addresses: ADR-028 — SemanticAdapter specs are registered YAML files declaring
 **Then** the pipeline contains a SemanticAdapter instance for `input_kind = "sketchbin-asset"`
 **And** the spec was validated at registration time
 
-### Scenario: Input classifier routes to registered spec
+### Scenario: Caller routes to registered spec via explicit input_kind
 **Given** a registered semantic adapter spec with `input_kind: "sketchbin-asset"`
-**When** a client calls `ingest(data: {"asset_id": "123", "content": "..."})` without `input_kind`
-**And** the JSON matches the spec's expected input shape
-**Then** the input classifier routes to the `"sketchbin-asset"` SemanticAdapter instance
+**When** a client calls `ingest(context_id, input_kind: "sketchbin-asset", data: {"asset_id": "123", "content": "..."})`
+**Then** the pipeline routes to the `"sketchbin-asset"` SemanticAdapter instance
+
+> **Note:** Domain-specific adapters (declared via YAML specs) require callers to provide an explicit `input_kind`. The classifier handles only core input types (`"content"`, `"extract-file"`). Custom routing is by explicit `input_kind`, not by JSON shape detection.
 
 ### Scenario: Registration rejects malformed spec
 **Given** a YAML semantic adapter spec with an invalid template expression `"{input.}"`

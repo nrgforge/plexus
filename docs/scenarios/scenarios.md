@@ -117,22 +117,22 @@ Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified a
 
 ### Scenario: Annotate triggers enrichment loop
 **Given** context "research" with existing concept `concept:refactor`
-**When** `annotate(context_id: "research", chain_name: "notes", file: "src/main.rs", line: 1, annotation: "cleanup", tags: ["#refactor"])` is called
+**When** `ingest` is called with content data `{"text": "cleanup", "file": "src/main.rs", "line": 1, "chain_name": "notes", "tags": ["#refactor"]}`
 **Then** a fragment is created with the annotation text and tags
+**And** concept `concept:refactor` is created (from tags, via ContentAdapter)
 **And** the enrichment loop runs after the fragment and mark are created
-**And** a `references` edge is created from the new mark to `concept:refactor`
 
 ### Scenario: create_chain is not exposed as a consumer-facing operation
 **Given** the PlexusApi public surface
 **When** a consumer inspects available operations
 **Then** there is no standalone `create_chain` operation — chains are created via `annotate` or via adapter-produced provenance
 
-### Scenario: Annotate returns merged outbound events
-**Given** a successful annotate call that creates a chain and a mark (two ingest calls)
+### Scenario: Ingest returns merged outbound events
+**Given** a successful `ingest` call with content data that creates a chain and a mark
 **When** the operation completes
-**Then** the consumer receives a single merged list of outbound events from both ingest calls — chain creation events followed by mark creation events — not two separate response batches
+**Then** the consumer receives a single merged list of outbound events — chain creation events followed by mark creation events — not two separate response batches
 
-### Scenario: Annotate rejects empty chain name
-**Given** an annotate call with an empty string as chain_name
+### Scenario: Ingest rejects empty chain name
+**Given** an `ingest` call with provenance input containing an empty string as `chain_name`
 **When** the operation is invoked
 **Then** it returns an error without creating any chain or mark

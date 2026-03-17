@@ -83,7 +83,7 @@ Two of the three original bypasses have been eliminated:
 
 ### Neutral
 
-- `TextAnalysisAdapter` module file is retained (internal tests remain valid) but not re-exported
+- `TextAnalysisAdapter` module file was fully removed (not retained)
 - `router.rs` module file is retained (`classify_input` is used) but `InputRouter` struct becomes module-private
 - `cmd_analyze` now uses `IngestPipeline` — no longer a legacy bypass
 - `ProvenanceApi` is read-only — all writes go through `ProvenanceAdapter`

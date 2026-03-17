@@ -29,15 +29,15 @@ trait Enrichment: Send + Sync {
 
 *(Updated by ADR-029:)* Enrichment loop now runs at pipeline level after all adapter emissions complete, not per-emission.
 
-After each primary emission (adapter → sink → commit → events), the engine runs the enrichment loop:
+After all adapter emissions complete for an ingest call, the pipeline runs the enrichment loop once:
 
 1. Snapshot the context.
-2. Pass the current round's events and snapshot to each registered enrichment. All enrichments in a round see the same snapshot.
+2. Pass the accumulated events from adapter emissions and the snapshot to each registered enrichment. All enrichments in a round see the same snapshot.
 3. Collect all returned emissions. Commit each via the engine (same commit path as adapter emissions — contribution tracking, scale normalization, event firing all apply). The enrichment's `id()` is the adapter ID for contribution tracking.
 4. Collect the new events from step 3. These become the input events for the next round.
 5. Repeat from step 1 with the new events until all enrichments return `None` — quiescence.
 
-Events are per-round, not accumulated: round N sees only events from round N-1 (or from the primary emission, for round 0). This prevents enrichments from re-processing events they've already seen.
+Events are per-round, not accumulated: round N sees only events from round N-1 (or from the adapter emissions, for round 0). This prevents enrichments from re-processing events they've already seen.
 
 ### Registration
 
@@ -51,7 +51,7 @@ The enrichment loop terminates via idempotency. Each enrichment checks context s
 
 ### Safety valve
 
-The enrichment loop enforces a maximum round count (default: 10). If quiescence is not reached within the limit, the loop aborts and logs a warning. This prevents a buggy enrichment from causing an infinite loop. The limit is configurable but its existence is a framework guarantee. The limit is currently hardcoded at 10 in `EnrichmentRegistry::new()`. No public API exposes configuration.
+The enrichment loop enforces a maximum round count (default: 10). If quiescence is not reached within the limit, the loop aborts and logs a warning. This prevents a buggy enrichment from causing an infinite loop. The limit is configurable — `with_max_rounds()` is a public method on `EnrichmentRegistry`.
 
 ### Migration
 
@@ -70,9 +70,9 @@ The enrichment loop enforces a maximum round count (default: 10). If quiescence 
 
 **Negative:**
 
-- Enrichments run after every emission, not on a schedule. For expensive enrichments (full co-occurrence scan), this could be wasteful during burst ingestion. Mitigated by self-selection: the enrichment checks events for relevance before doing expensive work.
+- Enrichments run once per ingest call (after all adapter emissions), not on a schedule. For expensive enrichments (full co-occurrence scan), this could be wasteful during burst ingestion. Mitigated by self-selection: the enrichment checks events for relevance before doing expensive work.
 - No structural enforcement of constraints (ProposalSink is removed). An enrichment could emit any relationship type. Mitigated by enrichments being framework-level code, not user-provided plugins.
 
 **Neutral:**
 
-- The enrichment loop adds latency to each `emit()` call. For the current enrichments (tag bridging, co-occurrence), the cost is small — context snapshot + a few edge checks. If enrichments become expensive, batching or async enrichment can be added without changing the trait.
+- The enrichment loop adds latency to each ingest call. For the current enrichments (tag bridging, co-occurrence), the cost is small — context snapshot + a few edge checks. If enrichments become expensive, batching or async enrichment can be added without changing the trait.

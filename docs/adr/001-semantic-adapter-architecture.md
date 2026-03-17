@@ -48,7 +48,7 @@ Adapters receive an `AdapterSink` and `await sink.emit()` whenever they have res
 
 ### 3. Two trigger modes
 
-Input-triggered adapters run when matching input arrives (`schedule() = None`). Scheduled adapters run on timer, mutation threshold, or graph condition (`schedule() = Some(Schedule)`). Both use the same `process(input, sink, cancel)` interface.
+Input-triggered adapters run when matching input arrives (`schedule() = None`). Scheduled adapters run on timer, mutation threshold, or graph condition (`schedule() = Some(Schedule)`). Both use the same `process(input, sink, cancel)` interface. *(Not implemented. Reactive enrichments (ADR-010) superseded the scheduled adapter concept.)*
 
 **Alternatives considered:**
 
@@ -175,7 +175,7 @@ Adapters are independent — they don't know about each other. Enrichments depen
 
 ### Needs spike (blocks adapter implementation)
 
-1. **Reinforcement mechanics.** What happens to `edge.weight` when a second adapter emits an edge that already exists? When a reflexive adapter confirms a `may_be_related` edge? When the same adapter re-emits an edge on re-processing? The documents describe Hebbian reinforcement as a property of the system but never define the operation. This blocks adapter development — you can't write an adapter that emits edges without knowing the contract. Candidates to explore in a spike: additive increment, multiplicative boost, source-diversity-weighted increment, or some combination. The spike should also clarify whether reinforcement is the sink's responsibility (implicit on duplicate edge) or an explicit adapter action.
+1. **Reinforcement mechanics.** What happens to `edge.weight` when a second adapter emits an edge that already exists? When a reflexive adapter confirms a `may_be_related` edge? When the same adapter re-emits an edge on re-processing? The documents describe Hebbian reinforcement as a property of the system but never define the operation. This blocks adapter development — you can't write an adapter that emits edges without knowing the contract. Candidates to explore in a spike: additive increment, multiplicative boost, source-diversity-weighted increment, or some combination. The spike should also clarify whether reinforcement is the sink's responsibility (implicit on duplicate edge) or an explicit adapter action. *(Resolved by ADR-003.)*
 
 ### Deferred to future ADRs or implementation discovery
 

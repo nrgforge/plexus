@@ -32,7 +32,7 @@ Introduce a `PlexusApi` struct that is the single entry point for all consumer-f
 - `get_chain(context_id, chain_id) -> (ChainView, Vec<MarkView>)`
 - `list_marks(context_id, filters) -> Vec<MarkView>`
 - `list_tags(context_id) -> Vec<String>` (Note: ADR-012 listed `list_tags()` without a context parameter. This ADR scopes it to a context, consistent with all other API operations and with the existing `ProvenanceApi.list_tags()` implementation, which is already context-scoped. Domain model invariant 28 has been updated to match.)
-- `get_links(context_id, mark_id) -> (Vec<MarkView>, Vec<MarkView>)`
+- `get_links(context_id, mark_id) -> (Vec<MarkView>, Vec<MarkView>)` *(Updated: now returns full MarkView structs instead of string IDs.)*
 
 **Graph reads:**
 - `evidence_trail(context_id, node_id) -> EvidenceTrailResult` (ADR-013)

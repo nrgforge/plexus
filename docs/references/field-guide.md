@@ -12,24 +12,24 @@ This guide maps the system design's modules to their current implementation stat
 ## Module: graph
 
 **Implementation state:** Complete
-**Code location:** `src/graph/` (7 files, ~2070 lines)
+**Code location:** `src/graph/` (7 files, ~2270 lines)
 **Stability:** Settled
 
 ### Domain Concepts in Code
 
 | Concept | Code Manifestation | Location |
 |---------|-------------------|----------|
-| Node | `pub struct Node` | `src/graph/node.rs:60` |
-| NodeId | `pub struct NodeId(String)` | `src/graph/node.rs:7` |
+| Node | `pub struct Node` | `src/graph/node.rs:149` |
+| NodeId | `pub struct NodeId(String)` | `src/graph/node.rs:36` |
 | Edge | `pub struct Edge` | `src/graph/edge.rs` |
 | EdgeId | `pub struct EdgeId(String)` | `src/graph/edge.rs` |
 | AdapterId | `pub type AdapterId = String` | `src/graph/edge.rs` |
 | Context | `pub struct Context` | `src/graph/context.rs` |
 | ContextId | `pub struct ContextId(String)` | `src/graph/context.rs` |
 | PlexusEngine | `pub struct PlexusEngine` | `src/graph/engine.rs` |
-| GraphEvent | `pub(crate) enum GraphEvent` | `src/graph/events.rs` |
+| GraphEvent | `pub enum GraphEvent` | `src/graph/events.rs` |
 | ContentType | `pub enum ContentType` | `src/graph/node.rs` |
-| Dimension | `pub mod dimension` (constants) | `src/graph/node.rs:12` |
+| Dimension | `pub mod dimension` (constants) | `src/graph/node.rs:11` |
 | Source | `pub enum Source` | `src/graph/context.rs` |
 | PropertyValue | `pub enum PropertyValue` | `src/graph/node.rs` |
 | Scale normalization | `Context::recompute_combined_weights()` | `src/graph/context.rs` |
@@ -51,7 +51,7 @@ All submodules are private; everything surfaces via `mod.rs`. This is the codeba
 ## Module: adapter/sink
 
 **Implementation state:** Complete
-**Code location:** `src/adapter/sink/` (3 files: `contract.rs`, `engine_sink.rs`, `provenance.rs`)
+**Code location:** `src/adapter/sink/` (4 files: `mod.rs`, `contract.rs`, `engine_sink.rs`, `provenance.rs`)
 **Stability:** Settled
 
 ### Domain Concepts in Code
@@ -81,7 +81,7 @@ The emission contract is separated from the pipeline and from adapters so that a
 ## Module: adapter/enrichment
 
 **Implementation state:** Complete
-**Code location:** `src/adapter/enrichment/` (2 files: `traits.rs`, `enrichment_loop.rs`)
+**Code location:** `src/adapter/enrichment/` (3 files: `mod.rs`, `traits.rs`, `enrichment_loop.rs`)
 **Stability:** Settled
 
 ### Domain Concepts in Code
@@ -109,7 +109,7 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 ## Module: adapter/pipeline
 
 **Implementation state:** Complete
-**Code location:** `src/adapter/pipeline/` (3 files: `builder.rs`, `ingest.rs`, `router.rs`)
+**Code location:** `src/adapter/pipeline/` (4 files: `mod.rs`, `builder.rs`, `ingest.rs`, `router.rs`)
 **Stability:** Settled
 
 ### Domain Concepts in Code
@@ -140,7 +140,7 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 ## Module: adapter/adapters
 
 **Implementation state:** Complete
-**Code location:** `src/adapter/adapters/` (6 files)
+**Code location:** `src/adapter/adapters/` (7 files)
 **Stability:** Settled (Rust-native adapters) / In flux (SemanticAdapter convergence question)
 
 ### Domain Concepts in Code
@@ -169,7 +169,7 @@ Adapters fall into three categories: Rust-native (ContentAdapter, ExtractionCoor
 ## Module: adapter/enrichments
 
 **Implementation state:** Complete
-**Code location:** `src/adapter/enrichments/` (4 files)
+**Code location:** `src/adapter/enrichments/` (5 files)
 **Stability:** Settled
 
 ### Domain Concepts in Code
@@ -282,7 +282,7 @@ Provenance reads are separated from writes. `ProvenanceApi` is read-only — all
 ## Module: api
 
 **Implementation state:** Complete
-**Code location:** `src/api.rs` (single file, ~1165 lines)
+**Code location:** `src/api.rs` (single file, ~1139 lines)
 **Stability:** Settled
 
 ### Domain Concepts in Code
@@ -334,15 +334,15 @@ MCP is a thin transport shell (Invariant 38). It delegates all logic to `PlexusA
 ## Module: llm_orc
 
 **Implementation state:** Complete
-**Code location:** `src/llm_orc/` (client module)
+**Code location:** `src/llm_orc.rs` (single file)
 **Stability:** Settled
 
 ### Domain Concepts in Code
 
 | Concept | Code Manifestation | Location |
 |---------|-------------------|----------|
-| LlmOrcClient | `pub trait LlmOrcClient` | `src/llm_orc/` |
-| SubprocessClient | `pub struct SubprocessClient` | `src/llm_orc/` |
+| LlmOrcClient | `pub trait LlmOrcClient` | `src/llm_orc.rs` |
+| SubprocessClient | `pub struct SubprocessClient` | `src/llm_orc.rs` |
 
 ### Design Rationale
 
