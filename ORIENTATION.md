@@ -32,6 +32,7 @@ docs/
 ├── product-discovery.md ← stakeholder map, jobs, value tensions
 ├── decisions/          ← 30 architecture decision records (000-029)
 ├── essays/             ← 26 research essays
+│   └── research-logs/  ← per-essay research process logs (21 logs)
 ├── papers/             ← publication drafts (plexus-design, semantic-extraction)
 ├── schemas/            ← JSON schemas (phase2-output, phase3-result, graph-export, analysis-result)
 ├── references/
