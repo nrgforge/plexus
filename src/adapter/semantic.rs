@@ -1384,7 +1384,7 @@ mod tests {
 
         // Run enrichment loop with accumulated events
         let primary_events = sink.drain_events();
-        crate::adapter::enrichment_loop::run_enrichment_loop(
+        crate::adapter::run_enrichment_loop(
             &engine, &context_id, &registry, &primary_events,
         ).unwrap();
 

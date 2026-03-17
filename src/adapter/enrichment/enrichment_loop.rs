@@ -4,8 +4,8 @@
 //! the loop imports from both `engine_sink` (for `emit_inner`) and
 //! `enrichment` (for `EnrichmentRegistry`).
 
-use super::sink::{EngineSink, FrameworkContext, AdapterError, EmitResult};
-use super::enrichment::EnrichmentRegistry;
+use crate::adapter::sink::{EngineSink, FrameworkContext, AdapterError, EmitResult};
+use super::traits::EnrichmentRegistry;
 use crate::graph::events::GraphEvent;
 use crate::graph::{ContextId, PlexusEngine};
 
@@ -44,7 +44,7 @@ pub(crate) fn run_enrichment_loop(
             .ok_or_else(|| AdapterError::ContextNotFound(context_id.to_string()))?;
 
         // Run all enrichments with the same snapshot
-        let mut round_emissions: Vec<(String, super::types::Emission)> = Vec::new();
+        let mut round_emissions: Vec<(String, crate::adapter::types::Emission)> = Vec::new();
         for enrichment in registry.enrichments() {
             if let Some(emission) = enrichment.enrich(&round_events, &snapshot) {
                 round_emissions.push((enrichment.id().to_string(), emission));

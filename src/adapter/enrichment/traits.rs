@@ -6,7 +6,7 @@
 //! consumer's domain and the graph.
 
 use crate::graph::events::GraphEvent;
-use super::types::Emission;
+use crate::adapter::types::Emission;
 use crate::graph::Context;
 use std::collections::HashSet;
 use std::sync::Arc;
