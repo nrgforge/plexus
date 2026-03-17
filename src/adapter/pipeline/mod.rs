@@ -3,8 +3,10 @@
 //!
 //! All graph writes go through `IngestPipeline::ingest()` (Invariant 34).
 
+mod builder;
 mod ingest;
 mod router;
 
+pub use builder::PipelineBuilder;
 pub use ingest::IngestPipeline;
 pub use router::{classify_input, ClassifyError};

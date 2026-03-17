@@ -11,15 +11,7 @@ pub mod params;
 
 use params::*;
 use crate::api::PlexusApi;
-use crate::adapter::{
-    CoOccurrenceEnrichment, ContentAdapter, DiscoveryGapEnrichment,
-    Enrichment, ExtractionCoordinator, IngestPipeline,
-    ProvenanceAdapter, TagConceptBridger, TemporalProximityEnrichment,
-    classify_input,
-};
-use crate::llm_orc::SubprocessClient;
-#[cfg(feature = "embeddings")]
-use crate::adapter::{EmbeddingSimilarityEnrichment, FastEmbedEmbedder};
+use crate::adapter::{PipelineBuilder, classify_input};
 use crate::graph::Source;
 use crate::{OpenStore, PlexusEngine, SqliteStore};
 use rmcp::{
@@ -63,52 +55,7 @@ impl PlexusMcpServer {
         engine: Arc<PlexusEngine>,
         project_dir: Option<&std::path::Path>,
     ) -> Self {
-        let mut pipeline = IngestPipeline::new(engine.clone());
-
-        // Core adapters (ADR-028)
-        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
-        pipeline.register_adapter(Arc::new(ExtractionCoordinator::new()));
-
-        // Core enrichments
-        #[allow(unused_mut)]
-        let mut enrichments: Vec<Arc<dyn Enrichment>> = vec![
-            Arc::new(TagConceptBridger::new()),
-            Arc::new(CoOccurrenceEnrichment::new()),
-            Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap")),
-            Arc::new(TemporalProximityEnrichment::new("created_at", 86_400_000, "temporal_proximity")), // 24 hours in ms
-        ];
-
-        #[cfg(feature = "embeddings")]
-        {
-            if let Ok(embedder) = FastEmbedEmbedder::default_model() {
-                enrichments.push(Arc::new(EmbeddingSimilarityEnrichment::new(
-                    "nomic-embed-text-v1.5",
-                    0.7,
-                    "similar_to",
-                    Box::new(embedder),
-                )));
-            }
-        }
-
-        pipeline.register_integration(
-            Arc::new(ProvenanceAdapter::new()),
-            enrichments,
-        );
-
-        // Load adapter specs from adapter-specs/ directory (ADR-028)
-        if let Some(dir) = project_dir {
-            let specs_dir = dir.join("adapter-specs");
-            if specs_dir.is_dir() {
-                let client: Arc<dyn crate::llm_orc::LlmOrcClient> = Arc::new(
-                    SubprocessClient::new()
-                        .with_project_dir(dir.to_string_lossy().to_string()),
-                );
-                let n = pipeline.register_specs_from_dir(&specs_dir, Some(client));
-                if n > 0 {
-                    tracing::info!(count = n, "adapter-specs: loaded spec(s)");
-                }
-            }
-        }
+        let pipeline = PipelineBuilder::default_pipeline(engine.clone(), project_dir);
 
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
