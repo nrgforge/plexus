@@ -12,8 +12,8 @@
 //! Phase 3 — Semantic (slow, background, LLM):
 //!   Abstract concept extraction via llm-orc (ADR-021)
 
-use crate::adapter::engine_sink::EngineSink;
-use crate::adapter::provenance::FrameworkContext;
+use crate::adapter::EngineSink;
+use crate::adapter::FrameworkContext;
 use crate::adapter::semantic::SemanticInput;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
@@ -565,8 +565,8 @@ impl Adapter for ExtractionCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::engine_sink::EngineSink;
-    use crate::adapter::provenance::FrameworkContext;
+    use crate::adapter::EngineSink;
+    use crate::adapter::FrameworkContext;
     use crate::graph::Context;
     use std::io::Write;
     use std::sync::{Arc, Mutex};

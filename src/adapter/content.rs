@@ -373,8 +373,8 @@ pub fn normalize_chain_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::engine_sink::EngineSink;
-    use crate::adapter::provenance::FrameworkContext;
+    use crate::adapter::EngineSink;
+    use crate::adapter::FrameworkContext;
     use crate::graph::{dimension, Context};
     use std::sync::{Arc, Mutex};
 

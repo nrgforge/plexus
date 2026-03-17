@@ -9,7 +9,6 @@ pub mod declarative;
 pub mod discovery_gap;
 pub mod embedding;
 pub mod temporal_proximity;
-mod engine_sink;
 mod enrichment;
 mod enrichment_loop;
 pub mod extraction;
@@ -18,7 +17,6 @@ pub mod graph_analysis;
 mod ingest;
 #[cfg(test)]
 mod integration_tests;
-mod provenance;
 pub mod provenance_adapter;
 mod router;
 pub mod semantic;
@@ -28,11 +26,10 @@ mod traits;
 mod types;
 
 pub use cancel::CancellationToken;
-pub use engine_sink::EngineSink;
+pub use sink::{EngineSink, FrameworkContext, ProvenanceEntry};
 pub(crate) use enrichment_loop::run_enrichment_loop;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use crate::graph::events::GraphEvent;
-pub use provenance::{FrameworkContext, ProvenanceEntry};
 pub use router::{classify_input, ClassifyError};
 pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};

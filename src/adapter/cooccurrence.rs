@@ -160,9 +160,9 @@ fn output_edge_exists(context: &Context, source: &NodeId, target: &NodeId, relat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::engine_sink::EngineSink;
+    use crate::adapter::EngineSink;
     use crate::adapter::content::{ContentAdapter, FragmentInput};
-    use crate::adapter::provenance::FrameworkContext;
+    use crate::adapter::FrameworkContext;
     use crate::adapter::traits::{Adapter, AdapterInput};
     use crate::graph::{EdgeId, Node};
     use std::sync::{Arc, Mutex};

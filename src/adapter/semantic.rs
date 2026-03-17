@@ -680,8 +680,8 @@ impl SemanticAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::engine_sink::EngineSink;
-    use crate::adapter::provenance::FrameworkContext;
+    use crate::adapter::EngineSink;
+    use crate::adapter::FrameworkContext;
     use crate::llm_orc::MockClient;
     use std::sync::{Mutex};
 
@@ -1368,7 +1368,7 @@ mod tests {
             Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
         ]));
         let sink = EngineSink::for_engine(engine.clone(), context_id.clone())
-            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+            .with_framework_context(crate::adapter::FrameworkContext {
                 adapter_id: "extract-semantic".to_string(),
                 context_id: "test".to_string(),
                 input_summary: None,

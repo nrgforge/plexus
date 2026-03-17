@@ -267,8 +267,8 @@ pub async fn run_analysis(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::engine_sink::EngineSink;
-    use crate::adapter::provenance::FrameworkContext;
+    use crate::adapter::EngineSink;
+    use crate::adapter::FrameworkContext;
     use crate::graph::{ContentType, Context, Edge, Node, NodeId, PropertyValue};
     use crate::llm_orc::{MockClient, InvokeResponse, AgentResult};
     use std::collections::HashMap;

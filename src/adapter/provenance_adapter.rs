@@ -277,8 +277,8 @@ impl Adapter for ProvenanceAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::engine_sink::EngineSink;
-    use crate::adapter::provenance::FrameworkContext;
+    use crate::adapter::EngineSink;
+    use crate::adapter::FrameworkContext;
     use crate::graph::Context;
     use std::sync::{Arc, Mutex};
 

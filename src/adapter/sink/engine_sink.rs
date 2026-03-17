@@ -19,8 +19,8 @@
 
 use crate::graph::events::GraphEvent;
 use super::provenance::{FrameworkContext, ProvenanceEntry};
-use super::sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
-use super::types::{AnnotatedEdge, AnnotatedNode, Emission};
+use super::contract::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
+use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission};
 use crate::graph::{Context, ContextId, EdgeId, NodeId, PlexusEngine};
 use async_trait::async_trait;
 use chrono::Utc;

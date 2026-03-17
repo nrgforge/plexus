@@ -9,11 +9,9 @@
 //! 4. Each adapter transforms all accumulated events → outbound events
 //! 5. Return merged outbound events
 
-use super::engine_sink::EngineSink;
+use super::sink::{EngineSink, FrameworkContext, AdapterError};
 use super::enrichment::{Enrichment, EnrichmentRegistry};
 use crate::graph::events::GraphEvent;
-use super::provenance::FrameworkContext;
-use super::sink::AdapterError;
 use super::traits::{Adapter, AdapterInput};
 use super::types::OutboundEvent;
 use crate::graph::{ContextId, PlexusEngine};

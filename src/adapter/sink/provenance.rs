@@ -3,7 +3,7 @@
 //! The engine constructs ProvenanceEntry records by combining adapter-provided
 //! annotations with framework context. Adapters never build these directly.
 
-use super::types::Annotation;
+use crate::adapter::types::Annotation;
 use chrono::{DateTime, Utc};
 
 /// Framework context attached to every emission.

@@ -4,10 +4,8 @@
 //! the loop imports from both `engine_sink` (for `emit_inner`) and
 //! `enrichment` (for `EnrichmentRegistry`).
 
-use super::engine_sink::EngineSink;
+use super::sink::{EngineSink, FrameworkContext, AdapterError, EmitResult};
 use super::enrichment::EnrichmentRegistry;
-use super::provenance::FrameworkContext;
-use super::sink::{AdapterError, EmitResult};
 use crate::graph::events::GraphEvent;
 use crate::graph::{ContextId, PlexusEngine};
 

@@ -1003,8 +1003,8 @@ fn interpret_update_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::engine_sink::EngineSink;
-    use crate::adapter::provenance::FrameworkContext;
+    use crate::adapter::EngineSink;
+    use crate::adapter::FrameworkContext;
     use crate::graph::Context;
     use std::sync::{Arc, Mutex};
 
@@ -1751,8 +1751,8 @@ emit:
 
         let adapter = DeclarativeAdapter::new(spec).unwrap().with_llm_client(client);
         let ctx = Arc::new(std::sync::Mutex::new(crate::graph::Context::new("test")));
-        let sink = crate::adapter::engine_sink::EngineSink::new(ctx.clone())
-            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+        let sink = crate::adapter::EngineSink::new(ctx.clone())
+            .with_framework_context(crate::adapter::FrameworkContext {
                 adapter_id: "test-declarative".to_string(),
                 context_id: "test".to_string(),
                 input_summary: None,
@@ -1810,8 +1810,8 @@ emit:
 
         let adapter = DeclarativeAdapter::new(spec).unwrap().with_llm_client(client);
         let ctx = Arc::new(std::sync::Mutex::new(crate::graph::Context::new("test")));
-        let sink = crate::adapter::engine_sink::EngineSink::new(ctx.clone())
-            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+        let sink = crate::adapter::EngineSink::new(ctx.clone())
+            .with_framework_context(crate::adapter::FrameworkContext {
                 adapter_id: "test-ensemble-access".to_string(),
                 context_id: "test".to_string(),
                 input_summary: None,
@@ -1846,8 +1846,8 @@ emit:
 
         let adapter = DeclarativeAdapter::new(spec).unwrap().with_llm_client(client);
         let ctx = Arc::new(std::sync::Mutex::new(crate::graph::Context::new("test")));
-        let sink = crate::adapter::engine_sink::EngineSink::new(ctx.clone())
-            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+        let sink = crate::adapter::EngineSink::new(ctx.clone())
+            .with_framework_context(crate::adapter::FrameworkContext {
                 adapter_id: "test-declarative".to_string(),
                 context_id: "test".to_string(),
                 input_summary: None,
@@ -1893,8 +1893,8 @@ emit:
 
         let adapter = DeclarativeAdapter::new(spec).unwrap();
         let ctx = Arc::new(std::sync::Mutex::new(crate::graph::Context::new("test")));
-        let sink = crate::adapter::engine_sink::EngineSink::new(ctx.clone())
-            .with_framework_context(crate::adapter::provenance::FrameworkContext {
+        let sink = crate::adapter::EngineSink::new(ctx.clone())
+            .with_framework_context(crate::adapter::FrameworkContext {
                 adapter_id: "no-ensemble".to_string(),
                 context_id: "test".to_string(),
                 input_summary: None,
@@ -1959,10 +1959,10 @@ emit:
         ctx.id = context_id.clone();
         engine.upsert_context(ctx).unwrap();
 
-        let sink = crate::adapter::engine_sink::EngineSink::for_engine(
+        let sink = crate::adapter::EngineSink::for_engine(
             engine.clone(),
             context_id.clone(),
-        ).with_framework_context(crate::adapter::provenance::FrameworkContext {
+        ).with_framework_context(crate::adapter::FrameworkContext {
             adapter_id: "ensemble-integration".to_string(),
             context_id: "test".to_string(),
             input_summary: None,

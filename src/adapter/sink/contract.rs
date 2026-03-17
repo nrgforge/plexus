@@ -5,7 +5,7 @@
 
 use crate::graph::events::GraphEvent;
 use super::provenance::ProvenanceEntry;
-use super::types::Emission;
+use crate::adapter::types::Emission;
 use crate::graph::NodeId;
 use async_trait::async_trait;
 use thiserror::Error;
