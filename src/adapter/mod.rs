@@ -2,27 +2,32 @@
 //!
 //! Implements ADR-001: adapters transform domain-specific input into graph
 //! mutations via sink-based progressive emission.
+//!
+//! Submodule structure (system design v1.0):
+//! - sink/       — emission contract (AdapterSink, EngineSink, provenance)
+//! - enrichment/ — enrichment contract and loop
+//! - pipeline/   — ingest pipeline, input routing
+//! - adapters/   — domain adapter implementations
+//! - enrichments/— core enrichment implementations
+//! - types, traits, cancel — shared types at module root
 
 mod cancel;
-pub mod cooccurrence;
-pub mod declarative;
-pub mod discovery_gap;
-pub mod embedding;
-pub mod temporal_proximity;
 mod enrichment;
-pub mod extraction;
-pub mod content;
-pub mod graph_analysis;
 #[cfg(test)]
 mod integration_tests;
 mod pipeline;
-pub mod provenance_adapter;
-pub mod semantic;
 mod sink;
-mod tag_bridger;
 mod traits;
 mod types;
 
+mod adapters;
+pub mod cooccurrence;
+pub mod discovery_gap;
+pub mod embedding;
+pub mod temporal_proximity;
+mod tag_bridger;
+
+// Re-exports: public API unchanged
 pub use cancel::CancellationToken;
 pub use sink::{EngineSink, FrameworkContext, ProvenanceEntry};
 pub(crate) use enrichment::run_enrichment_loop;
@@ -35,15 +40,27 @@ pub use types::{
     Annotation, AnnotatedEdge, AnnotatedNode, EdgeRemoval, Emission, OutboundEvent,
     PropertyUpdate, Removal, chain_node, concept_node, file_node, mark_node,
 };
-pub use cooccurrence::CoOccurrenceEnrichment;
+
+// Adapter submodule re-exports (preserve crate::adapter::content::* paths)
+pub use adapters::content;
+pub use adapters::declarative;
+pub use adapters::extraction;
+pub use adapters::graph_analysis;
+pub use adapters::provenance_adapter;
+pub use adapters::semantic;
+
+// Flat type re-exports for convenience
+pub use content::{ContentAdapter, FragmentInput, normalize_chain_name};
 pub use declarative::DeclarativeAdapter;
+pub use extraction::ExtractionCoordinator;
+pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};
+pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
+
+// Enrichment re-exports
+pub use cooccurrence::CoOccurrenceEnrichment;
 pub use discovery_gap::DiscoveryGapEnrichment;
 pub use embedding::{Embedder, EmbeddingError, EmbeddingSimilarityEnrichment, InMemoryVectorStore, VectorStore};
 #[cfg(feature = "embeddings")]
 pub use embedding::FastEmbedEmbedder;
 pub use temporal_proximity::TemporalProximityEnrichment;
-pub use extraction::ExtractionCoordinator;
-pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};
-pub use content::{ContentAdapter, FragmentInput, normalize_chain_name};
-pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 pub use tag_bridger::TagConceptBridger;
