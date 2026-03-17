@@ -178,8 +178,8 @@ impl Context {
     /// Merges contribution slots on exact duplicates but does **not** recompute
     /// combined weights — callers adding edges in a batch should call
     /// [`recompute_combined_weights()`](Self::recompute_combined_weights) once after the batch.
-    /// `PlexusEngine::add_edge()`, `apply_mutation()`, and `EngineSink::emit_inner`
-    /// all fulfill this obligation automatically.
+    /// `PlexusEngine::add_edge()` and `EngineSink::emit_inner`
+    /// both fulfill this obligation automatically.
     ///
     /// # Deduplication strategy
     ///
