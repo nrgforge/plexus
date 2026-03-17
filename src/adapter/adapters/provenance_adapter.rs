@@ -103,6 +103,9 @@ impl Adapter for ProvenanceAdapter {
                 name,
                 description,
             } => {
+                if name.trim().is_empty() {
+                    return Err(AdapterError::Internal("chain name must not be empty".into()));
+                }
                 let mut node = crate::adapter::chain_node(chain_id);
                 node.properties
                     .insert("name".to_string(), PropertyValue::String(name.clone()));

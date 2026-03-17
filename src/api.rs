@@ -112,7 +112,7 @@ impl PlexusApi {
         &self,
         context_id: &str,
         mark_id: &str,
-    ) -> PlexusResult<(Vec<String>, Vec<String>)> {
+    ) -> PlexusResult<(Vec<crate::provenance::MarkView>, Vec<crate::provenance::MarkView>)> {
         self.prov(context_id)?.get_links(mark_id)
     }
 

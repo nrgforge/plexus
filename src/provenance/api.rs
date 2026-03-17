@@ -128,7 +128,7 @@ impl<'a> ProvenanceApi<'a> {
     // === Link operations ===
 
     /// Get incoming and outgoing links for a mark.
-    pub fn get_links(&self, mark_id: &str) -> PlexusResult<(Vec<String>, Vec<String>)> {
+    pub fn get_links(&self, mark_id: &str) -> PlexusResult<(Vec<MarkView>, Vec<MarkView>)> {
         let context = self.engine.get_context(&self.context_id)
             .ok_or_else(|| PlexusError::ContextNotFound(self.context_id.clone()))?;
 
@@ -137,14 +137,16 @@ impl<'a> ProvenanceApi<'a> {
             return Err(PlexusError::NodeNotFound(mark_id.into()));
         }
 
-        let outgoing: Vec<String> = context.edges()
+        let outgoing: Vec<MarkView> = context.edges()
             .filter(|e| e.source == node_id && e.relationship == "links_to")
-            .map(|e| e.target.to_string())
+            .filter_map(|e| context.get_node(&e.target))
+            .map(|n| node_to_mark_view(n, &context))
             .collect();
 
-        let incoming: Vec<String> = context.edges()
+        let incoming: Vec<MarkView> = context.edges()
             .filter(|e| e.target == node_id && e.relationship == "links_to")
-            .map(|e| e.source.to_string())
+            .filter_map(|e| context.get_node(&e.source))
+            .map(|n| node_to_mark_view(n, &context))
             .collect();
 
         Ok((outgoing, incoming))
