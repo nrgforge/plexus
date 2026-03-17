@@ -27,7 +27,7 @@
 **Purpose:** Core graph primitives — nodes, edges, contexts, events, dimensions, and the engine that manages them.
 **Provenance:** Invariants 1–4 (emission rules), 8–12 (weight rules), 30 (persist-per-emission); ADR-003, ADR-006
 **Owns:** Node, Edge, Context, ContextId, ContextMetadata, PlexusEngine, GraphEvent, ContentType, dimension (module of &str constants in node.rs), Source, PropertyValue, NodeId, EdgeId
-**Depends on:** storage (for persistence)
+**Depends on:** storage (for persistence), query (PlexusEngine delegates find_nodes/traverse/find_path)
 **Depended on by:** adapter/sink, adapter/pipeline, query, provenance, api
 
 ### Module: adapter/sink
@@ -130,7 +130,7 @@ The key architectural insight: when DeclarativeAdapter was introduced (ADR-028),
 **Purpose:** MCP transport — thin shell that forwards requests to PlexusApi.
 **Provenance:** Invariant 38 (transports are thin shells); ADR-028
 **Owns:** PlexusMcpServer, MCP tool handlers, MCP params
-**Depends on:** api (pipeline is constructed via `PipelineBuilder::default_pipeline()` in the binary entry point and passed in — divergence resolved)
+**Depends on:** api, adapter (PipelineBuilder, classify_input), graph (Source), storage (OpenStore, SqliteStore — initialization)
 **Depended on by:** (binary entry point)
 
 ### Module: llm_orc
@@ -415,6 +415,9 @@ flowchart TD
     llm_orc_mod["llm_orc<br>(subprocess client)"]
 
     mcp_mod --> api_mod
+    mcp_mod --> pipeline_mod
+    mcp_mod --> graph_mod
+    mcp_mod --> storage_mod
     api_mod --> pipeline_mod
     api_mod --> query_mod
     api_mod --> prov_mod
@@ -446,6 +449,7 @@ flowchart TD
     query_mod --> graph_mod
     prov_mod --> graph_mod
 
+    graph_mod --> query_mod
     graph_mod <-->|"trait abstraction<br>(GraphStore)"| storage_mod
 
     adapters_mod -.->|"registered at<br>construction"| pipeline_mod
@@ -453,14 +457,11 @@ flowchart TD
 ```
 
 **Layering rules:**
-1. **Inner → Outer prohibited:** graph never imports adapter, query, provenance, api, or mcp
+1. **Inner → Outer prohibited:** graph never imports adapter, provenance, api, or mcp. Exception: graph imports query (PlexusEngine provides find/traverse/path as facade methods).
 2. **Sibling isolation:** adapter/adapters and adapter/enrichments never import each other
-3. **Transport thin shell:** mcp imports only api (pipeline is constructed via PipelineBuilder in the binary entry point — divergence resolved)
+3. **Transport wiring shell:** mcp imports api for routing, adapter for pipeline construction (PipelineBuilder, classify_input), and graph/storage for initialization. Pipeline construction happens inside mcp's `with_project_dir()`.
 4. **Query is read-only:** query never imports adapter or storage
 5. **Enrichment contract is separate from adapter contract:** adapter/enrichment does not import adapter/traits
-
-**Previously known divergence (resolved):**
-- mcp previously constructed IngestPipeline directly. Fixed: `PipelineBuilder::default_pipeline()` is implemented in adapter/pipeline and called from the binary entry point; the built pipeline is passed to both api and mcp.
 
 **Circular dependency (graph ↔ storage):**
 - graph::PlexusEngine holds `Option<Arc<dyn GraphStore>>`. GraphStore's methods accept `&Context`, `&ContextId`. Both types are defined in graph.

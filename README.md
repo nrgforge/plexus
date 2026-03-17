@@ -45,8 +45,6 @@ engine.add_source(&ctx_id, Source::Directory {
 }).unwrap();
 ```
 
-See the [Integration Guide](docs/integration-guide.md) for adapter pipeline usage and custom adapter development.
-
 ### As an MCP server
 
 ```bash
@@ -126,8 +124,6 @@ plexus/
 ## Research
 
 See [`docs/essays/`](docs/essays/) for research essays and [`docs/decisions/`](docs/decisions/) for architectural decisions.
-
-See the [Integration Guide](docs/integration-guide.md) for adapter pipeline architecture, writing custom adapters, and application integration patterns.
 
 ## License
 

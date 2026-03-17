@@ -30,9 +30,10 @@ docs/
 ├── scenarios.md        ← behavior scenarios (Given/When/Then)
 ├── roadmap.md          ← work packages, dependencies, transition states
 ├── product-discovery.md ← stakeholder map, jobs, value tensions
-├── adr/                ← 30 architecture decision records (000-029)
+├── decisions/          ← 30 architecture decision records (000-029)
 ├── essays/             ← 26 research essays
 ├── papers/             ← publication drafts (plexus-design, semantic-extraction)
+├── schemas/            ← JSON schemas (phase2-output, phase3-result, graph-export, analysis-result)
 ├── references/
 │   ├── field-guide.md  ← module-to-code mapping, design rationale
 │   ├── experiment-data/ ← raw evidence trail for paper claims

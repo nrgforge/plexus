@@ -90,7 +90,7 @@ The emission contract is separated from the pipeline and from adapters so that a
 |---------|-------------------|----------|
 | Enrichment | `pub trait Enrichment` | `src/adapter/enrichment/traits.rs` |
 | EnrichmentRegistry | `pub struct EnrichmentRegistry` | `src/adapter/enrichment/traits.rs` |
-| run_enrichment_loop | `pub(crate) async fn run_enrichment_loop()` | `src/adapter/enrichment/enrichment_loop.rs` |
+| run_enrichment_loop | `pub(crate) fn run_enrichment_loop()` | `src/adapter/enrichment/enrichment_loop.rs` |
 | Quiescence | `EnrichmentLoopResult { rounds, quiesced }` | `src/adapter/enrichment/enrichment_loop.rs` |
 | max_rounds | `DEFAULT_MAX_ROUNDS = 10` | `src/adapter/enrichment/traits.rs` |
 
@@ -119,7 +119,7 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 | IngestPipeline | `pub struct IngestPipeline` | `src/adapter/pipeline/ingest.rs` |
 | PipelineBuilder | `pub struct PipelineBuilder` | `src/adapter/pipeline/builder.rs` |
 | classify_input | `pub fn classify_input()` | `src/adapter/pipeline/router.rs` |
-| ClassifyError | `pub enum ClassifyError` | `src/adapter/pipeline/router.rs` |
+| ClassifyError | `pub struct ClassifyError` | `src/adapter/pipeline/router.rs` |
 | Input routing (Invariant 17) | Fan-out in `IngestPipeline::ingest()` | `src/adapter/pipeline/ingest.rs` |
 
 ### Design Rationale

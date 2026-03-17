@@ -4,7 +4,7 @@
 
 **Date:** 2026-02-02
 
-**Design documents:** [adapters.md](../design/adapters.md) (overview), [adapter-architecture.md](../design/adapter-architecture.md) (system design)
+**Design documents:** [system-design.md](../system-design.md)
 
 ---
 
