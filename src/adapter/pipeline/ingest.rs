@@ -9,11 +9,11 @@
 //! 4. Each adapter transforms all accumulated events → outbound events
 //! 5. Return merged outbound events
 
-use super::sink::{EngineSink, FrameworkContext, AdapterError};
-use super::enrichment::{Enrichment, EnrichmentRegistry};
+use crate::adapter::sink::{EngineSink, FrameworkContext, AdapterError};
+use crate::adapter::enrichment::{Enrichment, EnrichmentRegistry};
 use crate::graph::events::GraphEvent;
-use super::traits::{Adapter, AdapterInput};
-use super::types::OutboundEvent;
+use crate::adapter::traits::{Adapter, AdapterInput};
+use crate::adapter::types::OutboundEvent;
 use crate::graph::{ContextId, PlexusEngine};
 use std::path::Path;
 use std::sync::Arc;
@@ -85,7 +85,7 @@ impl IngestPipeline {
         dir: &Path,
         llm_client: Option<Arc<dyn crate::llm_orc::LlmOrcClient>>,
     ) -> usize {
-        use super::declarative::DeclarativeAdapter;
+        use crate::adapter::declarative::DeclarativeAdapter;
 
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
@@ -169,7 +169,7 @@ impl IngestPipeline {
 
         // Step 2: Enrichment loop
         if !self.enrichments.enrichments().is_empty() && !all_events.is_empty() {
-            let enrichment_result = super::enrichment::run_enrichment_loop(
+            let enrichment_result = crate::adapter::enrichment::run_enrichment_loop(
                 &self.engine,
                 &ctx_id,
                 &self.enrichments,
@@ -252,7 +252,7 @@ impl IngestPipeline {
 
         // Step 3: Enrichment loop runs once with combined events
         if !self.enrichments.enrichments().is_empty() && !all_events.is_empty() {
-            let enrichment_result = super::enrichment::run_enrichment_loop(
+            let enrichment_result = crate::adapter::enrichment::run_enrichment_loop(
                 &self.engine,
                 &ctx_id,
                 &self.enrichments,

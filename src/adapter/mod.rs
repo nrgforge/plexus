@@ -13,11 +13,10 @@ mod enrichment;
 pub mod extraction;
 pub mod content;
 pub mod graph_analysis;
-mod ingest;
 #[cfg(test)]
 mod integration_tests;
+mod pipeline;
 pub mod provenance_adapter;
-mod router;
 pub mod semantic;
 mod sink;
 mod tag_bridger;
@@ -29,7 +28,7 @@ pub use sink::{EngineSink, FrameworkContext, ProvenanceEntry};
 pub(crate) use enrichment::run_enrichment_loop;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use crate::graph::events::GraphEvent;
-pub use router::{classify_input, ClassifyError};
+pub use pipeline::{classify_input, ClassifyError, IngestPipeline};
 pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 pub use types::{
@@ -46,6 +45,5 @@ pub use temporal_proximity::TemporalProximityEnrichment;
 pub use extraction::ExtractionCoordinator;
 pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};
 pub use content::{ContentAdapter, FragmentInput, normalize_chain_name};
-pub use ingest::IngestPipeline;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 pub use tag_bridger::TagConceptBridger;

@@ -388,7 +388,7 @@ mod tests {
     // === Scenario: Full workflow from ingestion through marking to query ===
     #[tokio::test]
     async fn end_to_end_provence_travel_research() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
         use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
@@ -1202,7 +1202,7 @@ mod tests {
     // Unified Ingest Pipeline (ADR-012)
     // ================================================================
 
-    use crate::adapter::ingest::IngestPipeline;
+    use crate::adapter::IngestPipeline;
     use crate::adapter::tag_bridger::TagConceptBridger;
 
     /// Test adapter that emits concept nodes from input strings.
@@ -1949,7 +1949,7 @@ mod tests {
 
     #[tokio::test]
     async fn spike_fragment_adapter_produces_traversable_provenance() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
 
@@ -2066,7 +2066,7 @@ mod tests {
 
     #[tokio::test]
     async fn spike_multi_phase_hebbian_provenance() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::tag_bridger::TagConceptBridger;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -2238,7 +2238,7 @@ mod tests {
 
     #[tokio::test]
     async fn spike_heterogeneous_multi_consumer_real_data() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
         use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
@@ -3070,7 +3070,7 @@ mod tests {
 
     #[tokio::test]
     async fn spike_creative_writing_at_scale() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
         use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
@@ -4447,7 +4447,7 @@ mod tests {
     // === Scenario: ingest with #-prefixed tags bridges correctly ===
     #[tokio::test]
     async fn ingest_with_hash_prefixed_tags_bridges_to_concepts() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
         use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::adapter::content::normalize_chain_name;
@@ -4553,7 +4553,7 @@ mod tests {
     // === Scenario: Pipeline includes ContentAdapter and ExtractionCoordinator ===
     #[tokio::test]
     async fn pipeline_routes_content_and_extract_file() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::extraction::ExtractionCoordinator;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
         use crate::adapter::tag_bridger::TagConceptBridger;
@@ -4595,7 +4595,7 @@ mod tests {
     // === Scenario: Pipeline includes all core enrichments ===
     #[tokio::test]
     async fn pipeline_registers_all_core_enrichments() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
         use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::adapter::cooccurrence::CoOccurrenceEnrichment;
@@ -4630,7 +4630,7 @@ mod tests {
     // === Scenario: File extraction reachable from transport (JSON wire format) ===
     #[tokio::test]
     async fn file_extraction_reachable_via_json() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::extraction::ExtractionCoordinator;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -4663,7 +4663,7 @@ mod tests {
     // === Scenario: Full pipeline round-trip with persistence (integration) ===
     #[tokio::test]
     async fn full_pipeline_round_trip_with_persistence() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
         use crate::adapter::tag_bridger::TagConceptBridger;
 
@@ -4729,7 +4729,7 @@ mod tests {
     // === Scenario: Location-specific provenance (Carrel annotation) ===
     #[tokio::test]
     async fn layered_provenance_location_specific() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
         use crate::adapter::tag_bridger::TagConceptBridger;
 
@@ -4790,7 +4790,7 @@ mod tests {
     // === Scenario: Source-level provenance (Trellis text) ===
     #[tokio::test]
     async fn layered_provenance_source_level() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
         use crate::adapter::tag_bridger::TagConceptBridger;
 
@@ -4859,7 +4859,7 @@ mod tests {
     #[tokio::test]
     async fn registered_spec_routes_by_declared_input_kind() {
         use crate::adapter::declarative::DeclarativeAdapter;
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::llm_orc::{AgentResult, InvokeResponse, MockClient};
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -4948,7 +4948,7 @@ emit:
     // === Scenario: Specs loaded from directory ===
     #[tokio::test]
     async fn specs_loaded_from_directory() {
-        use crate::adapter::ingest::IngestPipeline;
+        use crate::adapter::IngestPipeline;
         use crate::llm_orc::MockClient;
 
         let engine = Arc::new(PlexusEngine::new());
