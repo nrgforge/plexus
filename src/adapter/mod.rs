@@ -56,7 +56,6 @@ pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 pub use enrichments::cooccurrence;
 pub use enrichments::discovery_gap;
 pub use enrichments::embedding;
-pub use enrichments::tag_bridger;
 pub use enrichments::temporal_proximity;
 
 // Flat enrichment type re-exports
@@ -66,4 +65,3 @@ pub use embedding::{Embedder, EmbeddingError, EmbeddingSimilarityEnrichment, InM
 #[cfg(feature = "embeddings")]
 pub use embedding::FastEmbedEmbedder;
 pub use temporal_proximity::TemporalProximityEnrichment;
-pub use tag_bridger::TagConceptBridger;

@@ -390,7 +390,6 @@ mod tests {
     async fn end_to_end_provence_travel_research() {
         use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
-        use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -427,12 +426,10 @@ mod tests {
         }
 
         // Step 2: Create provenance chain and add mark with tags through ingest pipeline
-        // (Tag bridging happens via TagConceptBridger enrichment in the pipeline)
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             vec![
-                Arc::new(TagConceptBridger::new()),
                 Arc::new(CoOccurrenceEnrichment::new()),
             ],
         );
@@ -449,7 +446,7 @@ mod tests {
             }),
         ).await.unwrap();
 
-        // Add mark with tags — TagConceptBridger should create references edges
+        // Add mark with tags
         let mark_id = NodeId::new().to_string();
         pipeline.ingest(
             ctx_id.as_str(),
@@ -466,29 +463,6 @@ mod tests {
             }),
         ).await.unwrap();
 
-        // Verify: references edges from mark to concepts
-        {
-            let ctx = engine.get_context(&ctx_id).unwrap();
-            let mark_node_id = NodeId::from(mark_id.as_str());
-            let refs: Vec<_> = ctx.edges().filter(|e| {
-                e.source == mark_node_id && e.relationship == "references"
-            }).collect();
-            assert_eq!(refs.len(), 2, "mark should have 2 references edges");
-
-            let targets: std::collections::HashSet<String> = refs.iter()
-                .map(|e| e.target.to_string()).collect();
-            assert!(targets.contains("concept:travel"), "references include concept:travel");
-            assert!(targets.contains("concept:avignon"), "references include concept:avignon");
-
-            // Traverse from concept:avignon via incoming references to reach the mark
-            let avignon_id = NodeId::from_string("concept:avignon");
-            let incoming_refs: Vec<_> = ctx.edges().filter(|e| {
-                e.target == avignon_id && e.relationship == "references"
-            }).collect();
-            assert_eq!(incoming_refs.len(), 1, "exactly one mark references concept:avignon");
-            assert_eq!(incoming_refs[0].source, mark_node_id, "incoming reference source is the mark");
-        }
-
         // Step 3: Verify persistence after restart
         drop(engine);
         let engine2 = PlexusEngine::with_store(store);
@@ -503,8 +477,6 @@ mod tests {
         // All edges survive
         let tagged_with: Vec<_> = ctx2.edges().filter(|e| e.relationship == "tagged_with").collect();
         assert_eq!(tagged_with.len(), 2, "two tagged_with edges survive restart");
-        let references: Vec<_> = ctx2.edges().filter(|e| e.relationship == "references").collect();
-        assert_eq!(references.len(), 2, "two references edges survive restart");
 
         // Contributions survive
         for edge in &tagged_with {
@@ -1203,7 +1175,6 @@ mod tests {
     // ================================================================
 
     use crate::adapter::IngestPipeline;
-    use crate::adapter::tag_bridger::TagConceptBridger;
 
     /// Test adapter that emits concept nodes from input strings.
     /// Also implements transform_events to detect concept nodes.
@@ -1539,130 +1510,7 @@ mod tests {
         assert_eq!(outbound[0].kind, "concepts_detected", "outbound event kind is concepts_detected");
     }
 
-    // ================================================================
-    // TagConceptBridger Integration (ADR-009 + ADR-010)
-    // ================================================================
-
     use crate::graph::{dimension, PropertyValue};
-
-    fn mark_node(id: &str, tags: &[&str]) -> Node {
-        let mut n = Node::new("mark", ContentType::Provenance);
-        n.id = NodeId::from_string(id);
-        n.dimension = dimension::PROVENANCE.to_string();
-        let tag_vals: Vec<PropertyValue> = tags
-            .iter()
-            .map(|t| PropertyValue::String(t.to_string()))
-            .collect();
-        n.properties
-            .insert("tags".to_string(), PropertyValue::Array(tag_vals));
-        n
-    }
-
-    fn concept_node(tag: &str) -> Node {
-        let mut n = Node::new("concept", ContentType::Concept);
-        n.id = NodeId::from_string(format!("concept:{}", tag));
-        n.dimension = dimension::SEMANTIC.to_string();
-        n.properties.insert(
-            "label".to_string(),
-            PropertyValue::String(tag.to_string()),
-        );
-        n
-    }
-
-    // === Scenario: New concept retroactively bridges to existing mark via enrichment loop ===
-    #[tokio::test]
-    async fn tag_bridger_new_concept_retroactively_bridges_to_existing_mark() {
-        let engine = Arc::new(PlexusEngine::new());
-        let ctx_id = ContextId::from("provence-research");
-
-        // Pre-populate with a mark tagged #travel but no concept yet
-        let mut ctx = Context::with_id(ctx_id.clone(), "provence-research");
-        ctx.add_node(mark_node("mark-1", &["#travel"]));
-        engine.upsert_context(ctx).unwrap();
-
-        // Register TagConceptBridger
-        let bridger = Arc::new(TagConceptBridger::new());
-        let registry = Arc::new(EnrichmentRegistry::new(vec![
-            bridger as Arc<dyn Enrichment>,
-        ]));
-
-        // Adapter creates concept:travel — triggers enrichment loop
-        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
-        let mut pipeline = IngestPipeline::new(engine.clone())
-            .with_enrichments(registry);
-        pipeline.register_adapter(adapter);
-
-        let data: Box<dyn std::any::Any + Send + Sync> =
-            Box::new(vec!["travel".to_string()]);
-        pipeline
-            .ingest("provence-research", "fragment", data)
-            .await
-            .unwrap();
-
-        // TagConceptBridger should have created a references edge from mark to concept
-        let ctx = engine.get_context(&ctx_id).unwrap();
-        let refs: Vec<_> = ctx
-            .edges()
-            .filter(|e| {
-                e.source == NodeId::from_string("mark-1")
-                    && e.target == NodeId::from_string("concept:travel")
-                    && e.relationship == "references"
-            })
-            .collect();
-        assert_eq!(refs.len(), 1, "should have exactly one references edge");
-        assert_eq!(refs[0].source_dimension, dimension::PROVENANCE, "references edge source is in provenance dimension");
-        assert_eq!(refs[0].target_dimension, dimension::SEMANTIC, "references edge target is in semantic dimension");
-    }
-
-    // === Scenario: TagConceptBridger is idempotent through enrichment loop ===
-    #[tokio::test]
-    async fn tag_bridger_idempotent_through_enrichment_loop() {
-        let engine = Arc::new(PlexusEngine::new());
-        let ctx_id = ContextId::from("provence-research");
-
-        // Pre-populate: mark, concept, and an existing references edge
-        let mut ctx = Context::with_id(ctx_id.clone(), "provence-research");
-        ctx.add_node(mark_node("mark-1", &["#travel"]));
-        ctx.add_node(concept_node("travel"));
-        ctx.add_edge(Edge::new_cross_dimensional(
-            NodeId::from_string("mark-1"),
-            dimension::PROVENANCE,
-            NodeId::from_string("concept:travel"),
-            dimension::SEMANTIC,
-            "references",
-        ));
-        engine.upsert_context(ctx).unwrap();
-
-        let bridger = Arc::new(TagConceptBridger::new());
-        let registry = Arc::new(EnrichmentRegistry::new(vec![
-            bridger as Arc<dyn Enrichment>,
-        ]));
-
-        // Adapter emits an unrelated concept — triggers enrichment loop
-        let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
-        let mut pipeline = IngestPipeline::new(engine.clone())
-            .with_enrichments(registry);
-        pipeline.register_adapter(adapter);
-
-        let data: Box<dyn std::any::Any + Send + Sync> =
-            Box::new(vec!["avignon".to_string()]);
-        pipeline
-            .ingest("provence-research", "fragment", data)
-            .await
-            .unwrap();
-
-        // Should NOT have created a duplicate references edge
-        let ctx = engine.get_context(&ctx_id).unwrap();
-        let refs: Vec<_> = ctx
-            .edges()
-            .filter(|e| {
-                e.source == NodeId::from_string("mark-1")
-                    && e.target == NodeId::from_string("concept:travel")
-                    && e.relationship == "references"
-            })
-            .collect();
-        assert_eq!(refs.len(), 1, "should still have exactly one references edge, not a duplicate");
-    }
 
     // ================================================================
     // CoOccurrenceEnrichment through Enrichment Loop (ADR-010)
@@ -1772,85 +1620,6 @@ mod tests {
 
     use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 
-    // === Scenario: AddMark through ingest triggers TagConceptBridger ===
-    #[tokio::test]
-    async fn provenance_add_mark_through_ingest_triggers_tag_bridger() {
-        let engine = Arc::new(PlexusEngine::new());
-        let ctx_id = ContextId::from("provence-research");
-
-        // Pre-populate: concept:travel exists, chain exists
-        let mut ctx = Context::with_id(ctx_id.clone(), "provence-research");
-        ctx.add_node(concept_node("travel"));
-        let mut chain = Node::new_in_dimension(
-            "chain",
-            ContentType::Provenance,
-            dimension::PROVENANCE,
-        );
-        chain.id = NodeId::from("chain-1");
-        ctx.add_node(chain);
-        engine.upsert_context(ctx).unwrap();
-
-        // Register ProvenanceAdapter + TagConceptBridger
-        let adapter = Arc::new(ProvenanceAdapter::new());
-        let bridger = Arc::new(TagConceptBridger::new());
-        let registry = Arc::new(EnrichmentRegistry::new(vec![
-            bridger as Arc<dyn Enrichment>,
-        ]));
-
-        let mut pipeline = IngestPipeline::new(engine.clone())
-            .with_enrichments(registry);
-        pipeline.register_adapter(adapter);
-
-        // Ingest a mark with tag #travel
-        let data: Box<dyn std::any::Any + Send + Sync> = Box::new(ProvenanceInput::AddMark {
-            mark_id: "mark-1".to_string(),
-            chain_id: "chain-1".to_string(),
-            file: "notes.md".to_string(),
-            line: 42,
-            annotation: "walking through Avignon".to_string(),
-            column: None,
-            mark_type: None,
-            tags: Some(vec!["#travel".to_string()]),
-        });
-        pipeline
-            .ingest("provence-research", "provenance", data)
-            .await
-            .unwrap();
-
-        let ctx = engine.get_context(&ctx_id).unwrap();
-
-        // Mark node exists
-        assert!(ctx.get_node(&NodeId::from("mark-1")).is_some(), "mark node created by AddMark");
-
-        // Contains edge: chain → mark
-        let contains: Vec<_> = ctx
-            .edges()
-            .filter(|e| {
-                e.source == NodeId::from("chain-1")
-                    && e.target == NodeId::from("mark-1")
-                    && e.relationship == "contains"
-            })
-            .collect();
-        assert_eq!(contains.len(), 1, "one contains edge from chain to mark");
-
-        // TagConceptBridger should have created references edge: mark → concept:travel
-        let refs: Vec<_> = ctx
-            .edges()
-            .filter(|e| {
-                e.source == NodeId::from("mark-1")
-                    && e.target == NodeId::from_string("concept:travel")
-                    && e.relationship == "references"
-            })
-            .collect();
-        assert_eq!(
-            refs.len(),
-            1,
-            "TagConceptBridger should bridge mark to concept:travel"
-        );
-        assert_eq!(refs[0].source_dimension, dimension::PROVENANCE, "references edge source is in provenance dimension");
-        assert_eq!(refs[0].target_dimension, dimension::SEMANTIC, "references edge target is in semantic dimension");
-    }
-
     // === Scenario: CreateChain through ingest produces chain node ===
     #[tokio::test]
     async fn provenance_create_chain_through_ingest() {
@@ -1943,14 +1712,12 @@ mod tests {
     // ================================================================
     //
     // Validates that ContentAdapter automatically produces provenance
-    // marks alongside semantic output, and TagConceptBridger bridges
-    // those marks to concepts — making every concept's origin
+    // marks alongside semantic output — making every concept's origin
     // graph-traversable.
 
     #[tokio::test]
     async fn spike_fragment_adapter_produces_traversable_provenance() {
         use crate::adapter::IngestPipeline;
-        use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -1965,7 +1732,6 @@ mod tests {
         pipeline.register_integration(
             Arc::new(ContentAdapter::new("journal")),
             vec![
-                Arc::new(TagConceptBridger::new()),
                 Arc::new(CoOccurrenceEnrichment::new()),
             ],
         );
@@ -2027,47 +1793,11 @@ mod tests {
             .filter(|e| e.relationship == "contains")
             .collect();
         assert_eq!(contains.len(), 1, "chain → mark contains edge");
-
-        // --- Cross-dimensional bridging: TagConceptBridger auto-bridged ---
-        let references: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.relationship == "references")
-            .collect();
-        assert_eq!(references.len(), 2, "mark references 2 concepts via tags");
-
-        // Each references edge is cross-dimensional: provenance → semantic
-        for ref_edge in &references {
-            assert_eq!(ref_edge.source_dimension, dimension::PROVENANCE, "references edge source is in provenance dimension");
-            assert_eq!(ref_edge.target_dimension, dimension::SEMANTIC, "references edge target is in semantic dimension");
-        }
-
-        // --- The key test: concept → provenance traversal ---
-        // From concept:travel, can we find where the knowledge came from?
-        let travel_id = NodeId::from_string("concept:travel");
-        let incoming_refs: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.target == travel_id && e.relationship == "references")
-            .collect();
-        assert_eq!(incoming_refs.len(), 1, "1 mark references concept:travel");
-
-        // The mark points back to the chain (via contains)
-        let mark_id = &incoming_refs[0].source;
-        let mark_chain: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.target == *mark_id && e.relationship == "contains")
-            .collect();
-        assert_eq!(mark_chain.len(), 1, "mark is contained in a chain");
-        assert_eq!(
-            mark_chain[0].source,
-            NodeId::from_string("chain:journal:journal-2026-02"),
-            "chain is the journal source"
-        );
     }
 
     #[tokio::test]
     async fn spike_multi_phase_hebbian_provenance() {
         use crate::adapter::IngestPipeline;
-        use crate::adapter::tag_bridger::TagConceptBridger;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store));
@@ -2082,7 +1812,6 @@ mod tests {
         // Separate pipelines because both share input_kind="content" —
         // in production each phase would run independently.
         let enrichments: Vec<Arc<dyn crate::adapter::enrichment::Enrichment>> = vec![
-            Arc::new(TagConceptBridger::new()),
             Arc::new(CoOccurrenceEnrichment::new()),
         ];
 
@@ -2154,41 +1883,6 @@ mod tests {
         assert!(manual_chain.is_some(), "manual adapter has its own chain");
         assert!(llm_chain.is_some(), "LLM adapter has its own chain");
 
-        // --- Provenance explains each contribution ---
-        // Manual mark has 1 tag → 1 references edge
-        let manual_marks: Vec<_> = ctx
-            .edges()
-            .filter(|e| {
-                e.relationship == "contains"
-                    && e.source == NodeId::from_string("chain:manual-journal:paper-chen-2025")
-            })
-            .collect();
-        assert_eq!(manual_marks.len(), 1, "manual chain contains 1 mark");
-
-        let manual_mark_id = &manual_marks[0].target;
-        let manual_refs: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.source == *manual_mark_id && e.relationship == "references")
-            .collect();
-        assert_eq!(manual_refs.len(), 1, "manual mark references 1 concept");
-
-        // LLM mark has 3 tags → 3 references edges
-        let llm_marks: Vec<_> = ctx
-            .edges()
-            .filter(|e| {
-                e.relationship == "contains"
-                    && e.source == NodeId::from_string("chain:llm-extract:paper-chen-2025")
-            })
-            .collect();
-        assert_eq!(llm_marks.len(), 1, "LLM chain contains 1 mark");
-
-        let llm_mark_id = &llm_marks[0].target;
-        let llm_refs: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.source == *llm_mark_id && e.relationship == "references")
-            .collect();
-        assert_eq!(llm_refs.len(), 3, "LLM mark references 3 concepts");
-
         // --- Progressive enrichment: LLM phase added concepts manual didn't see ---
         assert!(
             ctx.get_node(&NodeId::from_string("concept:federated-learning")).is_some(),
@@ -2197,28 +1891,6 @@ mod tests {
         assert!(
             ctx.get_node(&NodeId::from_string("concept:compute-economics")).is_some(),
             "compute-economics concept added by LLM phase"
-        );
-
-        // --- Cross-dimensional traversal: concept → mark → chain → source ---
-        // From concept:federated-learning, find where it came from
-        let fl_id = NodeId::from_string("concept:federated-learning");
-        let fl_incoming: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.target == fl_id && e.relationship == "references")
-            .collect();
-        assert_eq!(fl_incoming.len(), 1, "1 mark references federated-learning");
-
-        // That mark is in the LLM chain
-        let source_mark = &fl_incoming[0].source;
-        let chain_edge: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.target == *source_mark && e.relationship == "contains")
-            .collect();
-        assert_eq!(chain_edge.len(), 1, "one chain contains the source mark for federated-learning");
-        assert_eq!(
-            chain_edge[0].source,
-            NodeId::from_string("chain:llm-extract:paper-chen-2025"),
-            "federated-learning was extracted by LLM phase from paper-chen-2025"
         );
     }
 
@@ -2240,7 +1912,6 @@ mod tests {
     async fn spike_heterogeneous_multi_consumer_real_data() {
         use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
-        use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
         use crate::query::{Direction, TraverseQuery};
 
@@ -2253,7 +1924,6 @@ mod tests {
             .unwrap();
 
         let enrichments: Vec<Arc<dyn crate::adapter::enrichment::Enrichment>> = vec![
-            Arc::new(TagConceptBridger::new()),
             Arc::new(CoOccurrenceEnrichment::new()),
         ];
 
@@ -2718,7 +2388,6 @@ mod tests {
         // --- Edge counts by type ---
         let tagged_with: Vec<_> = ctx.edges().filter(|e| e.relationship == "tagged_with").collect();
         let contains: Vec<_> = ctx.edges().filter(|e| e.relationship == "contains").collect();
-        let references: Vec<_> = ctx.edges().filter(|e| e.relationship == "references").collect();
         let links_to: Vec<_> = ctx.edges().filter(|e| e.relationship == "links_to").collect();
         let may_be_related: Vec<_> = ctx.edges().filter(|e| e.relationship == "may_be_related").collect();
 
@@ -2735,13 +2404,6 @@ mod tests {
         // Provenance marks: 6 contains edges from 2 chains
         assert_eq!(contains.len(), 22, "22 contains edges (chain → mark)");
 
-        // references: TagConceptBridger bridges marks with tags to concepts
-        // Trellis marks: tag counts 3+3+2+3+3+3+3+3 = 23 references
-        // Carrel LLM marks: tag counts 4+4+3+4+3+3+4+3 = 28 references
-        // Carrel prov marks: tag counts 2+3+3+3+3+3 = 17 references
-        // Total: 23 + 28 + 17 = 68
-        assert_eq!(references.len(), 68, "68 references edges (marks → concepts)");
-
         // links_to: 3 research→writing links
         assert_eq!(links_to.len(), 3, "3 research→writing links");
 
@@ -2753,7 +2415,6 @@ mod tests {
 
         let total_edges = tagged_with.len()
             + contains.len()
-            + references.len()
             + links_to.len()
             + may_be_related.len();
 
@@ -2767,10 +2428,7 @@ mod tests {
         // Can the graph connect this to formal research on Extended Creativity?
         //
         // Path: concept:creativity ← tagged_with (trellis fragment)
-        //       concept:creativity ← references (carrel-llm mark for Extended Creativity)
-        //       concept:creativity ← references (carrel-llm mark for Co-Creativity)
-        //       concept:creativity ← references (carrel-prov mark: lit-extended-creativity)
-        //       concept:creativity ← references (carrel-prov mark: draft-creativity)
+        //       concept:creativity ← tagged_with (carrel-llm fragments)
 
         let creativity_id = NodeId::from_string("concept:creativity");
         let creativity_incoming: Vec<_> = ctx
@@ -2778,10 +2436,7 @@ mod tests {
             .filter(|e| e.target == creativity_id)
             .collect();
 
-        // tagged_with from fragments + references from marks
         // Fragments tagged "creativity": trellis 3,4,7 + carrel-llm 3,5 = 5
-        // Marks referencing "creativity": trellis marks for 3,4,7 + carrel-llm marks for 3,5
-        //   + carrel-prov marks: draft-creativity, lit-extended-creativity = many
         let creativity_fragment_sources: Vec<_> = creativity_incoming
             .iter()
             .filter(|e| e.relationship == "tagged_with")
@@ -2791,49 +2446,7 @@ mod tests {
             "at least 5 fragments tagged with creativity (3 trellis + 2 carrel-llm)"
         );
 
-        let creativity_mark_sources: Vec<_> = creativity_incoming
-            .iter()
-            .filter(|e| e.relationship == "references")
-            .collect();
-        assert!(
-            creativity_mark_sources.len() >= 5,
-            "at least 5 marks reference concept:creativity"
-        );
-
-        // KEY TRAVERSAL 2: From an arXiv paper → through concepts → to writer's fragments
-        //
-        // Start at the ETHOS governance paper's mark, traverse to find
-        // the writer's "who watches the autonomous agents?" fragment.
-        //
-        // Path: carrel-llm mark (ETHOS) → references → concept:autonomous-agents
-        //       concept:autonomous-agents ← tagged_with ← trellis fragment #6
-
-        // Find the carrel-llm mark for the ETHOS paper
-        let ethos_chain = NodeId::from_string("chain:carrel-llm:arxiv-2412.17114");
-        let ethos_marks: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.source == ethos_chain && e.relationship == "contains")
-            .collect();
-        assert_eq!(ethos_marks.len(), 1, "ETHOS paper has 1 mark");
-
-        let ethos_mark_id = &ethos_marks[0].target;
-
-        // From the mark, follow references to concepts
-        let ethos_concepts: std::collections::HashSet<String> = ctx
-            .edges()
-            .filter(|e| e.source == *ethos_mark_id && e.relationship == "references")
-            .map(|e| e.target.to_string())
-            .collect();
-        assert!(
-            ethos_concepts.contains("concept:autonomous-agents"),
-            "ETHOS mark references concept:autonomous-agents"
-        );
-        assert!(
-            ethos_concepts.contains("concept:ai-safety"),
-            "ETHOS mark references concept:ai-safety"
-        );
-
-        // From concept:autonomous-agents, find trellis fragments
+        // KEY TRAVERSAL 2: From concept:autonomous-agents, find trellis fragments
         let aa_id = NodeId::from_string("concept:autonomous-agents");
         let aa_fragments: Vec<_> = ctx
             .edges()
@@ -2845,49 +2458,11 @@ mod tests {
             "at least 2 fragments tagged with autonomous-agents"
         );
 
-        // KEY TRAVERSAL 3: Cross-consumer provenance convergence
+        // KEY TRAVERSAL 3: Depth-1 BFS from a concept to discover
+        // consumers' fragments
         //
-        // The writer's draft annotation (draft-governance) and the research
-        // annotation (lit-ethos) are explicitly linked. But they ALSO converge
-        // on the same concepts via independent tagging.
-        //
-        // draft-governance tags: decentralized-governance, ai-safety, autonomous-agents
-        // lit-ethos tags: decentralized-governance, ai-safety, blockchain
-        //
-        // Shared concepts: decentralized-governance, ai-safety
-        // This means the graph has BOTH explicit links (links_to) AND
-        // implicit concept-mediated connections.
-
-        let draft_gov_refs: std::collections::HashSet<String> = ctx
-            .edges()
-            .filter(|e| {
-                e.source == NodeId::from_string("draft-governance")
-                    && e.relationship == "references"
-            })
-            .map(|e| e.target.to_string())
-            .collect();
-
-        let lit_ethos_refs: std::collections::HashSet<String> = ctx
-            .edges()
-            .filter(|e| {
-                e.source == NodeId::from_string("lit-ethos")
-                    && e.relationship == "references"
-            })
-            .map(|e| e.target.to_string())
-            .collect();
-
-        let shared_concepts: Vec<_> = draft_gov_refs.intersection(&lit_ethos_refs).collect();
-        assert!(
-            shared_concepts.len() >= 2,
-            "draft-governance and lit-ethos share at least 2 concepts (decentralized-governance, ai-safety)"
-        );
-
-        // KEY TRAVERSAL 4: Full depth-2 BFS from a concept to discover
-        // all three consumers' contributions
-        //
-        // concept:ai-safety is tagged by fragments from Trellis AND Carrel LLM
-        // AND referenced by marks from Carrel provenance.
-        // A depth-1 traversal from concept:ai-safety should reach all three consumer types.
+        // concept:ai-safety is tagged by fragments from Trellis AND Carrel LLM.
+        // A depth-1 traversal from concept:ai-safety should reach both consumer types.
 
         let ai_safety = NodeId::from_string("concept:ai-safety");
         let traversal = TraverseQuery::from(ai_safety.clone())
@@ -2898,7 +2473,7 @@ mod tests {
         // Level 0: concept:ai-safety
         assert_eq!(traversal.levels[0].len(), 1, "level 0 contains only the start node");
 
-        // Level 1: fragments (via tagged_with) + marks (via references) + co-occurring concepts
+        // Level 1: fragments (via tagged_with) + co-occurring concepts
         assert!(
             traversal.levels.len() >= 2,
             "traversal should reach neighbors"
@@ -2909,14 +2484,10 @@ mod tests {
             .map(|n| n.dimension.clone())
             .collect();
 
-        // Should reach structure (fragments), provenance (marks), and semantic (co-occurring concepts)
+        // Should reach structure (fragments) and semantic (co-occurring concepts)
         assert!(
             level1_dimensions.contains(dimension::STRUCTURE),
             "depth-1 from ai-safety reaches structure (fragments)"
-        );
-        assert!(
-            level1_dimensions.contains(dimension::PROVENANCE),
-            "depth-1 from ai-safety reaches provenance (marks)"
         );
 
         // Count which consumer's fragments we reach
@@ -2932,71 +2503,6 @@ mod tests {
             "at least 5 fragments from both consumers reach ai-safety"
         );
 
-        let level1_provenance: Vec<_> = traversal.levels[1]
-            .iter()
-            .filter(|n| n.dimension == dimension::PROVENANCE)
-            .collect();
-        // Marks referencing ai-safety: trellis marks for fragments 1,6 + carrel-llm marks
-        // for ETHOS, Multi-Agent, Embodied + carrel-prov marks: draft-governance, lit-ethos
-        assert!(
-            level1_provenance.len() >= 5,
-            "at least 5 provenance marks reference ai-safety"
-        );
-
-        // KEY TRAVERSAL 5: Depth-2 BFS from a writer's fragment through
-        // provenance to discover related papers
-        //
-        // Trellis fragment about "who watches the autonomous agents?"
-        // → its mark → references → concept:autonomous-agents
-        //                         → concept:governance
-        //                         → concept:ai-safety
-        // → depth 2: other marks referencing those concepts
-        //          → fragments tagged with those concepts
-        //
-        // This should discover the ETHOS paper AND the Multi-Agent Risks paper.
-
-        // Find a specific trellis fragment: "who watches the autonomous agents?"
-        let governance_fragment = structure_nodes
-            .iter()
-            .find(|n| {
-                n.properties
-                    .get("text")
-                    .map(|v| {
-                        matches!(v, crate::graph::PropertyValue::String(s) if s.contains("who watches"))
-                    })
-                    .unwrap_or(false)
-            })
-            .expect("should find 'who watches' fragment");
-
-        let traversal = TraverseQuery::from(governance_fragment.id.clone())
-            .depth(3)
-            .direction(Direction::Both)
-            .execute(&ctx);
-
-        // Collect all nodes reached across all levels
-        let all_reached: std::collections::HashSet<String> = traversal
-            .levels
-            .iter()
-            .flatten()
-            .map(|n| n.id.to_string())
-            .collect();
-
-        // Should reach concept:autonomous-agents, concept:governance, concept:ai-safety
-        assert!(
-            all_reached.contains("concept:autonomous-agents"),
-            "traversal reaches concept:autonomous-agents"
-        );
-        assert!(
-            all_reached.contains("concept:ai-safety"),
-            "traversal reaches concept:ai-safety"
-        );
-
-        // Should reach the carrel-prov marks that share these concepts
-        assert!(
-            all_reached.contains("draft-governance"),
-            "traversal reaches draft-governance annotation (shared concepts)"
-        );
-
         // ================================================================
         // Analysis: Summary statistics for the essay
         // ================================================================
@@ -3010,7 +2516,6 @@ mod tests {
         eprintln!("\nEdges: {} total", total_edges);
         eprintln!("  tagged_with:    {} (fragment → concept)", tagged_with.len());
         eprintln!("  contains:       {} (chain → mark)", contains.len());
-        eprintln!("  references:     {} (mark → concept)", references.len());
         eprintln!("  links_to:       {} (research → writing)", links_to.len());
         eprintln!("  may_be_related: {} (concept co-occurrence)", may_be_related.len());
         eprintln!("\nConcepts: {:?}", {
@@ -3018,10 +2523,10 @@ mod tests {
             labels.sort();
             labels
         });
-        eprintln!("\nCross-consumer concept:creativity connections: {} fragments + {} marks",
-            creativity_fragment_sources.len(), creativity_mark_sources.len());
-        eprintln!("Cross-consumer concept:ai-safety depth-1 reach: {} fragments + {} marks",
-            level1_structure.len(), level1_provenance.len());
+        eprintln!("\nCross-consumer concept:creativity connections: {} fragments",
+            creativity_fragment_sources.len());
+        eprintln!("Cross-consumer concept:ai-safety depth-1 reach: {} fragments",
+            level1_structure.len());
 
         // ================================================================
         // Persistence survives restart
@@ -3041,11 +2546,6 @@ mod tests {
             ctx2.nodes().filter(|n| n.dimension == dimension::STRUCTURE).count(),
             16,
             "16 fragments survive restart"
-        );
-        assert_eq!(
-            ctx2.edges().filter(|e| e.relationship == "references").count(),
-            68,
-            "68 references edges survive restart"
         );
         assert_eq!(
             ctx2.edges().filter(|e| e.relationship == "tagged_with").count(),
@@ -3072,7 +2572,6 @@ mod tests {
     async fn spike_creative_writing_at_scale() {
         use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
-        use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::graph::dimension;
         use crate::query::{Direction, TraverseQuery};
 
@@ -3085,7 +2584,6 @@ mod tests {
             .unwrap();
 
         let enrichments: Vec<Arc<dyn crate::adapter::enrichment::Enrichment>> = vec![
-            Arc::new(TagConceptBridger::new()),
             Arc::new(CoOccurrenceEnrichment::new()),
         ];
 
@@ -3528,14 +3026,13 @@ mod tests {
         // --- Edge counts ---
         let tagged_with_count = ctx.edges().filter(|e| e.relationship == "tagged_with").count();
         let contains_count = ctx.edges().filter(|e| e.relationship == "contains").count();
-        let references_count = ctx.edges().filter(|e| e.relationship == "references").count();
         let links_to_count = ctx.edges().filter(|e| e.relationship == "links_to").count();
         let may_be_related: Vec<_> = ctx.edges().filter(|e| e.relationship == "may_be_related").collect();
 
         assert_eq!(contains_count, 108, "108 contains edges (1 per mark)");
         assert_eq!(links_to_count, 5, "5 research→draft links");
 
-        let total_edges = tagged_with_count + contains_count + references_count
+        let total_edges = tagged_with_count + contains_count
             + links_to_count + may_be_related.len();
 
         // ================================================================
@@ -3559,29 +3056,7 @@ mod tests {
 
         // --- Cross-cluster discovery ---
 
-        // TRAVERSAL 1: From Heraclitus → through concepts → to writer's fragments
-        // Heraclitus has tags: water, identity, time, transformation
-        // These bridge the Water, Identity, and Memory clusters.
-        let heraclitus_chain = NodeId::from_string("chain:carrel-llm:heraclitus-fragments");
-        let heraclitus_mark_edges: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.source == heraclitus_chain && e.relationship == "contains")
-            .collect();
-        assert_eq!(heraclitus_mark_edges.len(), 1, "Heraclitus chain contains one mark");
-
-        let heraclitus_mark = &heraclitus_mark_edges[0].target;
-        let heraclitus_concepts: std::collections::HashSet<String> = ctx
-            .edges()
-            .filter(|e| e.source == *heraclitus_mark && e.relationship == "references")
-            .map(|e| e.target.to_string())
-            .collect();
-
-        assert!(heraclitus_concepts.contains("concept:water"), "Heraclitus mark references concept:water");
-        assert!(heraclitus_concepts.contains("concept:identity"), "Heraclitus mark references concept:identity");
-        assert!(heraclitus_concepts.contains("concept:transformation"), "Heraclitus mark references concept:transformation");
-        assert!(heraclitus_concepts.contains("concept:time"), "Heraclitus mark references concept:time");
-
-        // From concept:transformation, how many fragments from different consumers?
+        // TRAVERSAL 1: From concept:transformation across consumers' fragments
         let transformation_id = NodeId::from_string("concept:transformation");
         let transformation_fragments: Vec<_> = ctx
             .edges()
@@ -3593,40 +3068,13 @@ mod tests {
             "concept:transformation should connect fragments from both consumers"
         );
 
-        // TRAVERSAL 2: From the protagonist's return (Ch1) through concepts
-        // to discover the Heraclitus connection
-        //
-        // draft-ch1-harbor tags: return, water, identity, transformation
-        // Heraclitus tags: water, identity, time, transformation
-        // Shared concepts: water, identity, transformation
-        let ch1_refs: std::collections::HashSet<String> = ctx
-            .edges()
-            .filter(|e| {
-                e.source == NodeId::from_string("draft-ch1-harbor")
-                    && e.relationship == "references"
-            })
-            .map(|e| e.target.to_string())
-            .collect();
-
-        let shared_with_heraclitus: Vec<_> = ch1_refs
-            .intersection(&heraclitus_concepts)
-            .collect();
-        assert!(
-            shared_with_heraclitus.len() >= 3,
-            "draft-ch1-harbor and Heraclitus share at least 3 concepts (water, identity, transformation)"
-        );
-
-        // TRAVERSAL 3: concept:memory as the central hub
+        // TRAVERSAL 2: concept:memory as the central hub
         // Memory should be the most connected concept — it appears across
         // nearly every cluster and consumer.
         let memory_id = NodeId::from_string("concept:memory");
         let memory_tagged_with = ctx
             .edges()
             .filter(|e| e.target == memory_id && e.relationship == "tagged_with")
-            .count();
-        let memory_references = ctx
-            .edges()
-            .filter(|e| e.target == memory_id && e.relationship == "references")
             .count();
         let memory_cooccurrences = ctx
             .edges()
@@ -3636,12 +3084,11 @@ mod tests {
             })
             .count();
 
-        // Memory should be heavily connected across all relationship types
+        // Memory should be heavily connected across tagged_with and co-occurrence
         assert!(memory_tagged_with >= 15, "memory tagged in many fragments");
-        assert!(memory_references >= 15, "memory referenced by many marks");
         assert!(memory_cooccurrences >= 10, "memory co-occurs with many other concepts");
 
-        // TRAVERSAL 4: depth-2 from concept:architecture should reach
+        // TRAVERSAL 3: depth-2 from concept:architecture should reach
         // concept:memory (via co-occurrence or shared fragments), creating
         // the "house as memory" thematic thread
         let arch_id = NodeId::from_string("concept:architecture");
@@ -3663,24 +3110,7 @@ mod tests {
             "architecture reaches memory (the house-as-memory theme)"
         );
 
-        // TRAVERSAL 5: From Borges' Library of Babel → through labyrinth →
-        // to the writer's myth fragments
-        let borges_chain = NodeId::from_string("chain:carrel-llm:borges-library-of-babel");
-        let borges_marks: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.source == borges_chain && e.relationship == "contains")
-            .collect();
-        assert_eq!(borges_marks.len(), 1, "Borges chain contains one mark");
-
-        let borges_concepts: std::collections::HashSet<String> = ctx
-            .edges()
-            .filter(|e| e.source == borges_marks[0].target.clone() && e.relationship == "references")
-            .map(|e| e.target.to_string())
-            .collect();
-        assert!(borges_concepts.contains("concept:labyrinth"), "Borges mark references concept:labyrinth");
-        assert!(borges_concepts.contains("concept:naming"), "Borges mark references concept:naming");
-
-        // From concept:labyrinth, reach the myth cluster
+        // TRAVERSAL 4: From concept:labyrinth, reach the myth cluster
         let lab_id = NodeId::from_string("concept:labyrinth");
         let labyrinth_fragments = ctx
             .edges()
@@ -3688,7 +3118,7 @@ mod tests {
             .count();
         assert!(
             labyrinth_fragments >= 3,
-            "labyrinth connects Borges to writer's myth fragments"
+            "labyrinth connects myth fragments"
         );
 
         // ================================================================
@@ -3720,7 +3150,6 @@ mod tests {
         eprintln!("\nEdges: {} total", total_edges);
         eprintln!("  tagged_with:    {}", tagged_with_count);
         eprintln!("  contains:       {}", contains_count);
-        eprintln!("  references:     {}", references_count);
         eprintln!("  links_to:       {}", links_to_count);
         eprintln!("  may_be_related: {} ({} unique pairs)",
             may_be_related.len(), cooccurrence_pairs.len());
@@ -3744,11 +3173,11 @@ mod tests {
         }
 
         eprintln!("\n--- Cross-consumer discovery ---");
-        eprintln!("  Heraclitus → concept:transformation → {} trellis+carrel fragments",
+        eprintln!("  concept:transformation → {} trellis+carrel fragments",
             transformation_fragments.len());
-        eprintln!("  concept:memory hub: {} tagged_with + {} references + {} co-occurrences",
-            memory_tagged_with, memory_references, memory_cooccurrences);
-        eprintln!("  Borges → concept:labyrinth → {} myth/journey fragments",
+        eprintln!("  concept:memory hub: {} tagged_with + {} co-occurrences",
+            memory_tagged_with, memory_cooccurrences);
+        eprintln!("  concept:labyrinth → {} myth fragments",
             labyrinth_fragments);
 
         // ================================================================
@@ -3822,8 +3251,8 @@ mod tests {
             .upsert_context(Context::with_id(ctx_id.clone(), "embedding-integration"))
             .unwrap();
 
-        // Pipeline with ContentAdapter + 3 enrichments:
-        // TagConceptBridger, CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment
+        // Pipeline with ContentAdapter + 2 enrichments:
+        // CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment
         let fragment_adapter = Arc::new(ContentAdapter::new("test-fragment"));
         let embedding_enrichment = Arc::new(EmbeddingSimilarityEnrichment::new(
             "mock-model",
@@ -3836,7 +3265,6 @@ mod tests {
         pipeline.register_integration(
             fragment_adapter,
             vec![
-                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
                 embedding_enrichment as Arc<dyn Enrichment>,
             ],
@@ -3928,45 +3356,6 @@ mod tests {
             "CoOccurrenceEnrichment should have produced may_be_related edges"
         );
 
-        // --- Assert: TagConceptBridger also fired (references edges exist) ---
-        let references: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.relationship == "references")
-            .collect();
-        assert!(
-            !references.is_empty(),
-            "TagConceptBridger should have produced references edges"
-        );
-
-        // --- Assert: provenance traversal works ---
-        // concept:journey → incoming references → mark → incoming contains → chain
-        let journey_id = NodeId::from_string("concept:journey");
-        let journey_refs: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.target == journey_id && e.relationship == "references")
-            .collect();
-        assert!(
-            !journey_refs.is_empty(),
-            "concept:journey should have incoming references edges from marks"
-        );
-
-        // Follow from mark to chain via contains
-        let mark_id = &journey_refs[0].source;
-        let contains_edges: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.target == *mark_id && e.relationship == "contains")
-            .collect();
-        assert!(
-            !contains_edges.is_empty(),
-            "mark should have incoming contains edge from chain"
-        );
-
-        // The chain node should exist
-        let chain_id = &contains_edges[0].source;
-        assert!(
-            ctx.get_node(chain_id).is_some(),
-            "chain node should exist at end of provenance traversal"
-        );
     }
 
     // === Scenario: Different embedding models produce separate contribution slots ===
@@ -4002,7 +3391,6 @@ mod tests {
         pipeline.register_integration(
             Arc::new(ContentAdapter::new("multi-model")),
             vec![
-                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 enrichment_a as Arc<dyn Enrichment>,
                 enrichment_b as Arc<dyn Enrichment>,
             ],
@@ -4068,7 +3456,6 @@ mod tests {
         pipeline.register_integration(
             Arc::new(ContentAdapter::new("embed-gap")),
             vec![
-                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 Arc::new(EmbeddingSimilarityEnrichment::new(
                     "mock-model",
                     0.7,
@@ -4159,7 +3546,6 @@ mod tests {
         pipeline.register_integration(
             Arc::new(ContentAdapter::new("retract-gap")),
             vec![
-                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 Arc::new(EmbeddingSimilarityEnrichment::new(
                     "mock-model",
                     0.7,
@@ -4267,7 +3653,6 @@ mod tests {
         pipeline_v1.register_integration(
             Arc::new(ContentAdapter::new("model-replace")),
             vec![
-                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 enrichment_v1 as Arc<dyn Enrichment>,
             ],
         );
@@ -4330,7 +3715,6 @@ mod tests {
         pipeline_v2.register_integration(
             Arc::new(ContentAdapter::new("model-replace")),
             vec![
-                Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
                 enrichment_v2 as Arc<dyn Enrichment>,
             ],
         );
@@ -4444,12 +3828,11 @@ mod tests {
     // Integration Debt: ADR-009/015 — Tag Bridging with # Prefix
     // ================================================================
 
-    // === Scenario: ingest with #-prefixed tags bridges correctly ===
+    // === Scenario: ingest with #-prefixed tags creates concepts correctly ===
     #[tokio::test]
     async fn ingest_with_hash_prefixed_tags_bridges_to_concepts() {
         use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
-        use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::adapter::content::normalize_chain_name;
         use crate::api::PlexusApi;
 
@@ -4462,7 +3845,7 @@ mod tests {
         pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
-            vec![Arc::new(TagConceptBridger::new())],
+            vec![],
         );
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
@@ -4521,29 +3904,14 @@ mod tests {
             .collect();
         assert_eq!(marks.len(), 2, "should have 2 mark nodes (fragment + provenance)");
 
-        // TagConceptBridger strips # and bridges marks to concepts.
-        let all_refs: Vec<_> = ctx.edges()
-            .filter(|e| e.relationship == "references")
-            .collect();
-        let ref_targets: std::collections::HashSet<String> = all_refs.iter()
-            .map(|e| e.target.to_string()).collect();
-        assert!(ref_targets.contains("concept:travel"), "should reference concept:travel");
-        assert!(ref_targets.contains("concept:avignon"), "should reference concept:avignon");
-
         // Verify persistence round-trip
         drop(engine);
         let engine2 = PlexusEngine::with_store(store);
         engine2.load_all().unwrap();
         let ctx2 = engine2.get_context(&ctx_id).unwrap();
 
-        let refs2: Vec<_> = ctx2.edges()
-            .filter(|e| e.relationship == "references")
-            .collect();
-        assert!(refs2.len() >= 2, "references edges should survive persistence, got {}", refs2.len());
-        let targets2: std::collections::HashSet<String> = refs2.iter()
-            .map(|e| e.target.to_string()).collect();
-        assert!(targets2.contains("concept:travel"), "concept:travel ref should survive persistence");
-        assert!(targets2.contains("concept:avignon"), "concept:avignon ref should survive persistence");
+        assert!(ctx2.get_node(&NodeId::from("concept:travel")).is_some(), "concept:travel survives persistence");
+        assert!(ctx2.get_node(&NodeId::from("concept:avignon")).is_some(), "concept:avignon survives persistence");
     }
 
     // ================================================================
@@ -4556,7 +3924,6 @@ mod tests {
         use crate::adapter::IngestPipeline;
         use crate::adapter::extraction::ExtractionCoordinator;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
-        use crate::adapter::tag_bridger::TagConceptBridger;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store));
@@ -4567,7 +3934,7 @@ mod tests {
         pipeline.register_adapter(Arc::new(ExtractionCoordinator::new()));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
-            vec![Arc::new(TagConceptBridger::new())],
+            vec![],
         );
 
         // Content route works
@@ -4597,7 +3964,6 @@ mod tests {
     async fn pipeline_registers_all_core_enrichments() {
         use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
-        use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::adapter::cooccurrence::CoOccurrenceEnrichment;
         use crate::adapter::discovery_gap::DiscoveryGapEnrichment;
         use crate::adapter::temporal_proximity::TemporalProximityEnrichment;
@@ -4609,7 +3975,6 @@ mod tests {
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             vec![
-                Arc::new(TagConceptBridger::new()),
                 Arc::new(CoOccurrenceEnrichment::new()),
                 Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap")),
                 Arc::new(TemporalProximityEnrichment::new("created_at", 86400000, "temporal_proximity")),
@@ -4621,7 +3986,6 @@ mod tests {
             .map(|e| e.id())
             .collect();
 
-        assert!(enrichment_ids.iter().any(|id| id.starts_with("tag_bridger:")), "should have TagConceptBridger");
         assert!(enrichment_ids.iter().any(|id| id.starts_with("co_occurrence:")), "should have CoOccurrenceEnrichment");
         assert!(enrichment_ids.iter().any(|id| id.starts_with("discovery_gap:")), "should have DiscoveryGapEnrichment");
         assert!(enrichment_ids.iter().any(|id| id.starts_with("temporal:")), "should have TemporalProximityEnrichment");
@@ -4665,7 +4029,6 @@ mod tests {
     async fn full_pipeline_round_trip_with_persistence() {
         use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
-        use crate::adapter::tag_bridger::TagConceptBridger;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store.clone()));
@@ -4675,7 +4038,7 @@ mod tests {
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
-            vec![Arc::new(TagConceptBridger::new())],
+            vec![],
         );
 
         // Ingest content with tags
@@ -4701,7 +4064,7 @@ mod tests {
 
         let concepts: Vec<_> = ctx.nodes().filter(|n| n.node_type == "concept").collect();
         assert!(concepts.iter().any(|c| c.id == NodeId::from("concept:persistence")),
-            "TagConceptBridger should create concept:persistence");
+            "ContentAdapter should create concept:persistence from tag");
 
         // Verify persistence: load from same store
         drop(engine);
@@ -4731,7 +4094,6 @@ mod tests {
     async fn layered_provenance_location_specific() {
         use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
-        use crate::adapter::tag_bridger::TagConceptBridger;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store));
@@ -4741,7 +4103,7 @@ mod tests {
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
-            vec![Arc::new(TagConceptBridger::new())],
+            vec![],
         );
 
         // Carrel-style annotation: text with file, line, and chain_name
@@ -4792,7 +4154,6 @@ mod tests {
     async fn layered_provenance_source_level() {
         use crate::adapter::IngestPipeline;
         use crate::adapter::provenance_adapter::ProvenanceAdapter;
-        use crate::adapter::tag_bridger::TagConceptBridger;
 
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store));
@@ -4802,7 +4163,7 @@ mod tests {
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
-            vec![Arc::new(TagConceptBridger::new())],
+            vec![],
         );
 
         // Trellis-style text: no file/line, just source
@@ -4846,7 +4207,7 @@ mod tests {
             .collect();
         assert!(!contains.is_empty(), "chain should contain the mark");
 
-        // Concept created via tag (TagConceptBridger)
+        // Concept created via tag (ContentAdapter)
         assert!(ctx.get_node(&NodeId::from("concept:reflection")).is_some(),
             "concept:reflection should be created from tag");
     }
@@ -4989,7 +4350,6 @@ emit:
 
     #[tokio::test]
     async fn enrichment_loop_converges_within_budget_for_production_enrichments() {
-        use crate::adapter::tag_bridger::TagConceptBridger;
         use crate::adapter::discovery_gap::DiscoveryGapEnrichment;
         use crate::adapter::temporal_proximity::TemporalProximityEnrichment;
         use crate::graph::{dimension, PropertyValue};
@@ -5000,7 +4360,6 @@ emit:
 
         // Register all production enrichments with representative config
         let registry = Arc::new(EnrichmentRegistry::new(vec![
-            Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
             Arc::new(CoOccurrenceEnrichment::new()) as Arc<dyn Enrichment>,
             Arc::new(DiscoveryGapEnrichment::new("similar_to", "discovery_gap")) as Arc<dyn Enrichment>,
             // 60_000 ms = 60 seconds — tight window for test (production uses 24 h)

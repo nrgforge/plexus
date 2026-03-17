@@ -51,9 +51,6 @@ impl PipelineBuilder {
     ///
     /// Default set: CoOccurrence, DiscoveryGap, TemporalProximity,
     /// and EmbeddingSimilarity (when the `embeddings` feature is enabled).
-    ///
-    /// TagConceptBridger is intentionally excluded — it is domain-specific
-    /// and opt-in via adapter spec `enrichments:` declarations (ADR-025).
     pub fn with_default_enrichments(mut self) -> Self {
         self.enrichments.push(Arc::new(CoOccurrenceEnrichment::new()));
         self.enrichments.push(Arc::new(DiscoveryGapEnrichment::new(

@@ -897,12 +897,12 @@ mod tests {
         let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
         let cid = ctx_id.as_str();
 
-        // Set up pipeline with both adapters and enrichments
+        // Set up pipeline with adapters and enrichments
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
-            vec![Arc::new(crate::adapter::TagConceptBridger::new())],
+            vec![],
         );
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
@@ -912,35 +912,10 @@ mod tests {
             .await
             .unwrap();
 
-        // Add provenance mark with same tags so TagConceptBridger can bridge
-        let chain_id = normalize_chain_name("notes");
-        api.ingest(cid, "provenance", Box::new(
-            ProvenanceInput::CreateChain {
-                chain_id: chain_id.clone(),
-                name: "notes".to_string(),
-                description: None,
-            },
-        )).await.unwrap();
-        api.ingest(cid, "provenance", Box::new(
-            ProvenanceInput::AddMark {
-                mark_id: "mark:provenance:test-1".to_string(),
-                chain_id,
-                file: "src/main.rs".to_string(),
-                line: 1,
-                annotation: "cleanup".to_string(),
-                column: None,
-                mark_type: None,
-                tags: Some(vec!["refactor".into()]),
-            },
-        )).await.unwrap();
-
-        // ContentAdapter creates concept:refactor from the tag.
-        // TagConceptBridger creates a references edge from the mark to the concept.
+        // ContentAdapter creates concept:refactor from the tag
         let ctx = engine.get_context(&ctx_id).unwrap();
         assert!(ctx.get_node(&NodeId::from("concept:refactor")).is_some(),
             "concept should be created from tag");
-        let has_ref = ctx.edges.iter().any(|e| e.relationship == "references");
-        assert!(has_ref, "enrichment should create references edge");
     }
 
     // === Scenario: create_chain not exposed as consumer-facing ===

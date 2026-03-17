@@ -1,7 +1,6 @@
 //! ProvenanceAdapter — routes all provenance write operations through ingest (ADR-012)
 //!
 //! Maps provenance operations to graph mutations via emission.
-//! The enrichment loop handles tag-concept bridging (TagConceptBridger).
 
 use crate::graph::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};

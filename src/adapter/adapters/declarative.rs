@@ -508,10 +508,6 @@ impl DeclarativeAdapter {
 
         for decl in declarations {
             let enrichment: Arc<dyn Enrichment> = match decl.enrichment_type.as_str() {
-                "tag_concept_bridger" => {
-                    let relationship = decl.relationship.as_deref().unwrap_or("references");
-                    Arc::new(crate::adapter::tag_bridger::TagConceptBridger::with_relationship(relationship))
-                }
                 "co_occurrence" => {
                     let source = decl.source_relationship.as_deref().ok_or_else(|| {
                         AdapterError::Internal("co_occurrence enrichment requires source_relationship".into())
@@ -1513,28 +1509,6 @@ emit:
         let enrichments = adapter.enrichments().unwrap();
         assert_eq!(enrichments.len(), 1);
         assert_eq!(enrichments[0].id(), "co_occurrence:exhibits:co_exhibited");
-    }
-
-    // --- Scenario: Default enrichment parameters when omitted ---
-
-    #[test]
-    fn default_enrichment_parameters() {
-        let yaml = r#"
-adapter_id: test-adapter
-input_kind: test.input
-enrichments:
-  - type: tag_concept_bridger
-emit:
-  - create_node:
-      id: "concept:{input.tag}"
-      type: concept
-      dimension: semantic
-"#;
-
-        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
-        let enrichments = adapter.enrichments().unwrap();
-        assert_eq!(enrichments.len(), 1);
-        assert_eq!(enrichments[0].id(), "tag_bridger:references");
     }
 
     // --- Scenario: Unknown enrichment type is rejected ---

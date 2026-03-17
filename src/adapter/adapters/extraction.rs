@@ -1365,7 +1365,7 @@ mod tests {
     //
     // This scenario is architecturally guaranteed: each phase uses its own
     // EngineSink, and the Engine path runs the enrichment loop after every
-    // emit(). Phase 1's emission triggers enrichments (TagConceptBridger),
+    // emit(). Phase 1's emission triggers enrichments,
     // and Phase 2's independent emission triggers another enrichment round
     // (CoOccurrenceEnrichment on cross-phase concepts).
     //
@@ -1428,7 +1428,6 @@ mod tests {
 
         // Both committed independently — enrichments in production would
         // fire after each emission, seeing incremental graph state.
-        // Phase 1's concepts trigger TagConceptBridger.
         // Phase 2's concepts trigger CoOccurrenceEnrichment with cross-phase pairs.
     }
 

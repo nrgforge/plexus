@@ -541,8 +541,7 @@ impl SemanticAdapter {
     ///
     /// Invariant 7 (dual obligation): every adapter emits both semantic content
     /// AND provenance. The chain scopes all marks to this adapter run. Marks
-    /// record where concepts were found, with concept labels as tags for
-    /// TagConceptBridger to bridge.
+    /// record where concepts were found, with concept labels as tags.
     fn add_provenance(&self, emission: &mut Emission, input: &SemanticInput) {
         let file_path = &input.file_path;
         let adapter_id = "extract-semantic";
@@ -1340,70 +1339,6 @@ mod tests {
                 Some(&1.0),
                 "contains edge should have contribution of 1.0 from extract-semantic"
             );
-        }
-    }
-
-    // --- Scenario: SemanticAdapter provenance triggers tag-to-concept bridging (integration) ---
-
-    #[tokio::test]
-    async fn semantic_provenance_triggers_tag_concept_bridging() {
-        use crate::adapter::enrichment::{Enrichment, EnrichmentRegistry};
-        use crate::adapter::tag_bridger::TagConceptBridger;
-        use crate::graph::{ContextId, PlexusEngine};
-        use crate::storage::{SqliteStore, OpenStore};
-
-        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
-        let engine = Arc::new(PlexusEngine::with_store(store));
-        let context_id = ContextId::from_string("test");
-        let mut ctx_init = Context::new("test");
-        ctx_init.id = context_id.clone();
-        engine.upsert_context(ctx_init).unwrap();
-
-        let adapter = provenance_test_adapter(
-            r#"{"concepts": [{"label": "provenance", "confidence": 0.95}], "relationships": []}"#,
-        );
-
-        // Engine-backed sink with TagConceptBridger enrichment
-        let registry = Arc::new(EnrichmentRegistry::new(vec![
-            Arc::new(TagConceptBridger::new()) as Arc<dyn Enrichment>,
-        ]));
-        let sink = EngineSink::for_engine(engine.clone(), context_id.clone())
-            .with_framework_context(crate::adapter::FrameworkContext {
-                adapter_id: "extract-semantic".to_string(),
-                context_id: "test".to_string(),
-                input_summary: None,
-            });
-
-        let input = AdapterInput::new(
-            "extract-semantic",
-            SemanticInput::for_file("test.txt"),
-            "test",
-        );
-
-        adapter.process(&input, &sink).await.unwrap();
-
-        // Run enrichment loop with accumulated events
-        let primary_events = sink.drain_events();
-        crate::adapter::run_enrichment_loop(
-            &engine, &context_id, &registry, &primary_events,
-        ).unwrap();
-
-        // Check that TagConceptBridger created references edges
-        let ctx = engine.get_context(&context_id).expect("context should exist");
-        let references_edges: Vec<_> = ctx
-            .edges()
-            .filter(|e| e.relationship == "references")
-            .collect();
-
-        assert!(
-            !references_edges.is_empty(),
-            "TagConceptBridger should create references edges from marks to concepts"
-        );
-
-        // references edges are cross-dimensional: provenance → semantic
-        for edge in &references_edges {
-            assert_eq!(edge.source_dimension, dimension::PROVENANCE);
-            assert_eq!(edge.target_dimension, dimension::SEMANTIC);
         }
     }
 
