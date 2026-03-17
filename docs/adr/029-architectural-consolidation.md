@@ -63,7 +63,7 @@ Two of the three original bypasses have been eliminated:
 2. **`ProvenanceApi` writes** — `update_mark` and `archive_chain` on `PlexusApi` now route through `ProvenanceInput::UpdateMark`/`ArchiveChain` via the ingest pipeline. The dead write methods (`create_chain`, `add_mark`, `set_chain_status`, `archive_chain`) were removed from `ProvenanceApi`, making it read-only.
 3. **`retract_contributions`** — remains as an intentional bypass. Retraction is a meta-operation (removes contribution slots, prunes edges, recomputes weights), not an adapter emission.
 
-**Rationale:** Routing through the pipeline means these operations participate in the enrichment loop. For `update_mark`, this fixes a latent bug where tag changes didn't trigger `TagConceptBridger` enrichment.
+**Rationale:** Routing through the pipeline means these operations participate in the enrichment loop. For `update_mark`, this fixes a latent bug where tag changes didn't trigger `TagConceptBridger` enrichment. *(Note: this bug is now moot — TagConceptBridger was subsequently removed; tag bridging is domain-specific.)*
 
 ## Consequences
 

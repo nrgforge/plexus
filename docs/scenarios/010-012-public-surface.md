@@ -90,6 +90,8 @@
 
 ## Feature: TagConceptBridger Enrichment (ADR-009 + ADR-010)
 
+> **Removed.** TagConceptBridger was removed — tag bridging is domain-specific. Domains needing this behavior implement their own adapter.
+
 ### Scenario: New mark bridges to existing concept via enrichment
 **Given** a context "provence-research" containing a concept node `concept:travel`
 **And** a chain "reading-notes" in context "provence-research"
@@ -159,12 +161,12 @@
 
 ### Scenario: Full ingest pipeline end-to-end
 **Given** a FragmentAdapter registered with input_kind "fragment"
-**And** a TagConceptBridger and CoOccurrenceEnrichment registered on the engine
+**And** a CoOccurrenceEnrichment registered on the engine
 **And** an existing context "provence-research" with prior fragments tagged "travel"
 **When** `ingest("provence-research", "fragment", {text: "Walk in Avignon", tags: ["travel", "avignon"]})` is called
 **Then** the pipeline executes in order:
   1. FragmentAdapter.process() creates fragment node, concept nodes, tagged_with edges
-  2. Enrichment loop runs: TagConceptBridger and CoOccurrenceEnrichment fire until quiescence
+  2. Enrichment loop runs: CoOccurrenceEnrichment fires until quiescence
   3. FragmentAdapter.transform_events() translates all accumulated events
 **And** the return value is a `Vec<OutboundEvent>` containing domain-meaningful events
 
@@ -198,12 +200,12 @@
   ```
   register_integration("trellis",
       adapter: FragmentAdapter,
-      enrichments: [TagConceptBridger, CoOccurrenceEnrichment],
+      enrichments: [CoOccurrenceEnrichment],
   )
   ```
 **When** `ingest()` is called with input_kind matching the FragmentAdapter
 **Then** the FragmentAdapter processes the input
-**And** both TagConceptBridger and CoOccurrenceEnrichment are available in the enrichment loop
+**And** CoOccurrenceEnrichment is available in the enrichment loop
 
 ### Scenario: Enrichments from multiple integrations are deduplicated
 **Given** integration "trellis" registers enrichment with id "tag-bridger"

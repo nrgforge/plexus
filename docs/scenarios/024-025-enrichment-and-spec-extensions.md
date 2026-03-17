@@ -119,6 +119,9 @@ ADRs: 024 (core and external enrichment architecture), 025 (declarative adapter 
 **And** they fire after any adapter's emission (not just the declaring adapter)
 
 ### Scenario: Default enrichment parameters when omitted
+
+> **Removed.** TagConceptBridger was removed — tag bridging is domain-specific. Domains needing this behavior implement their own adapter.
+
 **Given** a declarative adapter spec with:
   ```yaml
   enrichments:

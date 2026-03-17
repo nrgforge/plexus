@@ -61,11 +61,11 @@ Specs are coupled to the client's domain — a Sketchbin asset has a specific ex
 ### Enrichments are registered per context
 
 Core enrichments (Rust, reactive, fast) are registered with the pipeline:
-- TagConceptBridger, CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment
+- CoOccurrenceEnrichment, EmbeddingSimilarityEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment *(TagConceptBridger was removed — tag bridging is domain-specific)*
 
 External enrichments (llm-orc, background) are also registered, not per-call. They're triggered by emissions but run asynchronously.
 
-Enrichments are coupled to the graph context, not to any specific input domain. TagConceptBridger doesn't care whether the fragment came from Trellis, Carrel, or a Sketchbin asset — it bridges tags to concepts regardless. This is why enrichments are registered per context rather than arriving with requests.
+Enrichments are coupled to the graph context, not to any specific input domain. *(Note: TagConceptBridger was subsequently removed — tag bridging is domain-specific; the remaining enrichments are all domain-agnostic structural algorithms.)* This is why enrichments are registered per context rather than arriving with requests.
 
 ### Provenance is layered
 

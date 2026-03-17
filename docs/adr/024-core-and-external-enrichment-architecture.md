@@ -32,7 +32,7 @@ The enrichment architecture has two categories:
 
 | Enrichment | Pattern | Affordance | ID format |
 |------------|---------|------------|-----------|
-| TagConceptBridger | tag matching | "this mark is about this concept" | `tag_bridger:{relationship}` |
+| ~~TagConceptBridger~~ *(removed — tag bridging is domain-specific)* | tag matching | "this mark is about this concept" | `tag_bridger:{relationship}` |
 | CoOccurrenceEnrichment | shared sources | "these concepts appear together" | `co_occurrence:{source}:{output}` |
 | DiscoveryGapEnrichment | latent-structural delta | "these should be connected but aren't" | `discovery_gap:{trigger}:{output}` |
 | TemporalProximityEnrichment | timestamp proximity | "these happened together" | `temporal:{property}:{threshold}:{output}` |

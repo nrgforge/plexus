@@ -12,7 +12,7 @@
 
 ## Context
 
-The two existing enrichments — TagConceptBridger and CoOccurrenceEnrichment — are generic graph patterns that happen to be hardcoded to specific relationships. CoOccurrenceEnrichment's algorithm is: "find target nodes that share a source via relationship X → bridge them with relationship Y." Currently hardcoded to `tagged_with` → Concept → `may_be_related`.
+The two existing enrichments — TagConceptBridger and CoOccurrenceEnrichment — are generic graph patterns that happen to be hardcoded to specific relationships. *(Note: TagConceptBridger was subsequently removed; tag bridging is domain-specific. The remaining built-in enrichments are all domain-agnostic structural algorithms.)* CoOccurrenceEnrichment's algorithm is: "find target nodes that share a source via relationship X → bridge them with relationship Y." Currently hardcoded to `tagged_with` → Concept → `may_be_related`.
 
 Essay 18 found that domain-specific enrichments (EDDI's "MovementBridger," Carrel's citation co-occurrence) are not new algorithms — they are the same co-occurrence algorithm configured with different relationships:
 
@@ -28,7 +28,7 @@ No new enrichment code is needed for these cases.
 
 ### Tier 0: Parameterized built-ins
 
-CoOccurrenceEnrichment and TagConceptBridger accept configuration parameters instead of hardcoding relationship types. A parameterized instance is declared in the adapter spec:
+CoOccurrenceEnrichment and TagConceptBridger accept configuration parameters instead of hardcoding relationship types. *(Note: TagConceptBridger was subsequently removed; tag bridging is domain-specific.)* A parameterized instance is declared in the adapter spec:
 
 ```yaml
 enrichments:

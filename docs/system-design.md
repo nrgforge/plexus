@@ -93,7 +93,8 @@ The key architectural insight: when DeclarativeAdapter was introduced (ADR-028),
 ### Module: adapter/enrichments
 **Purpose:** Core enrichment implementations — reactive graph intelligence algorithms.
 **Provenance:** Invariants 27, 39, 50 (enrichment behavior); ADR-010, ADR-024, ADR-026
-**Owns:** CoOccurrenceEnrichment, TagConceptBridger, DiscoveryGapEnrichment, TemporalProximityEnrichment, EmbeddingSimilarityEnrichment (+ Embedder trait, VectorStore, FastEmbedEmbedder)
+**Owns:** CoOccurrenceEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment, EmbeddingSimilarityEnrichment (+ Embedder trait, VectorStore, FastEmbedEmbedder)
+**Removed:** TagConceptBridger — tag bridging is domain-specific; domains needing it declare `tag_concept_bridger` in their adapter spec's `enrichments:` section.
 **Depends on:** graph, adapter/enrichment (trait), adapter/types
 **Depended on by:** (registered into adapter/pipeline at construction time)
 
@@ -207,11 +208,12 @@ flowchart LR
     subgraph CoreEnrich["Core Enrichments (inside loop)"]
         direction TB
         cooccur["CoOccurrenceEnrichment<br>shared-source pair detection"]
-        tagbridge["TagConceptBridger<br>tag → concept bridging"]
         discovery["DiscoveryGapEnrichment<br>latent structural absence"]
         temporal["TemporalProximityEnrichment<br>timestamp proximity"]
         embedding["EmbeddingSimilarityEnrichment<br>cosine similarity via embeddings"]
     end
+    %% TagConceptBridger removed — tag bridging is domain-specific;
+    %% consumers declare it via adapter spec enrichments: section.
 
     subgraph ExternalEnrich["External Enrichments (outside loop)"]
         direction TB
@@ -262,14 +264,6 @@ graph LR
     style B fill:#e8f4fd
     style C fill:#e8f4fd
 ```
-
-#### TagConceptBridger
-**Pattern:** Tag-to-concept bridging.
-**Algorithm:** When a provenance-dimension mark node and a semantic-dimension concept node share a tag label, emit a `references` edge bridging provenance to semantic dimensions.
-**Default config:** relationship `references`
-**Parameterized:** Any relationship via `with_relationship()`
-**Fires on:** `NodesAdded`
-**Product note:** This enrichment treats tags as a privileged input. Per product discovery, tags are one form of semantic data — not special. TagConceptBridger should be opt-in via adapter spec declaration, not registered globally. See product-discovery.md § Product Debt.
 
 #### DiscoveryGapEnrichment
 **Pattern:** Latent structural absence detection.
@@ -342,7 +336,7 @@ emit:
 
 Declared enrichments are **global** — they fire after any adapter emission, not just the declaring adapter's (Invariant 35). The registry deduplicates by `id()` across multiple specs.
 
-Available enrichment types for declaration: `co_occurrence`, `tag_concept_bridger`, `discovery_gap`, `temporal_proximity`, `embedding_similarity`.
+Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `temporal_proximity`, `embedding_similarity`. *(`tag_concept_bridger` was removed from the built-in set — tag bridging is domain-specific. Domains that need it can still declare it via this mechanism if a custom implementation is registered.)*
 
 ## Responsibility Matrix
 
@@ -381,7 +375,6 @@ Available enrichment types for declaration: `co_occurrence`, `tag_concept_bridge
 | SemanticAdapter (Phase 3 — internal llm-orc) | adapter/adapters | Essay 25 |
 | DeclarativeAdapter (YAML spec — external llm-orc) | adapter/adapters | ADR-028 |
 | CoOccurrenceEnrichment | adapter/enrichments | ADR-010 |
-| TagConceptBridger | adapter/enrichments | ADR-010 |
 | DiscoveryGapEnrichment | adapter/enrichments | ADR-024 |
 | TemporalProximityEnrichment | adapter/enrichments | ADR-010 |
 | EmbeddingSimilarityEnrichment | adapter/enrichments | ADR-026 |

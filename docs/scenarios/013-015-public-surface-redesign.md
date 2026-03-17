@@ -159,7 +159,6 @@
 
 ### Scenario: Annotate triggers the enrichment loop
 **Given** a context "research" containing concept `concept:refactor`
-**And** a TagConceptBridger enrichment registered
 **When** `api.annotate("research", "notes", "src/main.rs", 1, "cleanup", tags: ["refactor"])` is called
 **Then** a fragment is created with the annotation text and tags
 **And** the enrichment loop runs

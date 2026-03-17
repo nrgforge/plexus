@@ -44,7 +44,7 @@ A structure-dimension node per file tracks which phases have completed. Queryabl
 
 ### Incremental enrichment
 
-Enrichments fire after each phase's emission independently. When Phase 1 adds concept nodes from metadata, TagConceptBridger creates `references` edges. When Phase 2 adds more concepts from heuristic analysis, CoOccurrenceEnrichment detects new pairs. No "wait for all phases" barrier.
+Enrichments fire after each phase's emission independently. When Phase 1 adds concept nodes from metadata, TagConceptBridger creates `references` edges *(Note: TagConceptBridger was subsequently removed; tag bridging is domain-specific)*. When Phase 2 adds more concepts from heuristic analysis, CoOccurrenceEnrichment detects new pairs. No "wait for all phases" barrier.
 
 ### Concurrency control
 

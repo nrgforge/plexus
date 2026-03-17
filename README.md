@@ -7,7 +7,7 @@ Plexus accumulates knowledge from domain data through an adapter pipeline: adapt
 ## Key Capabilities
 
 - **Multi-dimensional graph** — nodes and edges span structure, semantic, relational, temporal, and provenance dimensions
-- **Adapter pipeline** — adapters extract domain data into graph mutations; enrichments (TagConceptBridger, CoOccurrenceEnrichment) react and bridge dimensions automatically
+- **Adapter pipeline** — adapters extract domain data into graph mutations; enrichments (CoOccurrenceEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment, EmbeddingSimilarityEnrichment) react and detect structure automatically
 - **Self-reinforcing edges** — relationship weights evolve based on activation patterns (Hebbian learning)
 - **Provenance tracking** — chains, marks, and links are created automatically through the ingest pipeline, ensuring all knowledge carries both semantic content and provenance
 - **Evidence trails** — "what evidence supports this concept?" answered in a single query across all dimensions

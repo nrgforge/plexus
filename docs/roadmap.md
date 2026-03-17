@@ -32,7 +32,7 @@
 **Changes:**
 - Create `PipelineBuilder` in adapter/pipeline that encapsulates the adapter/enrichment registration logic currently at `mcp/mod.rs:66-96`
 - `PipelineBuilder::default_pipeline(engine, project_dir)` registers ContentAdapter, ExtractionCoordinator, ProvenanceAdapter, and core enrichments
-- **Remove TagConceptBridger from default pipeline registration.** Per product discovery (§ Product Debt): tags are one form of semantic data, not privileged. TagConceptBridger becomes opt-in — consumers declare it in their adapter spec's `enrichments:` section when their domain uses tags. The declarative enrichment mechanism (ADR-025) already supports this. Default pipeline registers only domain-agnostic enrichments: CoOccurrenceEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment, EmbeddingSimilarityEnrichment.
+- **TagConceptBridger has been removed from the codebase.** *(Done — not a pending change.)* Tags are domain-specific; TagConceptBridger was removed rather than made opt-in. Default pipeline registers only domain-agnostic enrichments: CoOccurrenceEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment, EmbeddingSimilarityEnrichment. Domains needing tag-to-concept bridging implement their own adapter.
 - MCP server receives a pre-built `IngestPipeline` (or `PlexusApi`) — no longer constructs it
 - CLI `cmd_analyze` either uses the builder or continues with its bare pipeline (it intentionally skips enrichments)
 - Binary entry point (`bin/plexus.rs`) is the single construction site
@@ -115,7 +115,7 @@ The adapter/ module is organized into submodules matching the system design. All
 
 ### TS-2: Clean pipeline ownership (after WP-1 + WP-2)
 
-Pipeline construction lives in one place (the builder). MCP is a pure thin shell. Adding a new transport (gRPC, REST) requires no pipeline construction knowledge — just `PipelineBuilder::default_pipeline()`. TagConceptBridger is no longer globally registered — consumers opt in via adapter spec declaration.
+Pipeline construction lives in one place (the builder). MCP is a pure thin shell. Adding a new transport (gRPC, REST) requires no pipeline construction knowledge — just `PipelineBuilder::default_pipeline()`. TagConceptBridger has been removed from the codebase — tag bridging is domain-specific; domains that need it implement their own adapter.
 
 ### TS-3: Fully consolidated (after WP-1 + WP-2 + WP-3 + WP-4)
 

@@ -2,6 +2,8 @@
 
 **Status:** Accepted
 
+> **Superseded.** TagConceptBridger was removed from the core engine. Tag bridging is domain-specific — domains that need tag-to-concept bridging implement their own adapter. The four remaining enrichments (CoOccurrence, DiscoveryGap, TemporalProximity, EmbeddingSimilarity) are all domain-agnostic structural algorithms.
+
 **Date:** 2026-02-10
 
 **Research:** [Essay 08](../essays/08-runtime-architecture.md), [Research Log Q3](../research/research-log.md)

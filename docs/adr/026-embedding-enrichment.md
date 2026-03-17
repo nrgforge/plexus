@@ -24,7 +24,7 @@ This is enrichment, not adaptation. An adapter (Disambiguation §10) bridges bet
 
 ### Embedding is an enrichment
 
-Embedding similarity computation is classified as an enrichment, following the same architectural rules as CoOccurrenceEnrichment, TagConceptBridger, DiscoveryGapEnrichment, and TemporalProximityEnrichment. It does not have an `input_kind`, does not receive domain data from a consumer, and does not transform events for a consumer.
+Embedding similarity computation is classified as an enrichment, following the same architectural rules as CoOccurrenceEnrichment, DiscoveryGapEnrichment, and TemporalProximityEnrichment *(TagConceptBridger was subsequently removed — tag bridging is domain-specific)*. It does not have an `input_kind`, does not receive domain data from a consumer, and does not transform events for a consumer.
 
 Invariant 6 applies: enrichments do not produce provenance. Framework-constructed provenance (enrichment ID encoding model identity, timestamp) is sufficient for `similar_to` edges. Invariant 7 (dual obligation) does not apply — it governs adapters that process source material.
 

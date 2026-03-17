@@ -57,7 +57,7 @@ The enrichment loop enforces a maximum round count (default: 10). If quiescence 
 
 - `CoOccurrenceAdapter` becomes `CoOccurrenceEnrichment`. Algorithm unchanged; trigger model changes from schedule-based to event-driven.
 - `ProposalSink` is removed. The "propose, don't merge" principle survives as a design convention: `CoOccurrenceEnrichment` self-caps contributions and only emits `may_be_related` edges.
-- Tag-to-concept bridging moves from inline code in `ProvenanceApi::add_mark()` to a `TagConceptBridger` enrichment.
+- Tag-to-concept bridging moves from inline code in `ProvenanceApi::add_mark()` to a `TagConceptBridger` enrichment. *(Note: TagConceptBridger was subsequently removed; tag bridging is domain-specific.)*
 
 ## Consequences
 
@@ -66,7 +66,7 @@ The enrichment loop enforces a maximum round count (default: 10). If quiescence 
 - One mechanism for all reactive graph intelligence (tag bridging, co-occurrence, future topology detection)
 - Built-in termination via quiescence — resolves the former open question about reflexive adapter cycle convergence
 - Simpler model: enrichment replaces reflexive adapter + ProposalSink + schedule monitor (three unbuilt or partially-built concepts)
-- Enrichments compose: TagConceptBridger and CoOccurrenceEnrichment can both fire in the same loop without coordination
+- Enrichments compose: TagConceptBridger and CoOccurrenceEnrichment can both fire in the same loop without coordination *(Note: TagConceptBridger was subsequently removed; tag bridging is domain-specific.)*
 
 **Negative:**
 

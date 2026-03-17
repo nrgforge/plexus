@@ -120,7 +120,7 @@ Refutable behavior scenarios for ADRs 013–015. Each scenario can be verified a
 **When** `annotate(context_id: "research", chain_name: "notes", file: "src/main.rs", line: 1, annotation: "cleanup", tags: ["#refactor"])` is called
 **Then** a fragment is created with the annotation text and tags
 **And** the enrichment loop runs after the fragment and mark are created
-**And** TagConceptBridger creates a `references` edge from the new mark to `concept:refactor`
+**And** a `references` edge is created from the new mark to `concept:refactor`
 
 ### Scenario: create_chain is not exposed as a consumer-facing operation
 **Given** the PlexusApi public surface

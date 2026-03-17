@@ -34,6 +34,9 @@ ADRs: 019 (phased extraction), 020 (declarative adapter specs), 021 (Phase 3 llm
 **And** the enrichment does not filter source nodes by content type
 
 ### Scenario: TagConceptBridger accepts relationship parameter
+
+> **Removed.** TagConceptBridger was removed — tag bridging is domain-specific. Domains needing this behavior implement their own adapter.
+
 **Given** a TagConceptBridger configured with `relationship: "references"` (default)
 **And** a second TagConceptBridger configured with `relationship: "categorized_by"`
 **When** a mark with tag `"travel"` is added to a context containing `concept:travel`
@@ -88,7 +91,6 @@ ADRs: 019 (phased extraction), 020 (declarative adapter specs), 021 (Phase 3 llm
   ```
 **When** `ingest()` is called
 **Then** the emission contains both semantic output (concept node) and provenance output (chain + mark + contains edge)
-**And** TagConceptBridger creates `references` edges from the mark to matching concepts
 
 ### Scenario: DeclarativeAdapter validates input against schema
 **Given** a declarative adapter spec with `input_schema` requiring fields `file_path` (string) and `tags` (array)
@@ -170,9 +172,9 @@ ADRs: 019 (phased extraction), 020 (declarative adapter specs), 021 (Phase 3 llm
 **And** the contributions are keyed by distinct adapter IDs (e.g., `extract-registration`, `extract-analysis-text`)
 
 ### Scenario: Enrichments fire incrementally after each phase
-**Given** TagConceptBridger and CoOccurrenceEnrichment registered
+**Given** CoOccurrenceEnrichment registered
 **When** Phase 1 adds concept nodes from YAML frontmatter
-**Then** TagConceptBridger creates `references` edges for marks matching those concepts
+**Then** the enrichment loop runs (structural enrichments fire)
 **When** Phase 2 later adds more concept nodes from link extraction
 **Then** CoOccurrenceEnrichment detects new co-occurrence pairs including cross-phase concepts
 
@@ -227,7 +229,7 @@ ADRs: 019 (phased extraction), 020 (declarative adapter specs), 021 (Phase 3 llm
 ### Scenario: External enrichment does not run in enrichment loop
 **Given** a PageRank external enrichment ensemble
 **When** a new fragment is ingested via the normal pipeline
-**Then** the enrichment loop runs (TagConceptBridger, CoOccurrenceEnrichment)
+**Then** the enrichment loop runs (core structural enrichments, e.g. CoOccurrenceEnrichment)
 **And** PageRank does NOT run — it is not registered as a core enrichment
 
 ### Scenario: On-demand external enrichment
@@ -246,6 +248,6 @@ All items resolved. Evidence listed per row.
 | ADR | Violation | Type | Location | Resolution | Status |
 |-----|-----------|------|----------|------------|--------|
 | ADR-022 | CoOccurrenceEnrichment hardcodes `"tagged_with"` and `"may_be_related"` | wrong-structure | `src/adapter/cooccurrence.rs` | Refactored: `with_relationships()` constructor accepts parameters; `new()` defaults to original values | **Resolved** — tests: `accepts_relationship_parameters`, `default_backward_compatible` in `cooccurrence.rs` |
-| ADR-022 | TagConceptBridger hardcodes `"references"` | wrong-structure | `src/adapter/tag_bridger.rs` | Refactored: `with_relationship()` constructor accepts parameter; `new()` defaults to `"references"` | **Resolved** — tests: `accepts_relationship_parameter` in `tag_bridger.rs` |
+| ADR-022 | TagConceptBridger hardcodes `"references"` | wrong-structure | `src/adapter/tag_bridger.rs` | Refactored: `with_relationship()` constructor accepts parameter; `new()` defaults to `"references"` | **Removed** — TagConceptBridger subsequently removed; tag bridging is domain-specific. |
 | ADR-022 | CoOccurrenceEnrichment `id()` returns static `"co-occurrence"` | wrong-structure | `src/adapter/cooccurrence.rs` | ID generated from parameters: `co_occurrence:{source}:{output}` | **Resolved** — test: `parameterized_id_from_relationships` in `cooccurrence.rs` |
 | ADR-022 | Enrichment assumes fragment source nodes (not structure-aware) | wrong-structure | `src/adapter/cooccurrence.rs` | Fires based on relationship structure, not node content type (Invariant 50) | **Resolved** — test: `structure_aware_fires_for_any_source_node_type` in `cooccurrence.rs` |

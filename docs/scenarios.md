@@ -150,6 +150,9 @@ Addresses: ADR-019, Invariant 5/7 (dual obligation — semantic content AND prov
 **And** each `contains` edge has a contribution of 1.0 from `extract-semantic`
 
 ### Scenario: SemanticAdapter provenance triggers tag-to-concept bridging (integration)
+
+> **Removed.** TagConceptBridger was removed — tag bridging is domain-specific. Domains needing this behavior implement their own adapter.
+
 **Given** a SemanticAdapter with real `EngineSink::for_engine()` and a `TagConceptBridger` enrichment registered on the engine
 **When** the adapter emits concepts and marks with matching tags
 **Then** the enrichment loop creates `references` edges from marks to concept nodes
@@ -298,7 +301,6 @@ Addresses: ADR-028 — content is always fragment + provenance. ContentAdapter u
 **And** a chain node is created (auto-generated from source)
 **And** a mark node is created with source "trellis" as origin provenance
 **And** a `contains` edge connects the chain to the mark
-**And** TagConceptBridger creates concept nodes for "architecture" and "semantics"
 
 ### Scenario: Chain name normalization
 **Given** the full adapter pipeline
@@ -307,6 +309,9 @@ Addresses: ADR-028 — content is always fragment + provenance. ContentAdapter u
 **And** a second call with `chain_name: "field notes"` reuses the same chain
 
 ### Scenario: Content ingest triggers enrichment loop
+
+> **Removed.** TagConceptBridger was removed — tag bridging is domain-specific. Domains needing this behavior implement their own adapter.
+
 **Given** the full adapter pipeline with TagConceptBridger registered
 **When** `ingest` is called with content data containing tags
 **Then** TagConceptBridger fires after the emission
@@ -329,8 +334,7 @@ Addresses: ADR-028 — server registers three core adapters and all core enrichm
 ### Scenario: Pipeline includes all core enrichments
 **Given** the server is initialized
 **When** the enrichment registry is constructed
-**Then** the registry contains TagConceptBridger
-**And** CoOccurrenceEnrichment
+**Then** the registry contains CoOccurrenceEnrichment
 **And** EmbeddingSimilarityEnrichment
 **And** DiscoveryGapEnrichment
 **And** TemporalProximityEnrichment
@@ -346,7 +350,7 @@ Addresses: ADR-028 — server registers three core adapters and all core enrichm
 **Given** the server with full pipeline, backed by `PlexusEngine` with `SqliteStore`
 **When** a client calls `ingest` with content data (text + tags + source)
 **Then** ContentAdapter processes it producing fragment + provenance
-**And** enrichments fire (TagConceptBridger at minimum)
+**And** enrichments fire
 **And** all emissions are persisted to the store
 **And** a new engine loaded from the same store contains the fragment, chain, mark, and concept nodes
 

@@ -38,7 +38,7 @@ The FragmentAdapter is an external adapter with `input_kind: "fragment"`. It rec
 - A **mark node** — `ContentType::Provenance`, dimension `"provenance"`, carrying the fragment's text as annotation, source file reference, and tags.
 - A **`contains` edge** — from chain to mark, within the provenance dimension.
 
-The mark's tags trigger automatic tag-to-concept bridging via `TagConceptBridger`, creating `references` edges from the mark to matching concept nodes. This makes every fragment's origin graph-traversable without any additional enrichment code.
+The mark's tags trigger automatic tag-to-concept bridging via `TagConceptBridger`, creating `references` edges from the mark to matching concept nodes. This makes every fragment's origin graph-traversable without any additional enrichment code. *(Note: TagConceptBridger was subsequently removed; tag bridging is domain-specific.)*
 
 **Alternatives considered:**
 

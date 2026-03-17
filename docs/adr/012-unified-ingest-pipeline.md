@@ -42,7 +42,7 @@ An integration bundles an adapter with its enrichments for a consumer:
 ```
 register_integration("trellis",
     adapter: FragmentAdapter,
-    enrichments: [TagConceptBridger, CoOccurrenceEnrichment],
+    enrichments: [CoOccurrenceEnrichment],  # TagConceptBridger removed — tag bridging is domain-specific
 )
 ```
 

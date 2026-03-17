@@ -75,7 +75,7 @@ Adapters have a dual obligation: **semantic contribution** (concepts, relationsh
 - **Semantic output:** domain-meaningful nodes and edges (e.g., fragment node, concept nodes, `tagged_with` edges)
 - **Provenance output:** a chain node (deterministic ID: `chain:{adapter_id}:{source}`), mark nodes (with annotation text, source file, and tags), and `contains` edges (chain → mark)
 
-The mark's tags trigger automatic tag-to-concept bridging via `TagConceptBridger` enrichment, creating cross-dimensional `references` edges from provenance to semantic dimension. This makes every concept's origin graph-traversable: concept ← `references` ← mark ← `contains` ← chain → source.
+The mark's tags trigger automatic tag-to-concept bridging via `TagConceptBridger` enrichment, creating cross-dimensional `references` edges from provenance to semantic dimension. This makes every concept's origin graph-traversable: concept ← `references` ← mark ← `contains` ← chain → source. *(Note: TagConceptBridger was subsequently removed; tag bridging is domain-specific.)*
 
 Adapters also continue to annotate nodes and edges with extraction metadata (confidence, method, source location). The engine continues to add framework context (adapter ID, timestamp, context ID). These two layers provide operational provenance. The chain/mark structure provides epistemological provenance — where knowledge came from, not just how it was processed.
 

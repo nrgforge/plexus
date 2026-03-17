@@ -130,6 +130,8 @@
 
 > **Superseded.** Under the enrichment model (ADR-010), the `TagConceptBridger` enrichment bridges bidirectionally — new concepts retroactively bridge to existing marks. See scenarios in [010-012-public-surface.md](./010-012-public-surface.md), Feature: TagConceptBridger Enrichment.
 
+> **Removed.** TagConceptBridger was removed — tag bridging is domain-specific. Domains needing this behavior implement their own adapter.
+
 ### Scenario: Mark with no tags gets no references edges
 **Given** a context "provence-research" containing concept nodes
 **And** a chain "reading-notes" in context "provence-research"

@@ -79,7 +79,7 @@ Enrichment type resolution is a simple match on the `type` string:
 
 | `type` | Constructor | Parameters |
 |--------|-------------|------------|
-| `tag_concept_bridger` | `TagConceptBridger::with_relationship()` | `relationship` (default: `"references"`) |
+| ~~`tag_concept_bridger`~~ | ~~`TagConceptBridger::with_relationship()`~~ | *(removed — tag bridging is domain-specific; implement in your own adapter)* |
 | `co_occurrence` | `CoOccurrenceEnrichment::with_relationships()` | `source_relationship`, `output_relationship` |
 | `discovery_gap` | `DiscoveryGapEnrichment::new()` | `trigger_relationship`, `output_relationship` |
 | `temporal_proximity` | `TemporalProximityEnrichment::new()` | `timestamp_property`, `threshold_ms`, `output_relationship` |
