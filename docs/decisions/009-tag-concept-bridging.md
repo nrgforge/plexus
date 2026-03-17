@@ -6,7 +6,7 @@
 
 **Date:** 2026-02-10
 
-**Research:** [Essay 08](../essays/08-runtime-architecture.md), [Research Log Q3](../research/research-log.md)
+**Research:** [Essay 08](../essays/08-runtime-architecture.md)
 
 **Domain model:** [domain-model.md](../domain-model.md) — Invariants 27, 29
 

@@ -4,7 +4,7 @@
 
 **Date:** 2026-02-08
 
-**Research:** [Essay 07](../essays/07-first-adapter-pair.md), [Research Log](../research/research-log.md)
+**Research:** [Essay 07](../essays/07-first-adapter-pair.md)
 
 **Domain model:** [domain-model.md](../domain-model.md) — Fragment adapter pair section
 

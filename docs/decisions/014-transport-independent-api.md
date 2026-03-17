@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 
-**Research:** [Essay 14](../essays/14-public-surface-redesign.md), [Research Log Q2](../research/research-log.md)
+**Research:** [Essay 14](../essays/14-public-surface-redesign.md)
 
 **Domain model:** [domain-model.md](../domain-model.md) — transport, ingest, consumer, outbound event
 

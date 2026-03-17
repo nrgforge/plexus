@@ -1,6 +1,6 @@
 # Behavior Scenarios: Semantic Adapter Layer
 
-Derived from [ADR-001](../adr/001-semantic-adapter-architecture.md) and the [domain model](../domain-model.md). Each scenario is refutable — it can be clearly true or false against running software. All terms follow the domain model vocabulary.
+Derived from [ADR-001](../decisions/001-semantic-adapter-architecture.md) and the [domain model](../domain-model.md). Each scenario is refutable — it can be clearly true or false against running software. All terms follow the domain model vocabulary.
 
 **Scope:** Adapter layer infrastructure — emission validation, sinks, provenance, routing, events, scheduling. For reinforcement mechanics and scale normalization, see [003-reinforcement-mechanics.md](003-reinforcement-mechanics.md).
 

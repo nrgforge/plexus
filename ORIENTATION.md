@@ -14,7 +14,7 @@ Plexus is a Rust library and MCP server for building knowledge graphs with prove
 |---|---|
 | Understand the architecture | [`docs/system-design.md`](docs/system-design.md) |
 | Find where something lives in code | [`docs/references/field-guide.md`](docs/references/field-guide.md) |
-| Understand a design decision | [`docs/adr/`](docs/adr/) (30 ADRs, 000-029) |
+| Understand a design decision | [`docs/decisions/`](docs/decisions/) (30 ADRs, 000-029) |
 | Read the domain vocabulary | [`docs/domain-model.md`](docs/domain-model.md) |
 | See behavior scenarios | [`docs/scenarios.md`](docs/scenarios.md) |
 | Understand the build roadmap | [`docs/roadmap.md`](docs/roadmap.md) |
@@ -32,9 +32,12 @@ docs/
 ├── product-discovery.md ← stakeholder map, jobs, value tensions
 ├── adr/                ← 30 architecture decision records (000-029)
 ├── essays/             ← 26 research essays
+├── papers/             ← publication drafts (plexus-design, semantic-extraction)
 ├── references/
-│   └── field-guide.md  ← module-to-code mapping, design rationale
-└── logs/               ← archived research logs
+│   ├── field-guide.md  ← module-to-code mapping, design rationale
+│   ├── experiment-data/ ← raw evidence trail for paper claims
+│   └── gold-standards/  ← measurement baselines for extraction evaluation
+└── scenarios/          ← scenario suite details
 ```
 
 ## Current State
@@ -47,7 +50,7 @@ All five work packages from the architectural consolidation roadmap are complete
 - **WP-4:** ADR-029 dead code cleanup (PhaseStatus, pulldown-cmark, parse_response, apply_mutation removed)
 - **WP-5:** Domain model open questions resolved
 
-362 library tests passing. No known regressions.
+364 library tests passing. No known regressions.
 
 ## Key Architectural Decisions
 

@@ -125,7 +125,7 @@ plexus/
 
 ## Research
 
-See [`docs/essays/`](docs/essays/) for research essays and [`docs/adr/`](docs/adr/) for architectural decisions.
+See [`docs/essays/`](docs/essays/) for research essays and [`docs/decisions/`](docs/decisions/) for architectural decisions.
 
 See the [Integration Guide](docs/integration-guide.md) for adapter pipeline architecture, writing custom adapters, and application integration patterns.
 

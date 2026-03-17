@@ -226,5 +226,5 @@ ADRs: 024 (core and external enrichment architecture), 025 (declarative adapter 
 | ADR-025 | `Primitive` enum has no `UpdateProperties` variant | missing | `src/adapter/declarative.rs` | Add `UpdateProperties(UpdatePropertiesPrimitive)` variant with `node_id` and `properties` fields |
 | ADR-025 | No `from_yaml()` constructor | missing | `src/adapter/declarative.rs` | Add `Deserialize` derives to all spec structs; implement `from_yaml(&str) -> Result<Self, AdapterError>` |
 | ADR-025 | No `Deserialize` derives on spec structs | missing | `src/adapter/declarative.rs` | Add `#[derive(Deserialize)]` to `DeclarativeSpec`, `Primitive`, `CreateNodePrimitive`, `CreateEdgePrimitive`, `ForEachPrimitive`, `CreateProvenancePrimitive`, `IdStrategy`, `InputField` |
-| ADR-022 | §Tier 1 says "design deferred" | exists (stale) | `docs/adr/022-parameterized-enrichments.md` | Add supersession note: Tier 1 cancelled by ADR-024 |
-| ADR-023 | Title and body use "graph analysis" | exists (stale terminology) | `docs/adr/023-graph-analysis.md` | Add supersession note: terminology updated to "external enrichment" by ADR-024 |
+| ADR-022 | §Tier 1 says "design deferred" | exists (stale) | `docs/decisions/022-parameterized-enrichments.md` | Add supersession note: Tier 1 cancelled by ADR-024 |
+| ADR-023 | Title and body use "graph analysis" | exists (stale terminology) | `docs/decisions/023-graph-analysis.md` | Add supersession note: terminology updated to "external enrichment" by ADR-024 |

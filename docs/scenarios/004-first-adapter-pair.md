@@ -1,6 +1,6 @@
 # Behavior Scenarios: First Adapter Pair
 
-Derived from [ADR-004](../adr/004-first-adapter-pair.md), [ADR-005](../adr/005-normalization-floor.md), and the [domain model](../domain-model.md). Each scenario is refutable — it can be clearly true or false against running software. All terms follow the domain model vocabulary.
+Derived from [ADR-004](../decisions/004-first-adapter-pair.md), [ADR-005](../decisions/005-normalization-floor.md), and the [domain model](../domain-model.md). Each scenario is refutable — it can be clearly true or false against running software. All terms follow the domain model vocabulary.
 
 **Scope:** FragmentAdapter, CoOccurrenceAdapter, and normalization floor. For adapter infrastructure (emission validation, sinks, provenance, routing), see [001-semantic-adapter-layer.md](001-semantic-adapter-layer.md). For contribution tracking and scale normalization, see [003-reinforcement-mechanics.md](003-reinforcement-mechanics.md).
 

@@ -40,7 +40,7 @@ All experiment materials are preserved in the repository for reproducibility.
 - `docs/essays/02-opacity-problem.md` — Essay 02, *The Opacity Problem* (117 lines, conceptual/philosophical)
 - `docs/essays/12-provenance-as-epistemological-infrastructure.md` — Essay 12, *Provenance as Epistemological Infrastructure* (104 lines, domain theory)
 
-**Gold standard:** `docs/research/gold-standards/24-semantic-extraction-decomposition.md` — Claude-produced reference extractions (13 entities, 10 relationships, 5 themes for Essay 02; 13 entities, 8 relationships, 5 themes for Essay 12). Corrected during research: "zone of proximal development" removed from Essay 02 (appears in Essay 04, not Essay 02).
+**Gold standard:** `docs/references/gold-standards/24-semantic-extraction-decomposition.md` — Claude-produced reference extractions (13 entities, 10 relationships, 5 themes for Essay 02; 13 entities, 8 relationships, 5 themes for Essay 12). Corrected during research: "zone of proximal development" removed from Essay 02 (appears in Essay 04, not Essay 02).
 
 **Ensembles (llm-orc 0.15.10):**
 

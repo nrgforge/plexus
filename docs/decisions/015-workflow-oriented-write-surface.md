@@ -2,7 +2,7 @@
 
 **Status:** Superseded by [ADR-028](028-universal-mcp-ingest.md)
 
-**Research:** [Essay 14](../essays/14-public-surface-redesign.md), [Research Log Q2](../research/research-log.md)
+**Research:** [Essay 14](../essays/14-public-surface-redesign.md)
 
 **Domain model:** [domain-model.md](../domain-model.md) — annotate, mark, chain, ingest, transport
 

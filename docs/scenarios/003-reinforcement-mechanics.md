@@ -1,6 +1,6 @@
 # Behavior Scenarios: Reinforcement Mechanics
 
-Derived from [ADR-003](../adr/003-reinforcement-mechanics.md) and the [domain model](../domain-model.md). Each scenario is refutable — it can be clearly true or false against running software. All terms follow the domain model vocabulary.
+Derived from [ADR-003](../decisions/003-reinforcement-mechanics.md) and the [domain model](../domain-model.md). Each scenario is refutable — it can be clearly true or false against running software. All terms follow the domain model vocabulary.
 
 **Scope:** Per-adapter contribution tracking, scale normalization, and WeightsChanged events. For adapter layer infrastructure (emission validation, sinks, provenance, routing), see [001-semantic-adapter-layer.md](001-semantic-adapter-layer.md).
 
