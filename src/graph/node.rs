@@ -85,15 +85,15 @@ impl From<String> for NodeId {
 pub enum ContentType {
     /// Source code
     Code,
-    /// Movement/gesture data
+    /// Movement/gesture data (reserved for EDDI domain adapter)
     Movement,
-    /// Narrative/text content
+    /// Narrative/text content (reserved for Trellis domain adapter)
     Narrative,
     /// Abstract concept
     Concept,
     /// Document (markdown, etc.)
     Document,
-    /// Agent definition
+    /// Agent definition (reserved for Manza domain adapter)
     Agent,
     /// Provenance tracking (chains, marks, links)
     Provenance,
