@@ -4,11 +4,11 @@
 //! mutations via sink-based progressive emission.
 //!
 //! Submodule structure (system design v1.0):
-//! - sink/       — emission contract (AdapterSink, EngineSink, provenance)
-//! - enrichment/ — enrichment contract and loop
-//! - pipeline/   — ingest pipeline, input routing
-//! - adapters/   — domain adapter implementations
-//! - enrichments/— core enrichment implementations
+//! - sink/        — emission contract (AdapterSink, EngineSink, provenance)
+//! - enrichment/  — enrichment contract and loop
+//! - pipeline/    — ingest pipeline, input routing
+//! - adapters/    — domain adapter implementations
+//! - enrichments/ — core enrichment implementations
 //! - types, traits, cancel — shared types at module root
 
 mod cancel;
@@ -21,11 +21,7 @@ mod traits;
 mod types;
 
 mod adapters;
-pub mod cooccurrence;
-pub mod discovery_gap;
-pub mod embedding;
-pub mod temporal_proximity;
-mod tag_bridger;
+mod enrichments;
 
 // Re-exports: public API unchanged
 pub use cancel::CancellationToken;
@@ -41,7 +37,7 @@ pub use types::{
     PropertyUpdate, Removal, chain_node, concept_node, file_node, mark_node,
 };
 
-// Adapter submodule re-exports (preserve crate::adapter::content::* paths)
+// Adapter submodule re-exports (preserve crate::adapter::<name>::* paths)
 pub use adapters::content;
 pub use adapters::declarative;
 pub use adapters::extraction;
@@ -49,14 +45,21 @@ pub use adapters::graph_analysis;
 pub use adapters::provenance_adapter;
 pub use adapters::semantic;
 
-// Flat type re-exports for convenience
+// Flat adapter type re-exports
 pub use content::{ContentAdapter, FragmentInput, normalize_chain_name};
 pub use declarative::DeclarativeAdapter;
 pub use extraction::ExtractionCoordinator;
 pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 
-// Enrichment re-exports
+// Enrichment submodule re-exports (preserve crate::adapter::<name>::* paths)
+pub use enrichments::cooccurrence;
+pub use enrichments::discovery_gap;
+pub use enrichments::embedding;
+pub use enrichments::tag_bridger;
+pub use enrichments::temporal_proximity;
+
+// Flat enrichment type re-exports
 pub use cooccurrence::CoOccurrenceEnrichment;
 pub use discovery_gap::DiscoveryGapEnrichment;
 pub use embedding::{Embedder, EmbeddingError, EmbeddingSimilarityEnrichment, InMemoryVectorStore, VectorStore};

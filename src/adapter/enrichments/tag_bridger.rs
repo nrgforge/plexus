@@ -9,9 +9,9 @@
 //!
 //! Idempotent: checks for existing edges before emitting.
 
-use super::enrichment::Enrichment;
+use crate::adapter::enrichment::Enrichment;
 use crate::graph::events::GraphEvent;
-use super::types::Emission;
+use crate::adapter::types::Emission;
 use crate::graph::{dimension, Context, Edge, NodeId, PropertyValue};
 use std::collections::HashSet;
 
