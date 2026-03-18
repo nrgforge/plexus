@@ -1,44 +1,64 @@
 # Roadmap: Plexus
 
 **Last updated:** 2026-03-17
-**Derived from:** System Design v1.0, ADR-029, Essay 26, conformance audit
+**Derived from:** System Design v1.0, ADR-029, Essay 26, conformance audit, operationalization design
 
-## Current Work Packages
+## Current Cycle: Operationalization (2026-03-17 — )
 
-### WP-6: End-to-end pipeline integration testing
+**Objective:** Make Plexus production-ready for Trellis integration. Two parallel tracks.
+**Design spec:** `docs/superpowers/specs/2026-03-17-operationalization-design.md`
 
-**Objective:** Verify the full pipeline works end-to-end through the MCP transport layer — not just at the pipeline level. Close the MCP-layer test gaps identified in the conformance audit.
+### Track A — Phase 2 Pipeline Design (RDD)
 
-**Changes:**
-- Test MCP `ingest` tool handler directly (transport exposes ingest, no `annotate`)
-- Test explicit `input_kind` routing through MCP boundary
-- Test classification dispatch (no `input_kind` → classifier → pipeline)
-- Test error propagation from classifier through MCP response
-- Test Phase 3 provenance chains from file extraction (structural provenance)
-- Verify `EmbeddingSimilarityEnrichment` integration behind `embeddings` feature flag
+| Phase | Scope | Status |
+|-------|-------|--------|
+| Model | Module, ModuleRegistry, StructuralOutput — extend domain model | Pending |
+| Decide | ADRs for dispatch design, output schema, default modules | Pending |
+| Architect | Module decomposition within adapter/ | Pending |
+| Build | TDD — markdown structure parser as first module | Pending |
 
-**Scenarios covered:**
-- Transport exposes ingest tool (scenarios.md)
-- Ingest with explicit input_kind routes directly
-- Ingest without input_kind triggers classification
-- Ingest returns error on unrecognized input shape
-- Pipeline-derived structural provenance (file extraction)
+### Track B — Operationalization
 
-**Dependencies:** None — all infrastructure exists
+| WP | Title | Dependencies | Status |
+|----|-------|-------------|--------|
+| WP-B1 | .llm-orc cleanup | None | Pending |
+| WP-B2 | Tier 1 acceptance tests | WP-B1 | Pending |
+| WP-B3 | Research graduation | WP-B2 | Pending |
+| WP-B4 | Tier 2 acceptance tests | Track A, WP-B2 | Pending |
 
-**Open questions:**
-- MCP server testability: does `rmcp` support in-process testing, or do tests need to exercise `PlexusApi` at the transport boundary?
-- ExtractionCoordinator Phase 2/3 test strategy: mock llm-orc subprocess or test with real local model?
+### Dependency Graph
+
+```
+Track A (RDD)                    Track B (Operationalization)
+─────────────                    ───────────────────────────
+                                 WP-B1: .llm-orc cleanup
+MODEL ──────────►                    │
+DECIDE ─────────►                    ▼
+ARCHITECT ──────►                WP-B2: Tier 1 acceptance tests
+BUILD ──────────►                    │
+       │                             ▼
+       │                         WP-B3: Research graduation
+       │                             │
+       └──────────┬──────────────────┘
+                  ▼
+              WP-B4: Tier 2 acceptance tests
+```
 
 ---
 
 ## Open Decision Points
 
-- **SemanticAdapter / DeclarativeAdapter convergence** — ADR-028 says they merge. They haven't. Keep dual existence? Execute convergence? Rename to clarify?
-- **Phase 2 extraction** — No adapter exists post-ADR-029. Rebuild? Collapse to 2 phases? Defer until concrete use case?
-- **Pipeline construction location** — Currently in `PipelineBuilder`. Consider extracting to transport-neutral binary entry point.
-- **Batched normalization / persist** — O(edges × adapters) per emission scaling concern. Requires profiling data to justify.
-- **Context field encapsulation** — `Context.nodes` and `Context.edges` are public fields. Enable future `Vec<Edge>` → `HashMap` migration.
+- **Pipeline construction location** — Currently in `PipelineBuilder`. Consider extracting to transport-neutral binary entry point. Deferred — revisit if transport proliferation creates duplication.
+- **Batched normalization / persist** — O(edges × adapters) per emission scaling concern. Deferred — requires profiling data from real Trellis workloads.
+- **Context field encapsulation** — `Context.nodes` and `Context.edges` are public fields. Enable future `Vec<Edge>` → `HashMap` migration. Deferred — internal refactor, no consumer impact.
+- **Release process** — Crate publishing, semver, changelogs. Deferred — downstream of operationalization.
+- **Research graduation format** — How to archive RDD research corpus once it's served its purpose. Defined during WP-B3 execution.
+
+### Resolved This Cycle
+
+- **Phase 2 extraction** — Track A: RDD cycle to design Phase 2 module system (MIME-dispatched router, registered structural analyzers, output feeds Phase 3).
+- **SemanticAdapter / DeclarativeAdapter convergence** — Deferred. Both serve distinct roles (internal vs. consumer-owned). Revisit after Trellis integration reveals whether convergence is needed.
+- **WP-6 scope** — Absorbed into WP-B2 (Tier 1 acceptance tests). MCP-layer test gaps from WP-6 become part of the ingest contract tests.
 
 ---
 
