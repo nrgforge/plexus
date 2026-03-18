@@ -1,12 +1,16 @@
 # ORIENTATION
 
-**Project:** Plexus — knowledge graph engine with provenance tracking
+**Project:** Plexus — knowledge graph engine with self-reinforcing edges
 **Current phase:** BUILD complete (architectural consolidation)
-**Last updated:** 2026-03-16
+**Last updated:** 2026-03-17
 
 ## What This Project Is
 
-Plexus is a Rust library and MCP server for building knowledge graphs with provenance tracking. It transforms domain-specific input (text fragments, files, LLM extraction results, YAML specs) into a weighted graph with per-adapter contribution tracking and reactive enrichment. All knowledge carries both semantic content and provenance (Invariant 7).
+Plexus is a knowledge graph engine that derives structure from domain-specific input, strengthens relationships through repeated co-occurrence, and tracks provenance for all knowledge. Consumer applications — creative writing scaffolding, interactive performance, research coordination, code analysis — plug in via adapters and Plexus handles graph mechanics: contribution tracking, enrichment, normalization, and persistence.
+
+The core value proposition is cross-domain convergence. Multiple applications can write into a shared context, and because concept identity is deterministic, the graph surfaces connections that would remain latent within any single application. A concept that appears in both a research tool and a writing tool gets reinforced by both — the structure that emerges from the intersection is genuinely novel.
+
+It ships as an embeddable Rust library and an MCP server.
 
 ## Where to Start
 
@@ -27,7 +31,7 @@ ORIENTATION.md          ← you are here
 docs/
 ├── system-design.md    ← module decomposition, dependency graph, pipeline flow
 ├── domain-model.md     ← glossary, invariants, relationships
-├── scenarios.md        ← behavior scenarios (Given/When/Then)
+├── scenarios.md        ← table of contents for scenario suites
 ├── roadmap.md          ← work packages, dependencies, transition states
 ├── product-discovery.md ← stakeholder map, jobs, value tensions
 ├── decisions/          ← 30 architecture decision records (000-029)
@@ -39,7 +43,7 @@ docs/
 │   ├── field-guide.md  ← module-to-code mapping, design rationale
 │   ├── experiment-data/ ← raw evidence trail for paper claims
 │   └── gold-standards/  ← measurement baselines for extraction evaluation
-└── scenarios/          ← scenario suite details
+└── scenarios/          ← 11 scenario suite files (Given/When/Then)
 ```
 
 ## Current State
@@ -65,7 +69,7 @@ All five work packages from the architectural consolidation roadmap are complete
 | ADR-012 | Single write path via IngestPipeline | Accepted, implemented |
 | ADR-014 | Transport-independent PlexusApi facade | Accepted, implemented |
 | ADR-028 | Universal MCP ingest + declarative adapter specs | Accepted, implemented |
-| ADR-029 | Architectural consolidation decisions | Accepted, in progress |
+| ADR-029 | Architectural consolidation decisions | Accepted, implemented |
 
 ## Open Questions
 
