@@ -1,6 +1,6 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-03-17
+**Last updated:** 2026-03-18
 **Derived from:** System Design v1.0, ADR-029, Essay 26, conformance audit, operationalization design
 
 ## Current Cycle: Operationalization (2026-03-17 — )
@@ -21,10 +21,10 @@
 
 | WP | Title | Dependencies | Status |
 |----|-------|-------------|--------|
-| WP-B1 | .llm-orc cleanup | None | Pending |
-| WP-B2 | Tier 1 acceptance tests | WP-B1 | Pending |
-| WP-B3 | Research graduation | WP-B2 | Pending |
-| WP-B4 | Tier 2 acceptance tests | Track A, WP-B2 | Pending |
+| WP-B1 | .llm-orc cleanup | None | Done (`e29c081`) |
+| WP-B2 | Tier 1 acceptance tests | WP-B1 | Done (`4d82b59`, `83176ad`, `6712562`, `a012c5b`) |
+| WP-B3 | Research graduation | WP-B2 | Done (`b917ae6`, `1041ef7`) |
+| WP-B4 | Tier 2 acceptance tests | Track A, WP-B2 | Pending — awaits Track A completion |
 
 ### Dependency Graph
 
@@ -52,7 +52,7 @@ BUILD ──────────►                    │
 - **Batched normalization / persist** — O(edges × adapters) per emission scaling concern. Deferred — requires profiling data from real Trellis workloads.
 - **Context field encapsulation** — `Context.nodes` and `Context.edges` are public fields. Enable future `Vec<Edge>` → `HashMap` migration. Deferred — internal refactor, no consumer impact.
 - **Release process** — Crate publishing, semver, changelogs. Deferred — downstream of operationalization.
-- **Research graduation format** — How to archive RDD research corpus once it's served its purpose. Defined during WP-B3 execution.
+- **Research graduation format** — Resolved: `docs/essays/` moved to `docs/archive/essays/`. Research corpus preserved, operational docs remain at top level.
 
 ### Resolved This Cycle
 
