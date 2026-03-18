@@ -1,4 +1,19 @@
-//! Integration tests for cancellation, progressive emission, and end-to-end adapter scenarios
+//! Integration tests for cancellation, progressive emission, and end-to-end adapter scenarios.
+//!
+//! ## Audit Status (2026-03-18)
+//!
+//! These tests were audited against the Tier 1 acceptance tests in `tests/acceptance/`.
+//!
+//! - **10 tests redundant** — contracts now covered by acceptance tests (ingest, extraction,
+//!   enrichment, provenance, contribution, persistence, degradation, query).
+//! - **22 tests unit-level** — test internal implementation details (mock enrichments,
+//!   cancellation, EngineSink mechanics, loop convergence). Should be relocated to their
+//!   respective module `#[cfg(test)]` blocks over time.
+//! - **24 tests unique** — cover contracts not yet in acceptance tests (embedding enrichment,
+//!   declarative adapter, scale scenarios, normalization, layered provenance, JSON wire format).
+//!   Candidates for migration to `tests/acceptance/` in a future cycle.
+//!
+//! The canonical contract test suite is now `tests/acceptance/` (25 tests, 8 contract areas).
 
 #[cfg(test)]
 mod tests {
