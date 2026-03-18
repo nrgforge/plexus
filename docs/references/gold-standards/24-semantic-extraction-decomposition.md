@@ -11,7 +11,7 @@ All recall figures in Essay 24 use 13 entities for Essay 02.
 
 ## Essay 02 — The Opacity Problem
 
-Source: `docs/essays/02-opacity-problem.md` (117 lines)
+Source: `docs/archive/essays/02-opacity-problem.md` (117 lines)
 
 ### Entities (13)
 - opacity problem
@@ -51,7 +51,7 @@ Source: `docs/essays/02-opacity-problem.md` (117 lines)
 
 ## Essay 12 — Provenance as Epistemological Infrastructure
 
-Source: `docs/essays/12-provenance-as-epistemological-infrastructure.md` (104 lines)
+Source: `docs/archive/essays/12-provenance-as-epistemological-infrastructure.md` (104 lines)
 
 ### Entities (13)
 - provenance

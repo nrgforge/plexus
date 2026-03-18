@@ -22,7 +22,7 @@ It ships as an embeddable Rust library and an MCP server.
 | Read the domain vocabulary | [`docs/domain-model.md`](docs/domain-model.md) |
 | See behavior scenarios | [`docs/scenarios.md`](docs/scenarios.md) |
 | Understand the build roadmap | [`docs/roadmap.md`](docs/roadmap.md) |
-| Read the research trail | [`docs/essays/`](docs/essays/) (26 essays) |
+| Read the research trail | [`docs/archive/essays/`](docs/archive/essays/) (26 essays) |
 
 ## Artifact Map
 
@@ -35,8 +35,9 @@ docs/
 ├── roadmap.md          ← work packages, dependencies, transition states
 ├── product-discovery.md ← stakeholder map, jobs, value tensions
 ├── decisions/          ← 30 architecture decision records (000-029)
-├── essays/             ← 26 research essays
-│   └── research-logs/  ← per-essay research process logs (21 logs)
+├── archive/
+│   └── essays/         ← 26 research essays (graduated)
+│       └── research-logs/ ← per-essay research process logs (21 logs)
 ├── papers/             ← publication drafts (plexus-design, semantic-extraction)
 ├── schemas/            ← JSON schemas (phase2-output, phase3-result, graph-export, analysis-result)
 ├── references/
