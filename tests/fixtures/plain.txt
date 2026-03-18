@@ -1,0 +1,3 @@
+This is a plain text file with no structure.
+It has no frontmatter, no markdown formatting.
+Just simple text content for testing plain text ingestion.
