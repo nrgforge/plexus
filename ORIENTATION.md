@@ -1,8 +1,8 @@
 # ORIENTATION
 
 **Project:** Plexus — knowledge graph engine with self-reinforcing edges
-**Current phase:** BUILD complete (architectural consolidation)
-**Last updated:** 2026-03-17
+**Current phase:** Operationalization — Track B complete, Track A pending
+**Last updated:** 2026-03-18
 
 ## What This Project Is
 
