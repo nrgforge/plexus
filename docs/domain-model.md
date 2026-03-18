@@ -415,7 +415,7 @@ These are genuinely different philosophical choices about what "shared understan
 ### Resolved by ADR-022 implementation (Phased Extraction)
 
 **12. Enrichment quiescence under broader trigger scope.**
-Resolved. CoOccurrenceEnrichment's idempotency holds with heterogeneous source nodes. The `output_edge_exists()` guard and structure-aware firing (Invariant 50) ensure quiescence regardless of source adapter mix. Test `quiescence_with_heterogeneous_sources` in `src/adapter/cooccurrence.rs` verifies: a context with Document + Code source nodes, both with `tagged_with` edges to shared concepts, reaches quiescence in exactly 2 rounds (1 productive + 1 quiescent). The `count / max_count` normalization is stable because it depends on graph structure (edge relationships), not on which adapter produced the source nodes.
+Resolved. CoOccurrenceEnrichment's idempotency holds with heterogeneous source nodes. The `output_edge_exists()` guard and structure-aware firing (Invariant 50) ensure quiescence regardless of source adapter mix. Test `quiescence_with_heterogeneous_sources` in `src/adapter/enrichments/cooccurrence.rs` verifies: a context with Document + Code source nodes, both with `tagged_with` edges to shared concepts, reaches quiescence in exactly 2 rounds (1 productive + 1 quiescent). The `count / max_count` normalization is stable because it depends on graph structure (edge relationships), not on which adapter produced the source nodes.
 
 **13. Core enrichment termination guarantees.**
 Resolved. Core enrichments terminate via idempotency — each checks context state before emitting. Three structural constraints apply to any future emission-triggered external enrichment that participates in the enrichment loop:

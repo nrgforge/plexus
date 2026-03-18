@@ -43,7 +43,14 @@ docs/
 │   ├── field-guide.md  ← module-to-code mapping, design rationale
 │   ├── experiment-data/ ← raw evidence trail for paper claims
 │   └── gold-standards/  ← measurement baselines for extraction evaluation
+├── superpowers/        ← design specs and implementation plans
+│   ├── specs/          ← design documents
+│   └── plans/          ← implementation plans
 └── scenarios/          ← 11 scenario suite files (Given/When/Then)
+tests/
+├── acceptance.rs       ← acceptance test entry point (25 tests, 8 contract areas)
+├── acceptance/         ← contract tests by area (ingest, extraction, enrichment, etc.)
+└── fixtures/           ← test fixture files
 ```
 
 ## Current State
@@ -56,7 +63,7 @@ All five work packages from the architectural consolidation roadmap are complete
 - **WP-4:** ADR-029 dead code cleanup (PhaseStatus, pulldown-cmark, parse_response, apply_mutation removed)
 - **WP-5:** Domain model open questions resolved
 
-364 library tests passing. No known regressions.
+364 library tests + 25 acceptance tests passing. No known regressions.
 
 ## Key Architectural Decisions
 

@@ -360,7 +360,7 @@ Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `t
 | AnnotatedNode, AnnotatedEdge, Annotation | adapter/types | ADR-001 |
 | Removal, EdgeRemoval, PropertyUpdate | adapter/types | ADR-012 |
 | OutboundEvent | adapter/types | ADR-011 |
-| CancellationToken | adapter/types | ADR-001 |
+| CancellationToken | adapter/cancel | ADR-001 |
 | Helper constructors (concept_node, etc.) | adapter/types | Essay 25 |
 | Adapter (trait), AdapterInput | adapter/traits | ADR-011 |
 | Enrichment (trait) | adapter/enrichment | ADR-010 |
@@ -560,8 +560,8 @@ flowchart TD
 ### Test Layers
 
 - **Unit:** Verify logic within a single module. Mocks acceptable for cross-module dependencies (e.g., mock LlmOrcClient in SemanticAdapter tests). Located in each module's `#[cfg(test)] mod tests`.
-- **Integration:** Verify real data flow across module boundaries. Real types on both sides. Located in `adapter/integration_tests.rs` (~53 test functions) and individual module test blocks with real PlexusEngine.
-- **Acceptance:** Verify end-to-end scenarios from `docs/scenarios.md`. Currently realized as integration tests that exercise the full pipeline (content → sink → enrichment → outbound events).
+- **Integration:** Verify real data flow across module boundaries. Real types on both sides. Located in `adapter/integration_tests.rs` (~55 test functions) and individual module test blocks with real PlexusEngine.
+- **Acceptance:** Verify end-to-end scenarios from `docs/scenarios.md`. Located in `tests/acceptance/` (25 tests across 8 contract areas: ingest, extraction, enrichment, provenance, contribution, persistence, degradation, query). Use `PlexusApi` public surface with in-memory SQLite.
 
 ## Roadmap
 
