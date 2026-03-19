@@ -1,7 +1,7 @@
 # ORIENTATION
 
 **Project:** Plexus — knowledge graph engine with self-reinforcing edges
-**Current phase:** Operationalization — Track B complete, Track A BUILD pending
+**Current phase:** Operationalization — Track A complete, Track B WP-B4 pending
 **Last updated:** 2026-03-18
 
 ## What This Project Is
@@ -56,15 +56,17 @@ tests/
 
 ## Current State
 
-All five work packages from the architectural consolidation roadmap are complete:
+Architectural consolidation (WP-1 through WP-5) and Track A structural module system (WP-A1 through WP-A4) are both complete.
 
-- **WP-1:** adapter/ decomposed into 5 submodules (sink, enrichment, pipeline, adapters, enrichments)
-- **WP-2:** PipelineBuilder extracted from MCP — transport-neutral pipeline construction
-- **WP-3:** Enrichment removed from EngineSink (confirmed already done per ADR-029)
-- **WP-4:** ADR-029 dead code cleanup (PhaseStatus, pulldown-cmark, parse_response, apply_mutation removed)
-- **WP-5:** Domain model open questions resolved
+Track A delivered:
+- **WP-A1:** `StructuralModule` trait, `StructuralOutput`, `SectionBoundary`, `ModuleEmission` types
+- **WP-A2:** `ExtractionCoordinator` refactored to fan-out dispatch across a module registry
+- **WP-A3:** `MarkdownStructureModule` — heading and link extraction via `pulldown-cmark`
+- **WP-A4:** `PipelineBuilder::with_structural_module()` and `with_default_structural_modules()`
 
-364 library tests + 25 acceptance tests passing. No known regressions.
+Track B status: WP-B1 through WP-B3 done. WP-B4 (Tier 2 acceptance tests) is next — unblocked by Track A completion.
+
+Library tests + acceptance tests passing. No known regressions.
 
 ## Key Architectural Decisions
 
@@ -82,6 +84,4 @@ All five work packages from the architectural consolidation roadmap are complete
 ## Open Questions
 
 1. **SemanticAdapter / DeclarativeAdapter convergence** — ADR-028 planned convergence is deferred. Both exist as independent types.
-2. **Structural module / Adapter trait relationship** — ADR-030 defers whether `StructuralModule` extends `Adapter` to BUILD. Resolved by implementation.
-3. **Chunking location** — Whether chunking happens in Rust or inside the llm-orc ensemble is empirical (ADR-031). Resolved during BUILD.
-4. **Batched normalization** — O(edges x adapters) per emission. Scaling concern for large graphs.
+2. **Batched normalization** — O(edges x adapters) per emission. Scaling concern for large graphs.

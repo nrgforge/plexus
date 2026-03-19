@@ -1,6 +1,6 @@
 # Field Guide: Plexus
 
-**Generated:** 2026-03-16
+**Generated:** 2026-03-18
 **Derived from:** System Design v1.0, current implementation
 
 ## How to Use This Guide
@@ -118,6 +118,8 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 |---------|-------------------|----------|
 | IngestPipeline | `pub struct IngestPipeline` | `src/adapter/pipeline/ingest.rs` |
 | PipelineBuilder | `pub struct PipelineBuilder` | `src/adapter/pipeline/builder.rs` |
+| with_structural_module | `PipelineBuilder::with_structural_module()` | `src/adapter/pipeline/builder.rs` |
+| with_default_structural_modules | `PipelineBuilder::with_default_structural_modules()` | `src/adapter/pipeline/builder.rs` |
 | classify_input | `pub fn classify_input()` | `src/adapter/pipeline/router.rs` |
 | ClassifyError | `pub struct ClassifyError` | `src/adapter/pipeline/router.rs` |
 | Input routing (Invariant 17) | Fan-out in `IngestPipeline::ingest()` | `src/adapter/pipeline/ingest.rs` |
@@ -127,6 +129,8 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 `IngestPipeline::ingest()` is the single write path (Invariant 34). All mutations enter here. `PipelineBuilder` was extracted from MCP to make pipeline construction transport-neutral — MCP and CLI both call `PipelineBuilder::default_pipeline()` instead of constructing pipelines inline.
 
 `classify_input()` auto-detects input kind from JSON shape (`{text:...}` → content, `{file_path:...}` → extract-file). This powers the MCP `ingest` tool's optional `input_kind` parameter (ADR-028).
+
+`with_structural_module()` registers a `StructuralModule` with the `ExtractionCoordinator`. `with_default_structural_modules()` registers `MarkdownStructureModule` as a built-in default. Both are called before `build()`.
 
 ### Key Integration Points
 
@@ -140,8 +144,8 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 ## Module: adapter/adapters
 
 **Implementation state:** Complete
-**Code location:** `src/adapter/adapters/` (7 files)
-**Stability:** Settled (Rust-native adapters) / In flux (SemanticAdapter convergence question)
+**Code location:** `src/adapter/adapters/` (8 files, including `structural.rs`)
+**Stability:** Settled
 
 ### Domain Concepts in Code
 
@@ -153,15 +157,24 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 | GraphAnalysisAdapter | `pub struct GraphAnalysisAdapter` | `src/adapter/adapters/graph_analysis.rs` |
 | SemanticAdapter | `pub struct SemanticAdapter` | `src/adapter/adapters/semantic.rs` |
 | DeclarativeAdapter | `pub struct DeclarativeAdapter` | `src/adapter/adapters/declarative.rs` |
+| StructuralModule | `pub trait StructuralModule` | `src/adapter/adapters/structural.rs` |
+| StructuralOutput | `pub struct StructuralOutput` | `src/adapter/adapters/structural.rs` |
+| SectionBoundary | `pub struct SectionBoundary` | `src/adapter/adapters/structural.rs` |
+| ModuleEmission | `pub struct ModuleEmission` | `src/adapter/adapters/structural.rs` |
+| MarkdownStructureModule | `pub struct MarkdownStructureModule` | `src/adapter/adapters/structural.rs` |
 
 ### Design Rationale
 
 Adapters fall into three categories: Rust-native (ContentAdapter, ExtractionCoordinator, ProvenanceAdapter, GraphAnalysisAdapter), internal llm-orc (SemanticAdapter), and external declarative (DeclarativeAdapter). See system design § Adapter Taxonomy for details. SemanticAdapter and DeclarativeAdapter are architecturally similar — both invoke llm-orc — but convergence is deferred because SemanticAdapter's bespoke multi-agent result parser handles merging that the current spec primitives don't cover.
 
+`ExtractionCoordinator` was refactored to use a structural module registry (fan-out dispatch). On extraction, the coordinator reads the file, calls `module.analyze()` on all matching modules, merges their `StructuralOutput`, and passes merged vocabulary and sections to `SemanticInput::with_structural_context()`. Modules that don't match a file's MIME type are skipped; unregistered file types pass through unchanged (empty registry passthrough, Invariant 52).
+
+`SemanticInput` gained a `vocabulary: Vec<String>` field and a `with_structural_context()` constructor. `SectionBoundary` is re-exported from `structural.rs` for use in semantic coordination. `MarkdownStructureModule` uses `pulldown-cmark` to extract headings (as sections) and link text + heading text (as vocabulary).
+
 ### Key Integration Points
 
 - **adapter/sink** — Each adapter receives `&dyn AdapterSink` in `process()`.
-- **adapter/pipeline** — Registered at construction time via `PipelineBuilder`.
+- **adapter/pipeline** — Registered at construction time via `PipelineBuilder`. Structural modules registered via `with_structural_module()`.
 - **llm_orc** — SemanticAdapter and DeclarativeAdapter use `LlmOrcClient` for subprocess calls.
 
 ---
@@ -362,6 +375,7 @@ External LLM orchestration runs as a subprocess (ADR-024). The trait abstraction
 | Understand the graph data model | `graph/node.rs`, `graph/edge.rs`, `graph/context.rs` |
 | Understand how writes work | `adapter/pipeline/ingest.rs` → `adapter/sink/engine_sink.rs` |
 | Add a new adapter | Implement `Adapter` trait (`adapter/traits.rs`), register in `PipelineBuilder` |
+| Add a structural module | Implement `StructuralModule` trait (`adapter/adapters/structural.rs`), register via `PipelineBuilder::with_structural_module()` |
 | Add a new enrichment | Implement `Enrichment` trait (`adapter/enrichment/traits.rs`), register in `EnrichmentRegistry` |
 | Query the graph | `query/` — FindQuery, TraverseQuery, PathQuery, StepQuery |
 | Understand provenance reads | `provenance/api.rs` |

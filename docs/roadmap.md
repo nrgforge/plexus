@@ -1,6 +1,6 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-03-18
+**Last updated:** 2026-03-18 (Track A complete)
 **Derived from:** System Design v1.0, ADR-029, Essay 26, conformance audit, operationalization design
 
 ## Current Cycle: Operationalization (2026-03-17 — )
@@ -15,41 +15,9 @@
 | Model | StructuralModule, ModuleRegistry, StructuralOutput, Vocabulary bootstrap — domain model extension (Invariants 51–55) | Done |
 | Decide | ADR-030 (trait), ADR-031 (output + handoff), ADR-032 (markdown module) — 22 scenarios, 13 conformance debt items | Done |
 | Architect | System design amendment — extraction pipeline flow, responsibility allocation, test architecture | Done |
-| Build | TDD — implement structural module system per work packages below | Pending |
+| Build | TDD — implement structural module system per work packages below | Done |
 
-#### Track A Work Packages
-
-**WP-A1: StructuralModule trait + StructuralOutput types**
-- Create `StructuralModule` trait (async, `id`, `mime_affinity`, `analyze`)
-- Create `StructuralOutput`, `ModuleEmission` types
-- Add `vocabulary: Vec<String>` to `SemanticInput`, add `with_structural_context()` constructor
-- Conformance debt items: 5, 7, 8, 10
-- Scenarios: trait registration, MIME dispatch routing, module content passing
-- Dependencies: None
-
-**WP-A2: ExtractionCoordinator refactor**
-- Replace `Phase2Registration` with module registry (`Vec<Arc<dyn StructuralModule>>`)
-- Replace `find_phase2_adapter()` with `matching_modules()` (fan-out)
-- Rewrite structural analysis dispatch: coordinator reads file, calls `module.analyze()`, merges outputs
-- Replace `SemanticInput::for_file()` with `SemanticInput::with_structural_context()`
-- Conformance debt items: 1, 2, 3, 4, 6, 9
-- Scenarios: fan-out dispatch, empty registry passthrough, merge-not-select, vocabulary handoff, failure isolation
-- Dependencies: WP-A1 (hard — needs trait + types)
-
-**WP-A3: MarkdownStructureModule**
-- Add `pulldown-cmark` dependency
-- Implement `MarkdownStructureModule`: heading extraction → sections, link text + heading text → vocabulary
-- Graph emissions: determined empirically during BUILD
-- Conformance debt items: 11, 12
-- Scenarios: heading extraction, link extraction, heading vocabulary, MIME affinity, no-structure graceful handling
-- Dependencies: WP-A1 (hard — needs trait)
-
-**WP-A4: PipelineBuilder wiring**
-- Add `with_structural_module()` method
-- Wire `MarkdownStructureModule` as default in `with_default_adapters()` or `default_pipeline()`
-- Conformance debt item: 13
-- Scenarios: default pipeline registers markdown module, non-markdown files pass through
-- Dependencies: WP-A2 (hard — coordinator must accept modules), WP-A3 (hard — module must exist)
+Track A is complete. Work packages are archived in the Completed Work Log below.
 
 ### Track B — Operationalization
 
@@ -58,26 +26,7 @@
 | WP-B1 | .llm-orc cleanup | None | Done (`e29c081`) |
 | WP-B2 | Tier 1 acceptance tests | WP-B1 | Done (`4d82b59`, `83176ad`, `6712562`, `a012c5b`) |
 | WP-B3 | Research graduation | WP-B2 | Done (`b917ae6`, `1041ef7`) |
-| WP-B4 | Tier 2 acceptance tests | Track A, WP-B2 | Pending — awaits Track A completion |
-
-### Track A Dependency Graph
-
-```
-WP-A1: Types + trait ◄──── WP-A2: Coordinator refactor (hard)
-       ▲                          ▲
-       │                          │
-       └──── WP-A3: Markdown module (hard)
-                                  │
-              WP-A4: Builder wiring (hard ── needs A2 + A3)
-```
-
-**Classification:**
-- WP-A2 → WP-A1: **Hard dependency** — coordinator imports the trait and types
-- WP-A3 → WP-A1: **Hard dependency** — module implements the trait
-- WP-A4 → WP-A2 + WP-A3: **Hard dependency** — builder wires modules into coordinator
-- WP-A2 ↔ WP-A3: **Open choice** — can build in either order once WP-A1 is done
-
-**Transition state — after WP-A1 + WP-A2:** ExtractionCoordinator has the new module registry and fan-out dispatch, but no modules registered. Empty registry passthrough works (Invariant 52) — the pipeline functions identically to today. Semantic extraction receives empty SemanticInput with no vocabulary. This is a stable intermediate state.
+| WP-B4 | Tier 2 acceptance tests | Track A, WP-B2 | Pending |
 
 ### Cross-Track Dependency Graph
 
@@ -85,16 +34,16 @@ WP-A1: Types + trait ◄──── WP-A2: Coordinator refactor (hard)
 Track A (RDD)                    Track B (Operationalization)
 ─────────────                    ───────────────────────────
                                  WP-B1: .llm-orc cleanup     ✓
-WP-A1: Types ──────►                 │
-WP-A2: Coordinator ►                ▼
-WP-A3: Markdown ───►            WP-B2: Tier 1 acceptance     ✓
-WP-A4: Builder ────►                 │
+WP-A1: Types ──────► ✓               │
+WP-A2: Coordinator ► ✓              ▼
+WP-A3: Markdown ───► ✓          WP-B2: Tier 1 acceptance     ✓
+WP-A4: Builder ────► ✓               │
        │                             ▼
        │                         WP-B3: Research graduation   ✓
        │                             │
        └──────────┬──────────────────┘
                   ▼
-              WP-B4: Tier 2 acceptance tests
+              WP-B4: Tier 2 acceptance tests  ← current
 ```
 
 ---
@@ -116,6 +65,28 @@ WP-A4: Builder ────►                 │
 ---
 
 ## Completed Work Log
+
+### Track A: Structural Module System (2026-03-18)
+
+**Derived from:** ADR-030, ADR-031, ADR-032, operationalization design spec
+
+| WP | Title | Status |
+|----|-------|--------|
+| WP-A1 | StructuralModule trait + StructuralOutput types | Done |
+| WP-A2 | ExtractionCoordinator refactor (fan-out dispatch, module registry) | Done |
+| WP-A3 | MarkdownStructureModule (pulldown-cmark, heading/link extraction) | Done |
+| WP-A4 | PipelineBuilder wiring (with_structural_module, with_default_structural_modules) | Done |
+
+**What was built:**
+- `src/adapter/adapters/structural.rs`: `StructuralModule` trait (async, `id`, `mime_affinity`, `analyze`), `StructuralOutput`, `SectionBoundary`, `ModuleEmission`, `MarkdownStructureModule`
+- `src/adapter/adapters/extraction.rs`: `ExtractionCoordinator` refactored to use structural module registry — fan-out dispatch, output merge, per-module emission, `matching_modules()` replaces `find_phase2_adapter()`
+- `src/adapter/adapters/semantic.rs`: `SemanticInput` gained `vocabulary: Vec<String>` field and `with_structural_context()` constructor; `SectionBoundary` re-exported from structural
+- `src/adapter/pipeline/builder.rs`: `PipelineBuilder` gained `with_structural_module()` and `with_default_structural_modules()`
+- New dependency: `pulldown-cmark` (Markdown parsing)
+
+**Unblocks:** WP-B4 (Tier 2 acceptance tests)
+
+---
 
 ### Cycle: Architectural Consolidation (2026-03-16 — 2026-03-17)
 
