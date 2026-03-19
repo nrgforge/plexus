@@ -10,6 +10,7 @@ use crate::adapter::enrichment::Enrichment;
 use crate::adapter::adapters::content::ContentAdapter;
 use crate::adapter::adapters::extraction::ExtractionCoordinator;
 use crate::adapter::adapters::provenance_adapter::ProvenanceAdapter;
+use crate::adapter::adapters::structural::{MarkdownStructureModule, StructuralModule};
 use crate::adapter::enrichments::cooccurrence::CoOccurrenceEnrichment;
 use crate::adapter::enrichments::discovery_gap::DiscoveryGapEnrichment;
 use crate::adapter::enrichments::temporal_proximity::TemporalProximityEnrichment;
@@ -23,8 +24,8 @@ use std::sync::Arc;
 /// embedded consumers all get the same pipeline without duplicating
 /// registration logic.
 pub struct PipelineBuilder {
-    engine: Arc<PlexusEngine>,
     pipeline: IngestPipeline,
+    coordinator: Option<ExtractionCoordinator>,
     enrichments: Vec<Arc<dyn Enrichment>>,
 }
 
@@ -33,18 +34,40 @@ impl PipelineBuilder {
     pub fn new(engine: Arc<PlexusEngine>) -> Self {
         let pipeline = IngestPipeline::new(engine.clone());
         Self {
-            engine,
             pipeline,
+            coordinator: None,
             enrichments: Vec::new(),
         }
     }
 
     /// Register the core adapters: ContentAdapter, ExtractionCoordinator, ProvenanceAdapter.
+    ///
+    /// The `ExtractionCoordinator` is held by the builder until `build()` so
+    /// that structural modules can be registered on it via `with_structural_module()`.
     pub fn with_default_adapters(mut self) -> Self {
         self.pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
-        self.pipeline.register_adapter(Arc::new(ExtractionCoordinator::new()));
+        self.coordinator = Some(ExtractionCoordinator::new());
         // ProvenanceAdapter is registered via register_integration in build()
         self
+    }
+
+    /// Register a structural module on the `ExtractionCoordinator`.
+    ///
+    /// Must be called after `with_default_adapters()`. Modules are dispatched
+    /// by MIME type affinity during extraction (ADR-030).
+    pub fn with_structural_module(mut self, module: Arc<dyn StructuralModule>) -> Self {
+        if let Some(ref mut coordinator) = self.coordinator {
+            coordinator.register_structural_module(module);
+        }
+        self
+    }
+
+    /// Register the default structural modules (currently: MarkdownStructureModule).
+    ///
+    /// Called automatically by `default_pipeline()`. Consumers who want
+    /// different modules can skip this and call `with_structural_module()` directly.
+    pub fn with_default_structural_modules(self) -> Self {
+        self.with_structural_module(Arc::new(MarkdownStructureModule::new()))
     }
 
     /// Register the domain-agnostic enrichments.
@@ -109,6 +132,10 @@ impl PipelineBuilder {
 
     /// Consume the builder and return the configured `IngestPipeline`.
     pub fn build(mut self) -> IngestPipeline {
+        // Register ExtractionCoordinator with its structural modules
+        if let Some(coordinator) = self.coordinator.take() {
+            self.pipeline.register_adapter(Arc::new(coordinator));
+        }
         // ProvenanceAdapter is the integration anchor — its enrichments
         // get registered alongside it via register_integration().
         self.pipeline.register_integration(
@@ -124,6 +151,7 @@ impl PipelineBuilder {
     /// ```ignore
     /// PipelineBuilder::new(engine)
     ///     .with_default_adapters()
+    ///     .with_default_structural_modules()
     ///     .with_default_enrichments()
     ///     .with_adapter_specs(project_dir)
     ///     .build()
@@ -134,6 +162,7 @@ impl PipelineBuilder {
     ) -> IngestPipeline {
         let mut builder = Self::new(engine)
             .with_default_adapters()
+            .with_default_structural_modules()
             .with_default_enrichments();
 
         if let Some(dir) = project_dir {
