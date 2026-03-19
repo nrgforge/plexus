@@ -1,7 +1,7 @@
 # ORIENTATION
 
 **Project:** Plexus — knowledge graph engine with self-reinforcing edges
-**Current phase:** Operationalization — Track B complete, Track A pending
+**Current phase:** Operationalization — Track B complete, Track A BUILD pending
 **Last updated:** 2026-03-18
 
 ## What This Project Is
@@ -18,7 +18,7 @@ It ships as an embeddable Rust library and an MCP server.
 |---|---|
 | Understand the architecture | [`docs/system-design.md`](docs/system-design.md) |
 | Find where something lives in code | [`docs/references/field-guide.md`](docs/references/field-guide.md) |
-| Understand a design decision | [`docs/decisions/`](docs/decisions/) (30 ADRs, 000-029) |
+| Understand a design decision | [`docs/decisions/`](docs/decisions/) (33 ADRs, 000-032) |
 | Read the domain vocabulary | [`docs/domain-model.md`](docs/domain-model.md) |
 | See behavior scenarios | [`docs/scenarios.md`](docs/scenarios.md) |
 | Understand the build roadmap | [`docs/roadmap.md`](docs/roadmap.md) |
@@ -34,7 +34,7 @@ docs/
 ├── scenarios.md        ← table of contents for scenario suites
 ├── roadmap.md          ← work packages, dependencies, transition states
 ├── product-discovery.md ← stakeholder map, jobs, value tensions
-├── decisions/          ← 30 architecture decision records (000-029)
+├── decisions/          ← 33 architecture decision records (000-032)
 ├── archive/
 │   └── essays/         ← 26 research essays (graduated)
 │       └── research-logs/ ← per-essay research process logs (21 logs)
@@ -82,5 +82,6 @@ All five work packages from the architectural consolidation roadmap are complete
 ## Open Questions
 
 1. **SemanticAdapter / DeclarativeAdapter convergence** — ADR-028 planned convergence is deferred. Both exist as independent types.
-2. **Phase 2 extraction** — No adapter exists since ADR-029 removed TextAnalysisAdapter. Rebuild or collapse to 2 phases?
-3. **Batched normalization** — O(edges x adapters) per emission. Scaling concern for large graphs.
+2. **Structural module / Adapter trait relationship** — ADR-030 defers whether `StructuralModule` extends `Adapter` to BUILD. Resolved by implementation.
+3. **Chunking location** — Whether chunking happens in Rust or inside the llm-orc ensemble is empirical (ADR-031). Resolved during BUILD.
+4. **Batched normalization** — O(edges x adapters) per emission. Scaling concern for large graphs.

@@ -19,6 +19,8 @@
 | Embedding support behind feature flag | Constraint | ADR-026 |
 | External enrichment via llm-orc subprocess | Integration | ADR-024; Essay 25 |
 | Extraction phases: Rust-native (fast) then llm-orc (deep) | Constraint | ADR-022; Invariants 45–47 |
+| Structural analysis: MIME-dispatched fan-out modules | Constraint | ADR-030; Invariants 51–55 |
+| Vocabulary bootstrap: structural modules → semantic extraction | Constraint | ADR-031; Invariant 54; Essay 25 |
 | Declarative adapters: consumer-owned YAML specs via llm-orc | Extension point | ADR-028; Essay 19 |
 
 ## Module Decomposition
@@ -59,17 +61,17 @@
 **Depended on by:** adapter/adapters, adapter/pipeline
 
 ### Module: adapter/pipeline
-**Purpose:** The unified ingest pipeline — routing, adapter dispatch, enrichment loop orchestration, and outbound event transformation.
-**Provenance:** Invariant 34 (single write path), Invariant 17 (fan-out routing); ADR-012, ADR-028
-**Owns:** IngestPipeline, classify_input, ClassifyError, input routing logic
-**Depends on:** graph, adapter/sink, adapter/enrichment, adapter/traits, adapter/types
-**Depended on by:** api
+**Purpose:** The unified ingest pipeline — routing, adapter dispatch, enrichment loop orchestration, outbound event transformation, and transport-neutral construction.
+**Provenance:** Invariant 34 (single write path), Invariant 17 (fan-out routing); ADR-012, ADR-028, ADR-032
+**Owns:** IngestPipeline, PipelineBuilder (including `with_structural_module()`, `default_pipeline()`), classify_input, ClassifyError, input routing logic
+**Depends on:** graph, adapter/sink, adapter/enrichment, adapter/traits, adapter/types, adapter/adapters (PipelineBuilder imports ExtractionCoordinator, ContentAdapter, MarkdownStructureModule for default wiring)
+**Depended on by:** api, mcp
 
 ### Module: adapter/adapters
 **Purpose:** Domain adapter implementations — each transforms a specific input kind into graph mutations.
-**Provenance:** Invariants 5, 7 (provenance rules), 19–22 (fragment rules), 45–48 (extraction rules); ADR-001, ADR-022, ADR-028
-**Owns:** ContentAdapter (fragment), ExtractionCoordinator (file extraction), SemanticAdapter (Phase 3 LLM), DeclarativeAdapter (YAML spec), GraphAnalysisAdapter (external enrichment), ProvenanceAdapter (mark/chain lifecycle)
-**Depends on:** graph, adapter/sink, adapter/traits, adapter/types, llm_orc (SemanticAdapter, DeclarativeAdapter)
+**Provenance:** Invariants 5, 7 (provenance rules), 19–22 (fragment rules), 45–48 (extraction rules), 51–55 (structural analysis rules); ADR-001, ADR-022, ADR-028, ADR-030, ADR-031, ADR-032
+**Owns:** ContentAdapter (fragment), ExtractionCoordinator (file extraction + structural analysis dispatch), SemanticAdapter (semantic extraction via LLM), DeclarativeAdapter (YAML spec), GraphAnalysisAdapter (external enrichment), ProvenanceAdapter (mark/chain lifecycle), StructuralModule (trait), StructuralOutput, ModuleEmission, MarkdownStructureModule, SemanticInput, SectionBoundary
+**Depends on:** graph, adapter/sink, adapter/traits, adapter/types, llm_orc (SemanticAdapter, DeclarativeAdapter), pulldown-cmark (MarkdownStructureModule)
 **Depended on by:** (registered into adapter/pipeline at construction time)
 
 #### Adapter taxonomy: Rust-native vs llm-orc-backed
@@ -78,17 +80,49 @@ Adapters fall into three categories based on their execution model. This distinc
 
 **Rust-native adapters** — fast, synchronous, no external dependencies:
 - `ContentAdapter` — fragment text + tags → graph structure. The default write path.
-- `ExtractionCoordinator` — Phase 1 registration (file node, metadata, YAML frontmatter). Synchronous within `ingest()`. Spawns background phases.
+- `ExtractionCoordinator` — registration (file node, metadata, YAML frontmatter) synchronously within `ingest()`. Spawns structural analysis and semantic extraction as sequential background tasks.
 - `ProvenanceAdapter` — mark/chain/link lifecycle operations.
 - `GraphAnalysisAdapter` — applies pre-computed analysis results (from `plexus analyze`).
 
+**Structural modules** — Rust-native, MIME-dispatched, run inside ExtractionCoordinator:
+- `MarkdownStructureModule` — parses markdown via `pulldown-cmark`. Produces sections from heading hierarchy, vocabulary from heading text and link display text. Graph emissions determined empirically during BUILD. MIME affinity: `text/markdown`.
+
+Structural modules use MIME-based dispatch (Invariant 55), not `IngestPipeline`'s `classify_input` routing. All matching modules execute (fan-out, Invariant 51). Whether `StructuralModule` extends `Adapter` or is its own trait is a BUILD-time decision. The coordinator reads the file once and passes content to all matching modules. Module outputs are merged: vocabulary unioned case-insensitively, sections concatenated by start_line, emissions kept per-module (Invariant 53).
+
 **Internal llm-orc adapters** — Plexus-owned ensembles for deeper extraction:
-- `SemanticAdapter` — Phase 3 semantic extraction. Invokes the `extract-semantic` ensemble (Plexus-defined, lives in `.llm-orc/ensembles/`). Parses multi-agent results (SpaCy NER, themes, concepts/relationships). Plexus owns the ensemble definition and the result parsing logic. Spawned as background work by ExtractionCoordinator.
+- `SemanticAdapter` — semantic extraction. Invokes the `extract-semantic` ensemble (Plexus-defined, lives in `.llm-orc/ensembles/`). Receives `SemanticInput` with vocabulary hints and optional section boundaries from structural analysis. Parses multi-agent results (SpaCy NER, themes, concepts/relationships). Plexus owns the ensemble definition and the result parsing logic. Spawned as background work by ExtractionCoordinator.
 
 **External declarative adapters** — consumer-owned YAML specs interpreted at runtime:
 - `DeclarativeAdapter` — interprets `adapter-specs/*.yaml` files. The consumer defines both the extractor logic (llm-orc ensemble or script) and the graph mapping (adapter spec primitives). Plexus provides the interpreter; the consumer provides the spec. This is the extension point for domain-specific extraction without writing Rust.
 
 The key architectural insight: when DeclarativeAdapter was introduced (ADR-028), it created a general mechanism that also simplified internal extraction. SemanticAdapter predates it and uses a bespoke Rust parsing path. A future convergence could express SemanticAdapter as a declarative spec, but this is deferred — the bespoke parser handles multi-agent result merging that the current spec primitives don't cover.
+
+#### Extraction pipeline flow (ADR-030, ADR-031, ADR-032)
+
+```
+ingest("extract-file", { file_path: "doc.md" })
+  │
+  ├── Registration (synchronous, returns immediately)
+  │     file node + MIME type + frontmatter tags + extraction status
+  │
+  └── Background task (tokio::spawn)
+        │
+        ├── Structural analysis
+        │     coordinator reads file content once
+        │     matching_modules("text/markdown") → fan-out
+        │     each module: analyze(path, content) → StructuralOutput
+        │     merge outputs → vocabulary + sections + emissions
+        │     emit module emissions with each module's adapter ID
+        │
+        ├── Handoff
+        │     SemanticInput::with_structural_context(path, sections, vocabulary)
+        │
+        └── Semantic extraction
+              SemanticAdapter receives vocabulary hints + section boundaries
+              llm-orc ensemble may add its own vocabulary (TextRank, SpaCy)
+              entity-primed + unprimed agents run independently
+              results emit with SemanticAdapter's adapter ID
+```
 
 ### Module: adapter/enrichments
 **Purpose:** Core enrichment implementations — reactive graph intelligence algorithms.
@@ -369,10 +403,14 @@ Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `t
 | IngestPipeline | adapter/pipeline | ADR-012 |
 | classify_input, input routing | adapter/pipeline | ADR-012, ADR-028 |
 | ContentAdapter (fragment — Rust-native) | adapter/adapters | ADR-001, ADR-028 |
-| ExtractionCoordinator (Phase 1 — Rust-native) | adapter/adapters | ADR-022 |
+| ExtractionCoordinator (registration + structural dispatch — Rust-native) | adapter/adapters | ADR-022, ADR-030 |
+| StructuralModule (trait) | adapter/adapters | ADR-030 |
+| StructuralOutput, ModuleEmission | adapter/adapters | ADR-031 |
+| MarkdownStructureModule | adapter/adapters | ADR-032 |
+| SemanticInput, SectionBoundary | adapter/adapters | ADR-021, ADR-031 |
 | ProvenanceAdapter (mark/chain — Rust-native) | adapter/adapters | ADR-013, ADR-028 |
 | GraphAnalysisAdapter (analysis results — Rust-native) | adapter/adapters | ADR-024 |
-| SemanticAdapter (Phase 3 — internal llm-orc) | adapter/adapters | Essay 25 |
+| SemanticAdapter (semantic extraction — internal llm-orc) | adapter/adapters | Essay 25 |
 | DeclarativeAdapter (YAML spec — external llm-orc) | adapter/adapters | ADR-028 |
 | CoOccurrenceEnrichment | adapter/enrichments | ADR-010 |
 | DiscoveryGapEnrichment | adapter/enrichments | ADR-024 |
@@ -499,6 +537,18 @@ flowchart TD
 **Error handling:** `AdapterError` propagates from enrichment loop
 **Owned by:** adapter/enrichment (defines the loop contract)
 
+### ExtractionCoordinator → StructuralModule (within adapter/adapters)
+**Protocol:** Coordinator calls `module.analyze(file_path, content)` for each matching module. Fan-out: all modules whose MIME affinity matches execute (Invariant 51). Coordinator reads file content once.
+**Shared types:** `StructuralOutput` (returned by module), `SectionBoundary`, `ModuleEmission`
+**Error handling:** Module panic treated as empty output; other modules still run; semantic extraction proceeds with whatever output was collected (scenario: structural analysis failure does not block semantic extraction)
+**Owned by:** adapter/adapters (both sides live in the same module; the `StructuralModule` trait defines the contract)
+
+### ExtractionCoordinator → SemanticAdapter (within adapter/adapters)
+**Protocol:** Coordinator constructs `SemanticInput::with_structural_context(path, sections, vocabulary)` from merged structural output and passes to SemanticAdapter via `AdapterInput`. Vocabulary bootstrap: entity names from structural modules forwarded as glossary hints (Invariant 54 — no relationships).
+**Shared types:** `SemanticInput`, `SectionBoundary`, `AdapterInput`
+**Error handling:** SemanticAdapter returns `AdapterError::Skipped` when llm-orc unavailable (Invariant 47)
+**Owned by:** adapter/adapters (SemanticInput defines the contract)
+
 ### adapter/sink → graph
 **Protocol:** `EngineSink` calls `PlexusEngine::with_context_mut()` for atomic commit+persist
 **Shared types:** `Context`, `ContextId`, `Node`, `Edge`, `GraphEvent`
@@ -543,6 +593,9 @@ flowchart TD
 | api → adapter/pipeline | `api.rs` tests (via PlexusApi::ingest) | Real PlexusApi routes through real IngestPipeline with real adapters |
 | mcp → api | MCP integration tests (if present) | MCP tool handlers call real PlexusApi |
 | adapter/adapters → llm_orc | `semantic::tests::*` with mock LlmOrcClient | SemanticAdapter processes with mock client (real adapter, mock external) |
+| ExtractionCoordinator → StructuralModule | `extraction::tests::structural_*` | Real coordinator dispatches to real MarkdownStructureModule, output contains sections and vocabulary |
+| ExtractionCoordinator → SemanticAdapter | `extraction::tests::phase3_receives_structural_context` | Real coordinator passes vocabulary and sections to real SemanticAdapter (mock llm-orc) |
+| PipelineBuilder → MarkdownStructureModule | `builder::tests::default_pipeline_registers_markdown_module` | Default pipeline has markdown module registered; markdown files trigger structural analysis |
 
 ### Invariant Enforcement Tests
 
@@ -556,6 +609,11 @@ flowchart TD
 | Inv 30 (persist-per-emission) | adapter/sink: EngineSink::emit | `engine_sink::tests::*` with store verification |
 | Inv 36 (enrichment quiescence) | adapter/enrichment: run_enrichment_loop | `integration_tests::safety_valve_aborts_after_maximum_rounds` |
 | Inv 50 (structure-aware enrichments) | adapter/enrichments: CoOccurrenceEnrichment | `cooccurrence::tests::quiescence_with_heterogeneous_sources` |
+| Inv 51 (MIME fan-out) | adapter/adapters: ExtractionCoordinator::matching_modules | `extraction::tests::mime_dispatch_fan_out` — two modules match, both execute |
+| Inv 52 (empty registry passthrough) | adapter/adapters: ExtractionCoordinator | `extraction::tests::empty_registry_passthrough` — no modules, semantic extraction still runs |
+| Inv 53 (merge not select) | adapter/adapters: ExtractionCoordinator | `extraction::tests::structural_outputs_merged` — vocabulary unioned, sections concatenated |
+| Inv 54 (entity not relationship) | adapter/adapters: ExtractionCoordinator | `extraction::tests::vocabulary_contains_entities_not_relationships` |
+| Inv 55 (MIME dispatch, not input-kind) | adapter/adapters: ExtractionCoordinator | `extraction::tests::structural_module_uses_mime_dispatch` — module dispatched by MIME, not registered on IngestPipeline |
 
 ### Test Layers
 
@@ -574,3 +632,4 @@ See [`./docs/roadmap.md`](./docs/roadmap.md) for the current roadmap — work pa
 | — | 2026-03-16 | Initial retrofit system design | /rdd-architect retroactive run | Essay 26, ADR-029, codebase audit convergence | Current |
 | 1 | 2026-03-16 | Added Pipeline Flow, Enrichment Architecture, Core Enrichment Algorithms, Enrichment Loop Mechanics, Declarative Enrichment Configuration sections with mermaid diagrams | Product discovery feedback — enrichment algorithms and pipeline flow not modeled | ADR-010, ADR-024, ADR-025, ADR-026 | Current |
 | 2 | 2026-03-16 | Replaced ASCII dependency graph with mermaid diagram. Fixed missing edges: adapter/adapters → sink, traits, types; adapter/enrichments → enrichment, types, graph. Shows registration-time wiring as dashed edges. | ASCII graph was incomplete and showed graph node duplicated | Module decomposition | Current |
+| 3 | 2026-03-18 | Added structural module system to adapter/adapters: StructuralModule trait, StructuralOutput/ModuleEmission types, MarkdownStructureModule, vocabulary handoff to SemanticInput. Updated adapter taxonomy, extraction pipeline flow, responsibility matrix, integration contracts, test architecture, invariant enforcement. PipelineBuilder gains `with_structural_module()`. New dependency: `pulldown-cmark`. | Track A RDD cycle: ADR-030 (structural module trait), ADR-031 (structural output + handoff), ADR-032 (markdown module) | ADR-030, ADR-031, ADR-032; Invariants 51–55 | Current |

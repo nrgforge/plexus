@@ -2,7 +2,9 @@
 
 **Status:** Accepted
 
-**Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
+**Amended by:** ADR-030 (modality dispatch changed from single-adapter to fan-out), ADR-031 (chunking location deprescribed)
+
+**Research:** [Essay 18](../archive/essays/18-phased-extraction-architecture.md)
 
 **Domain model:** [domain-model.md](../domain-model.md) — extraction phase, extraction coordinator, extraction status
 

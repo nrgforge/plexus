@@ -2,7 +2,9 @@
 
 **Status:** Accepted
 
-**Research:** [Essay 18](../essays/18-phased-extraction-architecture.md)
+**Amended by:** ADR-031 (chunking location deprescribed — whether chunking happens in Rust or llm-orc is empirical)
+
+**Research:** [Essay 18](../archive/essays/18-phased-extraction-architecture.md)
 
 **Domain model:** [domain-model.md](../domain-model.md) — extraction phase, extractor, external enrichment
 
