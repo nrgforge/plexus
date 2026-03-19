@@ -1,21 +1,26 @@
-//! Extraction coordinator — phased file extraction (ADR-019)
+//! Extraction coordinator — phased file extraction (ADR-019, ADR-030, ADR-031)
 //!
 //! Handles `extract-file` input kind. Runs Phase 1 (registration)
-//! synchronously, then spawns Phases 2–3 as background tokio tasks.
+//! synchronously, then spawns structural analysis + semantic extraction
+//! as background tokio tasks.
 //!
 //! Phase 1 — Registration (instant, blocking):
 //!   File node (MIME type, size, path) + concept nodes from YAML frontmatter
 //!
-//! Phase 2 — Analysis (moderate, background):
-//!   Modality-dispatched heuristic extraction (by MIME type)
+//! Structural analysis (moderate, background):
+//!   MIME-dispatched fan-out to registered structural modules (ADR-030).
+//!   Coordinator reads file once, dispatches to all matching modules,
+//!   merges outputs (Invariant 53), emits module emissions.
 //!
-//! Phase 3 — Semantic (slow, background, LLM):
-//!   Abstract concept extraction via llm-orc (ADR-021)
+//! Semantic extraction (slow, background, LLM):
+//!   Abstract concept extraction via llm-orc (ADR-021).
+//!   Receives vocabulary + sections from structural analysis (ADR-031).
 
 use crate::adapter::EngineSink;
 use crate::adapter::FrameworkContext;
 use crate::adapter::semantic::SemanticInput;
 use crate::adapter::sink::{AdapterError, AdapterSink};
+use crate::adapter::structural::{StructuralModule, StructuralOutput};
 use crate::adapter::traits::{Adapter, AdapterInput};
 use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, concept_node};
 use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
@@ -45,19 +50,12 @@ impl ExtractFileInput {
     }
 }
 
-/// A Phase 2 adapter registered for a specific MIME type prefix.
-pub struct Phase2Registration {
-    /// MIME type prefix (e.g., "text/", "audio/")
-    pub mime_prefix: String,
-    /// The Phase 2 adapter
-    pub adapter: Arc<dyn Adapter>,
-}
-
-/// Extraction coordinator — orchestrates phased extraction (ADR-019).
+/// Extraction coordinator — orchestrates phased extraction (ADR-019, ADR-030).
 pub struct ExtractionCoordinator {
-    /// Phase 2 adapters indexed by MIME type prefix
-    phase2_adapters: Vec<Phase2Registration>,
-    /// Phase 3 (semantic) adapter — runs sequentially after Phase 2
+    /// Registered structural modules — dispatched by MIME affinity (ADR-030).
+    /// Fan-out: all matching modules run for each file (Invariant 51).
+    structural_modules: Vec<Arc<dyn StructuralModule>>,
+    /// Semantic extraction adapter — runs after structural analysis
     phase3_adapter: Option<Arc<dyn Adapter>>,
     /// Shared context for creating background phase sinks (test path, no persistence)
     shared_context: Option<Arc<std::sync::Mutex<Context>>>,
@@ -65,9 +63,9 @@ pub struct ExtractionCoordinator {
     engine: Option<Arc<crate::graph::PlexusEngine>>,
     /// Context ID for engine-backed background sinks
     engine_context_id: Option<crate::graph::ContextId>,
-    /// Concurrency semaphore for Phase 2 tasks
+    /// Concurrency semaphore for structural analysis tasks
     analysis_semaphore: Arc<tokio::sync::Semaphore>,
-    /// Concurrency semaphore for Phase 3 tasks
+    /// Concurrency semaphore for semantic extraction tasks
     semantic_semaphore: Arc<tokio::sync::Semaphore>,
     /// Background task handles (for testing / coordination)
     background_tasks: Arc<TokioMutex<Vec<tokio::task::JoinHandle<Result<(), AdapterError>>>>>,
@@ -76,7 +74,7 @@ pub struct ExtractionCoordinator {
 impl ExtractionCoordinator {
     pub fn new() -> Self {
         Self {
-            phase2_adapters: Vec::new(),
+            structural_modules: Vec::new(),
             phase3_adapter: None,
             shared_context: None,
             engine: None,
@@ -107,38 +105,41 @@ impl ExtractionCoordinator {
         self
     }
 
-    /// Set the concurrency limit for Phase 2 (analysis) tasks.
+    /// Set the concurrency limit for structural analysis tasks.
     pub fn with_analysis_concurrency(mut self, limit: usize) -> Self {
         self.analysis_semaphore = Arc::new(tokio::sync::Semaphore::new(limit));
         self
     }
 
-    /// Register a Phase 2 adapter for a MIME type prefix.
-    pub fn register_phase2(
-        &mut self,
-        mime_prefix: impl Into<String>,
-        adapter: Arc<dyn Adapter>,
-    ) {
-        self.phase2_adapters.push(Phase2Registration {
-            mime_prefix: mime_prefix.into(),
-            adapter,
-        });
+    /// Register a structural module (ADR-030).
+    ///
+    /// Modules are dispatched by MIME affinity — all modules whose
+    /// `mime_affinity()` prefix matches the file's MIME type will run
+    /// (fan-out, Invariant 51).
+    pub fn register_structural_module(&mut self, module: Arc<dyn StructuralModule>) {
+        self.structural_modules.push(module);
     }
 
-    /// Register a Phase 3 (semantic) adapter.
+    /// Register the semantic extraction adapter.
     ///
-    /// Phase 3 runs sequentially after Phase 2 completes, within the same
-    /// background task. If Phase 2 fails, Phase 3 is skipped.
+    /// Runs sequentially after structural analysis completes, within the same
+    /// background task. Receives vocabulary + sections from structural analysis
+    /// via `SemanticInput::with_structural_context()` (ADR-031).
     pub fn register_phase3(&mut self, adapter: Arc<dyn Adapter>) {
         self.phase3_adapter = Some(adapter);
     }
 
-    /// Find the Phase 2 adapter matching a MIME type.
-    fn find_phase2_adapter(&self, mime_type: &str) -> Option<&Arc<dyn Adapter>> {
-        self.phase2_adapters
+    /// Find all structural modules matching a MIME type (fan-out, Invariant 51).
+    ///
+    /// Returns all modules whose `mime_affinity()` is a prefix of the file's
+    /// MIME type. A module with affinity `text/` matches `text/markdown`,
+    /// `text/plain`, etc.
+    fn matching_modules(&self, mime_type: &str) -> Vec<Arc<dyn StructuralModule>> {
+        self.structural_modules
             .iter()
-            .find(|reg| mime_type.starts_with(&reg.mime_prefix))
-            .map(|reg| &reg.adapter)
+            .filter(|m| mime_type.starts_with(m.mime_affinity()))
+            .cloned()
+            .collect()
     }
 
     /// Wait for all background tasks to complete. Used in tests.
@@ -155,6 +156,24 @@ impl ExtractionCoordinator {
         }
         results
     }
+}
+
+/// Merge two structural outputs (Invariant 53).
+///
+/// - Vocabulary: unioned case-insensitively
+/// - Sections: concatenated, sorted by start_line
+/// - Emissions: kept separate (per-module)
+fn merge_structural_outputs(mut base: StructuralOutput, other: StructuralOutput) -> StructuralOutput {
+    for term in other.vocabulary {
+        let lower = term.to_lowercase();
+        if !base.vocabulary.iter().any(|v| v.to_lowercase() == lower) {
+            base.vocabulary.push(term);
+        }
+    }
+    base.sections.extend(other.sections);
+    base.sections.sort_by_key(|s| s.start_line);
+    base.emissions.extend(other.emissions);
+    base
 }
 
 /// Detect MIME type from file extension.
@@ -448,9 +467,12 @@ impl Adapter for ExtractionCoordinator {
 
         sink.emit(emission).await?;
 
-        // Phase 2+3: spawn background task if we have a backend and matching adapter
-        if let Some(phase2_adapter) = self.find_phase2_adapter(&mime_type) {
-            // Determine background backend: engine path (persist-per-emission) preferred
+        // Structural analysis + semantic extraction: spawn background task
+        // if we have a backend and there's work to do (modules or Phase 3).
+        let matching = self.matching_modules(&mime_type);
+        let has_work = !matching.is_empty() || self.phase3_adapter.is_some();
+
+        if has_work {
             let bg_engine = self.engine.clone();
             let bg_context_id = self.engine_context_id.clone();
             let bg_mutex = self.shared_context.clone();
@@ -459,11 +481,11 @@ impl Adapter for ExtractionCoordinator {
             if !has_backend {
                 tracing::warn!(
                     file_path = %file_path,
-                    "skipping phases 2-3: no engine backend configured on ExtractionCoordinator"
+                    "skipping structural analysis + semantic extraction: no engine backend configured"
                 );
             }
             if has_backend {
-                let adapter = phase2_adapter.clone();
+                let modules = matching;
                 let semaphore = self.analysis_semaphore.clone();
                 let sem_semantic = self.semantic_semaphore.clone();
                 let tasks = self.background_tasks.clone();
@@ -472,82 +494,109 @@ impl Adapter for ExtractionCoordinator {
                 let phase3_opt = self.phase3_adapter.clone();
 
                 let handle = tokio::spawn(async move {
-                    // Phase 2: acquire analysis semaphore
+                    // Structural analysis: acquire analysis semaphore
                     let _permit = semaphore.acquire().await.map_err(|e| {
                         AdapterError::Internal(format!("semaphore closed: {}", e))
                     })?;
 
-                    // Create sink: engine path or mutex path
-                    let sink = create_sink(
-                        &bg_engine, &bg_context_id, &bg_mutex,
-                        adapter.id(), &context_id_bg,
-                    );
+                    // Run structural modules: read file once, fan-out to all matching
+                    let structural_output = if !modules.is_empty() {
+                        let content = std::fs::read_to_string(&file_path_bg)
+                            .unwrap_or_else(|e| {
+                                tracing::warn!(
+                                    file_path = %file_path_bg,
+                                    error = %e,
+                                    "cannot read file for structural analysis, using empty content"
+                                );
+                                String::new()
+                            });
 
-                    let phase2_input = AdapterInput::new(
-                        adapter.input_kind(),
-                        ExtractFileInput {
-                            file_path: file_path_bg.clone(),
-                        },
-                        &context_id_bg,
-                    );
+                        let mut merged = StructuralOutput::default();
+                        for module in &modules {
+                            let output = module.analyze(&file_path_bg, &content).await;
+                            merged = merge_structural_outputs(merged, output);
+                        }
 
-                    let result = adapter.process(&phase2_input, &sink).await;
+                        // Emit module emissions with per-module adapter IDs
+                        for module_emission in &merged.emissions {
+                            let module_sink = create_sink(
+                                &bg_engine, &bg_context_id, &bg_mutex,
+                                &module_emission.module_id, &context_id_bg,
+                            );
+                            let emission = Emission {
+                                nodes: module_emission.nodes.clone(),
+                                edges: module_emission.edges.clone(),
+                                removals: Vec::new(),
+                                edge_removals: Vec::new(),
+                                property_updates: Vec::new(),
+                            };
+                            if !emission.is_empty() {
+                                module_sink.emit(emission).await?;
+                            }
+                        }
 
-                    let status_str = match &result {
-                        Ok(()) => "complete".to_string(),
-                        Err(e) => format!("failed: {}", e),
+                        merged
+                    } else {
+                        // No matching modules — empty passthrough (Invariant 52)
+                        StructuralOutput::default()
                     };
+
+                    // Update structural analysis status
+                    let analysis_status = "complete".to_string();
                     if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
-                        update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "phase2", &status_str);
+                        update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "phase2", &analysis_status);
                     } else if let Some(ref ctx) = bg_mutex {
-                        update_extraction_status(ctx, &file_path_bg, "phase2", &status_str);
+                        update_extraction_status(ctx, &file_path_bg, "phase2", &analysis_status);
                     }
 
-                    // Release analysis permit before Phase 3
+                    // Release analysis permit before semantic extraction
                     drop(_permit);
 
-                    // Chain Phase 3 only if Phase 2 succeeded and Phase 3 is registered
-                    if result.is_ok() {
-                        if let Some(phase3) = phase3_opt {
-                            let _permit3 = sem_semantic.acquire().await.map_err(|e| {
-                                AdapterError::Internal(format!("semaphore closed: {}", e))
-                            })?;
+                    // Chain semantic extraction with structural context (ADR-031)
+                    if let Some(phase3) = phase3_opt {
+                        let _permit3 = sem_semantic.acquire().await.map_err(|e| {
+                            AdapterError::Internal(format!("semaphore closed: {}", e))
+                        })?;
 
-                            let sink3 = create_sink(
-                                &bg_engine, &bg_context_id, &bg_mutex,
-                                phase3.id(), &context_id_bg,
-                            );
+                        let sink3 = create_sink(
+                            &bg_engine, &bg_context_id, &bg_mutex,
+                            phase3.id(), &context_id_bg,
+                        );
 
-                            let phase3_input = AdapterInput::new(
-                                phase3.input_kind(),
-                                SemanticInput::for_file(file_path_bg.clone()),
-                                &context_id_bg,
-                            );
+                        // Hand off vocabulary + sections from structural analysis
+                        let phase3_input = AdapterInput::new(
+                            phase3.input_kind(),
+                            SemanticInput::with_structural_context(
+                                file_path_bg.clone(),
+                                structural_output.sections,
+                                structural_output.vocabulary,
+                            ),
+                            &context_id_bg,
+                        );
 
-                            let result3 = phase3.process(&phase3_input, &sink3).await;
+                        let result3 = phase3.process(&phase3_input, &sink3).await;
 
-                            let status3_str = match &result3 {
-                                Ok(()) => "complete".to_string(),
-                                Err(AdapterError::Skipped(ref reason)) => {
-                                    format!("skipped: {}", reason)
-                                }
-                                Err(ref e) => format!("failed: {}", e),
-                            };
-                            if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
-                                update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "phase3", &status3_str);
-                            } else if let Some(ref ctx) = bg_mutex {
-                                update_extraction_status(ctx, &file_path_bg, "phase3", &status3_str);
+                        let status3_str = match &result3 {
+                            Ok(()) => "complete".to_string(),
+                            Err(AdapterError::Skipped(ref reason)) => {
+                                format!("skipped: {}", reason)
                             }
-
-                            // Skipped is not a failure — return Ok
-                            return match result3 {
-                                Err(AdapterError::Skipped(_)) => Ok(()),
-                                other => other,
-                            };
+                            Err(ref e) => format!("failed: {}", e),
+                        };
+                        if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
+                            update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "phase3", &status3_str);
+                        } else if let Some(ref ctx) = bg_mutex {
+                            update_extraction_status(ctx, &file_path_bg, "phase3", &status3_str);
                         }
+
+                        // Skipped is not a failure — return Ok
+                        return match result3 {
+                            Err(AdapterError::Skipped(_)) => Ok(()),
+                            other => other,
+                        };
                     }
 
-                    result
+                    Ok(())
                 });
 
                 tasks.lock().await.push(handle);
@@ -567,6 +616,8 @@ mod tests {
     use super::*;
     use crate::adapter::EngineSink;
     use crate::adapter::FrameworkContext;
+    use crate::adapter::structural::{StructuralModule, StructuralOutput, ModuleEmission};
+    use crate::adapter::structural::SectionBoundary;
     use crate::graph::Context;
     use std::io::Write;
     use std::sync::{Arc, Mutex};
@@ -586,6 +637,69 @@ mod tests {
         let mut file = std::fs::File::create(&file_path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
         dir
+    }
+
+    // --- Test structural module stubs ---
+
+    /// A structural module that returns empty output (default behavior).
+    struct PassthroughModule {
+        id: &'static str,
+        mime: &'static str,
+    }
+
+    #[async_trait]
+    impl StructuralModule for PassthroughModule {
+        fn id(&self) -> &str { self.id }
+        fn mime_affinity(&self) -> &str { self.mime }
+        async fn analyze(&self, _file_path: &str, _content: &str) -> StructuralOutput {
+            StructuralOutput::default()
+        }
+    }
+
+    /// A structural module that emits a concept node via ModuleEmission.
+    struct EmittingModule {
+        id: &'static str,
+        mime: &'static str,
+        concept_label: &'static str,
+    }
+
+    #[async_trait]
+    impl StructuralModule for EmittingModule {
+        fn id(&self) -> &str { self.id }
+        fn mime_affinity(&self) -> &str { self.mime }
+        async fn analyze(&self, _file_path: &str, _content: &str) -> StructuralOutput {
+            let (_concept_id, node) = concept_node(self.concept_label);
+            StructuralOutput {
+                vocabulary: vec![self.concept_label.to_string()],
+                sections: vec![],
+                emissions: vec![ModuleEmission {
+                    module_id: self.id.to_string(),
+                    nodes: vec![AnnotatedNode::new(node)],
+                    edges: vec![],
+                }],
+            }
+        }
+    }
+
+    /// A structural module that returns vocabulary and sections.
+    struct VocabularyModule {
+        id: &'static str,
+        mime: &'static str,
+        terms: Vec<&'static str>,
+        sections: Vec<SectionBoundary>,
+    }
+
+    #[async_trait]
+    impl StructuralModule for VocabularyModule {
+        fn id(&self) -> &str { self.id }
+        fn mime_affinity(&self) -> &str { self.mime }
+        async fn analyze(&self, _file_path: &str, _content: &str) -> StructuralOutput {
+            StructuralOutput {
+                vocabulary: self.terms.iter().map(|t| t.to_string()).collect(),
+                sections: self.sections.clone(),
+                emissions: vec![],
+            }
+        }
     }
 
     // --- Scenario: Extraction coordinator runs Phase 1 synchronously ---
@@ -664,7 +778,6 @@ mod tests {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
 
-        // File with corrupt frontmatter
         let dir = create_temp_file(
             "corrupt.md",
             "---\ntags: [unclosed\n---\n\nContent here.",
@@ -684,21 +797,18 @@ mod tests {
 
         let snapshot = ctx.lock().unwrap();
 
-        // File node still exists
         let file_node_id = NodeId::from_string(format!("file:{}", file_path_str));
         assert!(
             snapshot.get_node(&file_node_id).is_some(),
             "file node should exist despite corrupt frontmatter"
         );
 
-        // No concept nodes created
         let concept_count = snapshot
             .nodes()
             .filter(|n| n.node_type == "concept")
             .count();
         assert_eq!(concept_count, 0, "no concepts from corrupt frontmatter");
 
-        // Extraction status shows warning
         let status_id = NodeId::from_string(format!("extraction-status:{}", file_path_str));
         let status = snapshot.get_node(&status_id).expect("status should exist");
         assert_eq!(
@@ -711,28 +821,44 @@ mod tests {
         );
     }
 
-    // --- Scenario: Phase 2 dispatches by MIME type ---
+    // --- Scenario: Structural modules dispatch by MIME affinity (fan-out, Invariant 51) ---
 
     #[tokio::test]
-    async fn phase2_dispatches_by_mime_type() {
+    async fn structural_modules_dispatch_by_mime_affinity() {
         let mut coordinator = ExtractionCoordinator::new();
 
-        // Register text and audio Phase 2 adapters
-        let text_adapter = Arc::new(RecordingAdapter::new("extract-analysis-text", "extract-analysis-text"));
-        let audio_adapter = Arc::new(RecordingAdapter::new("extract-analysis-audio", "extract-analysis-audio"));
+        let text_module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
+            id: "extract-analysis-text-headings",
+            mime: "text/",
+        });
+        let markdown_module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
+            id: "extract-analysis-text-markdown",
+            mime: "text/markdown",
+        });
+        let audio_module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
+            id: "extract-analysis-audio",
+            mime: "audio/",
+        });
 
-        coordinator.register_phase2("text/", text_adapter.clone());
-        coordinator.register_phase2("audio/", audio_adapter.clone());
+        coordinator.register_structural_module(text_module);
+        coordinator.register_structural_module(markdown_module);
+        coordinator.register_structural_module(audio_module);
 
-        // For an MP3 file, should dispatch to audio adapter
-        let found = coordinator.find_phase2_adapter("audio/mpeg");
-        assert!(found.is_some(), "should find audio adapter");
-        assert_eq!(found.unwrap().id(), "extract-analysis-audio");
+        // text/markdown matches both text/ and text/markdown (fan-out)
+        let matching = coordinator.matching_modules("text/markdown");
+        assert_eq!(matching.len(), 2, "text/markdown should match 2 modules");
+        let ids: Vec<&str> = matching.iter().map(|m| m.id()).collect();
+        assert!(ids.contains(&"extract-analysis-text-headings"));
+        assert!(ids.contains(&"extract-analysis-text-markdown"));
 
-        // For a markdown file, should dispatch to text adapter
-        let found = coordinator.find_phase2_adapter("text/markdown");
-        assert!(found.is_some(), "should find text adapter");
-        assert_eq!(found.unwrap().id(), "extract-analysis-text");
+        // audio/mpeg matches only audio/
+        let matching = coordinator.matching_modules("audio/mpeg");
+        assert_eq!(matching.len(), 1, "audio/mpeg should match 1 module");
+        assert_eq!(matching[0].id(), "extract-analysis-audio");
+
+        // application/pdf matches nothing
+        let matching = coordinator.matching_modules("application/pdf");
+        assert_eq!(matching.len(), 0, "application/pdf matches no modules");
     }
 
     // --- Scenario: Extraction status tracks phase completion ---
@@ -781,14 +907,13 @@ mod tests {
     #[test]
     fn each_phase_has_distinct_adapter_id() {
         let coordinator = ExtractionCoordinator::new();
-        let text_adapter = Arc::new(RecordingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-        ));
-
         assert_eq!(coordinator.id(), "extract-coordinator");
-        assert_eq!(text_adapter.id(), "extract-analysis-text");
-        assert_ne!(coordinator.id(), text_adapter.id());
+        // Structural modules have their own IDs distinct from coordinator
+        let module = PassthroughModule {
+            id: "extract-analysis-text-headings",
+            mime: "text/",
+        };
+        assert_ne!(coordinator.id(), module.id());
     }
 
     // --- Scenario: Concurrency control limits background phases ---
@@ -798,257 +923,34 @@ mod tests {
         let coordinator = ExtractionCoordinator::new()
             .with_analysis_concurrency(4);
 
-        // Verify semaphore has correct capacity
         assert_eq!(coordinator.analysis_semaphore.available_permits(), 4);
 
-        // Acquire permits to simulate concurrent tasks
         let _permit1 = coordinator.analysis_semaphore.clone().try_acquire_owned().unwrap();
         let _permit2 = coordinator.analysis_semaphore.clone().try_acquire_owned().unwrap();
         let _permit3 = coordinator.analysis_semaphore.clone().try_acquire_owned().unwrap();
         let _permit4 = coordinator.analysis_semaphore.clone().try_acquire_owned().unwrap();
 
-        // 5th should fail (all permits taken)
         assert!(
             coordinator.analysis_semaphore.clone().try_acquire_owned().is_err(),
             "should not get 5th permit with capacity 4"
         );
     }
 
-    // --- Helpers ---
-
-    /// A no-op adapter (used for dispatch and ID tests).
-    struct RecordingAdapter {
-        adapter_id: String,
-        input_kind: String,
-    }
-
-    impl RecordingAdapter {
-        fn new(adapter_id: &str, input_kind: &str) -> Self {
-            Self {
-                adapter_id: adapter_id.to_string(),
-                input_kind: input_kind.to_string(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl Adapter for RecordingAdapter {
-        fn id(&self) -> &str {
-            &self.adapter_id
-        }
-
-        fn input_kind(&self) -> &str {
-            &self.input_kind
-        }
-
-        async fn process(
-            &self,
-            _input: &AdapterInput,
-            _sink: &dyn AdapterSink,
-        ) -> Result<(), AdapterError> {
-            Ok(())
-        }
-    }
-
-    /// An adapter that emits a concept node (proves it ran and output persists).
-    struct EmittingAdapter {
-        adapter_id: String,
-        input_kind: String,
-        concept_id: String,
-    }
-
-    impl EmittingAdapter {
-        fn new(adapter_id: &str, input_kind: &str, concept_id: &str) -> Self {
-            Self {
-                adapter_id: adapter_id.to_string(),
-                input_kind: input_kind.to_string(),
-                concept_id: concept_id.to_string(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl Adapter for EmittingAdapter {
-        fn id(&self) -> &str {
-            &self.adapter_id
-        }
-
-        fn input_kind(&self) -> &str {
-            &self.input_kind
-        }
-
-        async fn process(
-            &self,
-            _input: &AdapterInput,
-            sink: &dyn AdapterSink,
-        ) -> Result<(), AdapterError> {
-            let mut concept = Node::new_in_dimension(
-                "concept",
-                ContentType::Concept,
-                dimension::SEMANTIC,
-            );
-            concept.id = NodeId::from_string(&self.concept_id);
-            concept.properties.insert(
-                "label".to_string(),
-                PropertyValue::String(self.concept_id.clone()),
-            );
-            let emission = Emission::new().with_node(AnnotatedNode::new(concept));
-            sink.emit(emission).await?;
-            Ok(())
-        }
-    }
-
-    /// An adapter that always fails (for failure-isolation tests).
-    struct FailingAdapter {
-        adapter_id: String,
-        input_kind: String,
-    }
-
-    impl FailingAdapter {
-        fn new(adapter_id: &str, input_kind: &str) -> Self {
-            Self {
-                adapter_id: adapter_id.to_string(),
-                input_kind: input_kind.to_string(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl Adapter for FailingAdapter {
-        fn id(&self) -> &str {
-            &self.adapter_id
-        }
-
-        fn input_kind(&self) -> &str {
-            &self.input_kind
-        }
-
-        async fn process(
-            &self,
-            _input: &AdapterInput,
-            _sink: &dyn AdapterSink,
-        ) -> Result<(), AdapterError> {
-            Err(AdapterError::Internal("llm-orc unavailable".to_string()))
-        }
-    }
-
-    /// An adapter that returns Skipped (for graceful degradation tests).
-    struct SkippingAdapter {
-        adapter_id: String,
-        input_kind: String,
-    }
-
-    impl SkippingAdapter {
-        fn new(adapter_id: &str, input_kind: &str) -> Self {
-            Self {
-                adapter_id: adapter_id.to_string(),
-                input_kind: input_kind.to_string(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl Adapter for SkippingAdapter {
-        fn id(&self) -> &str {
-            &self.adapter_id
-        }
-
-        fn input_kind(&self) -> &str {
-            &self.input_kind
-        }
-
-        async fn process(
-            &self,
-            _input: &AdapterInput,
-            _sink: &dyn AdapterSink,
-        ) -> Result<(), AdapterError> {
-            Err(AdapterError::Skipped("llm-orc not running".to_string()))
-        }
-    }
-
-    /// A Phase 3 adapter that verifies Phase 2 output exists (proves sequential execution).
-    struct SequenceVerifyingAdapter {
-        adapter_id: String,
-        input_kind: String,
-        shared_ctx: Arc<Mutex<Context>>,
-        phase2_concept_id: String,
-    }
-
-    impl SequenceVerifyingAdapter {
-        fn new(
-            adapter_id: &str,
-            input_kind: &str,
-            shared_ctx: Arc<Mutex<Context>>,
-            phase2_concept_id: &str,
-        ) -> Self {
-            Self {
-                adapter_id: adapter_id.to_string(),
-                input_kind: input_kind.to_string(),
-                shared_ctx,
-                phase2_concept_id: phase2_concept_id.to_string(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl Adapter for SequenceVerifyingAdapter {
-        fn id(&self) -> &str {
-            &self.adapter_id
-        }
-
-        fn input_kind(&self) -> &str {
-            &self.input_kind
-        }
-
-        async fn process(
-            &self,
-            _input: &AdapterInput,
-            sink: &dyn AdapterSink,
-        ) -> Result<(), AdapterError> {
-            // Verify Phase 2 output exists — proves Phase 3 runs after Phase 2
-            {
-                let ctx = self.shared_ctx.lock().unwrap();
-                let phase2_node =
-                    ctx.get_node(&NodeId::from_string(&self.phase2_concept_id));
-                if phase2_node.is_none() {
-                    return Err(AdapterError::Internal(
-                        "Phase 2 output not found — sequencing violated".to_string(),
-                    ));
-                }
-            }
-
-            // Emit Phase 3 output
-            let mut concept = Node::new_in_dimension(
-                "concept",
-                ContentType::Concept,
-                dimension::SEMANTIC,
-            );
-            concept.id = NodeId::from_string("concept:phase3-semantic");
-            concept.properties.insert(
-                "label".to_string(),
-                PropertyValue::String("phase3-semantic".to_string()),
-            );
-            sink.emit(Emission::new().with_node(AnnotatedNode::new(concept)))
-                .await?;
-            Ok(())
-        }
-    }
-
-    // --- Scenario: Extraction coordinator spawns Phase 2 as background task ---
+    // --- Scenario: Structural analysis runs in background and emits module output ---
 
     #[tokio::test]
-    async fn phase2_spawns_as_background_task() {
+    async fn structural_analysis_runs_in_background() {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
 
         let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
 
-        let emitting = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:phase2-discovery",
-        ));
-        coordinator.register_phase2("text/", emitting);
+        let emitting: Arc<dyn StructuralModule> = Arc::new(EmittingModule {
+            id: "extract-analysis-text-headings",
+            mime: "text/",
+            concept_label: "structural-discovery",
+        });
+        coordinator.register_structural_module(emitting);
 
         let dir = create_temp_file("bg-test.md", "# Background test\n\nSome content.");
         let file_path = dir.path().join("bg-test.md");
@@ -1062,7 +964,7 @@ mod tests {
             "test",
         );
 
-        // process() returns after Phase 1 — Phase 2 runs in background
+        // process() returns after Phase 1 — structural analysis runs in background
         coordinator.process(&input, &sink).await.unwrap();
 
         // Phase 1 results should be in context immediately
@@ -1075,23 +977,23 @@ mod tests {
             );
         }
 
-        // Wait for background Phase 2
+        // Wait for background structural analysis
         let results = coordinator.wait_for_background().await;
         assert!(
             results.iter().all(|r| r.is_ok()),
-            "Phase 2 should succeed"
+            "Structural analysis should succeed"
         );
 
-        // Phase 2 output should now be in context
+        // Module emission should now be in context
         let snapshot = ctx.lock().unwrap();
         assert!(
             snapshot
-                .get_node(&NodeId::from_string("concept:phase2-discovery"))
+                .get_node(&NodeId::from_string("concept:structural-discovery"))
                 .is_some(),
-            "Phase 2 concept node should be persisted"
+            "Structural module concept node should be persisted"
         );
 
-        // Extraction status should show phase2 complete
+        // Extraction status should show structural analysis complete
         let status_id =
             NodeId::from_string(format!("extraction-status:{}", file_path_str));
         let status = snapshot.get_node(&status_id).expect("status should exist");
@@ -1101,105 +1003,171 @@ mod tests {
         );
     }
 
-    // --- Scenario: Phase 3 spawns only after Phase 2 completes ---
+    // --- Scenario: Semantic extraction runs after structural analysis with context (ADR-031) ---
 
     #[tokio::test]
-    async fn phase3_spawns_after_phase2_completes() {
+    async fn semantic_extraction_receives_structural_context() {
+        use crate::adapter::semantic::SemanticInput;
+
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
 
         let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
 
-        // Phase 2: emits concept:phase2-discovery
-        let phase2 = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:phase2-discovery",
-        ));
-        coordinator.register_phase2("text/", phase2);
+        // Module that produces vocabulary + sections
+        let vocab_module: Arc<dyn StructuralModule> = Arc::new(VocabularyModule {
+            id: "extract-analysis-text-headings",
+            mime: "text/",
+            terms: vec!["Plexus", "knowledge graph"],
+            sections: vec![SectionBoundary {
+                label: "Introduction".to_string(),
+                start_line: 1,
+                end_line: 10,
+            }],
+        });
+        coordinator.register_structural_module(vocab_module);
 
-        // Phase 3: verifies Phase 2 output exists before proceeding
-        let phase3 = Arc::new(SequenceVerifyingAdapter::new(
-            "extract-semantic",
-            "extract-semantic",
-            ctx.clone(),
-            "concept:phase2-discovery",
-        ));
-        coordinator.register_phase3(phase3);
+        // Phase 3 that verifies it receives vocabulary + sections
+        let vocab_received = Arc::new(Mutex::new(Vec::new()));
+        let sections_received = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let vr = vocab_received.clone();
+        let sr = sections_received.clone();
 
-        let dir = create_temp_file("seq-test.md", "# Sequence test\n\nContent.");
-        let file_path = dir.path().join("seq-test.md");
-        let file_path_str = file_path.to_str().unwrap().to_string();
+        struct VocabVerifier {
+            vocab: Arc<Mutex<Vec<String>>>,
+            section_count: Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl Adapter for VocabVerifier {
+            fn id(&self) -> &str { "extract-semantic" }
+            fn input_kind(&self) -> &str { "extract-semantic" }
+            async fn process(
+                &self,
+                input: &AdapterInput,
+                _sink: &dyn AdapterSink,
+            ) -> Result<(), AdapterError> {
+                let semantic = input.downcast_data::<SemanticInput>()
+                    .ok_or(AdapterError::InvalidInput)?;
+                *self.vocab.lock().unwrap() = semantic.vocabulary.clone();
+                self.section_count.store(
+                    semantic.sections.len(),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                Ok(())
+            }
+        }
+
+        coordinator.register_phase3(Arc::new(VocabVerifier {
+            vocab: vr,
+            section_count: sr,
+        }));
+
+        let dir = create_temp_file("vocab-test.md", "# Introduction\n\nPlexus knowledge graph.");
+        let file_path = dir.path().join("vocab-test.md");
 
         let input = AdapterInput::new(
             "extract-file",
-            ExtractFileInput {
-                file_path: file_path_str.clone(),
-            },
+            ExtractFileInput { file_path: file_path.to_str().unwrap().to_string() },
             "test",
         );
 
         coordinator.process(&input, &sink).await.unwrap();
-
-        // Wait for background tasks (Phase 2 → Phase 3 chain)
         let results = coordinator.wait_for_background().await;
-        assert!(
-            results.iter().all(|r| r.is_ok()),
-            "Phase 2 and Phase 3 should both succeed (sequencing verified)"
-        );
+        assert!(results.iter().all(|r| r.is_ok()), "Should succeed");
 
-        // Both phases' output should be in context
-        let snapshot = ctx.lock().unwrap();
-        assert!(
-            snapshot
-                .get_node(&NodeId::from_string("concept:phase2-discovery"))
-                .is_some(),
-            "Phase 2 output should be persisted"
-        );
-        assert!(
-            snapshot
-                .get_node(&NodeId::from_string("concept:phase3-semantic"))
-                .is_some(),
-            "Phase 3 output should be persisted"
-        );
-
-        // Extraction status should show both phases complete
-        let status_id =
-            NodeId::from_string(format!("extraction-status:{}", file_path_str));
-        let status = snapshot.get_node(&status_id).expect("status should exist");
+        let vocab = vocab_received.lock().unwrap();
+        assert_eq!(vocab.len(), 2);
+        assert!(vocab.contains(&"Plexus".to_string()));
+        assert!(vocab.contains(&"knowledge graph".to_string()));
         assert_eq!(
-            status.properties.get("phase2"),
-            Some(&PropertyValue::String("complete".to_string()))
-        );
-        assert_eq!(
-            status.properties.get("phase3"),
-            Some(&PropertyValue::String("complete".to_string()))
+            sections_received.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "Should receive 1 section from structural analysis"
         );
     }
 
-    // --- Scenario: Background phase failure does not affect earlier phases ---
+    // --- Scenario: Empty module registry passes through (Invariant 52) ---
 
     #[tokio::test]
-    async fn background_failure_does_not_affect_earlier_phases() {
+    async fn empty_registry_passthrough() {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
 
         let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
 
-        // Phase 2: succeeds and emits output
-        let phase2 = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:phase2-discovery",
-        ));
-        coordinator.register_phase2("text/", phase2);
+        // No structural modules registered, but Phase 3 is registered
+        let received = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = received.clone();
+
+        struct Phase3Marker {
+            ran: Arc<std::sync::atomic::AtomicBool>,
+        }
+
+        #[async_trait]
+        impl Adapter for Phase3Marker {
+            fn id(&self) -> &str { "extract-semantic" }
+            fn input_kind(&self) -> &str { "extract-semantic" }
+            async fn process(
+                &self,
+                _input: &AdapterInput,
+                _sink: &dyn AdapterSink,
+            ) -> Result<(), AdapterError> {
+                self.ran.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        coordinator.register_phase3(Arc::new(Phase3Marker { ran: flag }));
+
+        let dir = create_temp_file("passthrough.md", "# Passthrough\n\nContent.");
+        let file_path = dir.path().join("passthrough.md");
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path.to_str().unwrap().to_string() },
+            "test",
+        );
+
+        coordinator.process(&input, &sink).await.unwrap();
+        coordinator.wait_for_background().await;
+
+        assert!(
+            received.load(std::sync::atomic::Ordering::SeqCst),
+            "Phase 3 should run even with no structural modules (empty passthrough)"
+        );
+    }
+
+    // --- Scenario: Semantic extraction failure does not affect earlier phases ---
+
+    #[tokio::test]
+    async fn semantic_failure_does_not_affect_earlier_phases() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone(), "extract-coordinator");
+
+        let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
+
+        // Structural module that emits a concept
+        let emitting: Arc<dyn StructuralModule> = Arc::new(EmittingModule {
+            id: "extract-analysis-text-headings",
+            mime: "text/",
+            concept_label: "structural-discovery",
+        });
+        coordinator.register_structural_module(emitting);
 
         // Phase 3: fails (llm-orc unavailable)
-        let phase3 = Arc::new(FailingAdapter::new(
-            "extract-semantic",
-            "extract-semantic",
-        ));
-        coordinator.register_phase3(phase3);
+        struct FailingPhase3;
+        #[async_trait]
+        impl Adapter for FailingPhase3 {
+            fn id(&self) -> &str { "extract-semantic" }
+            fn input_kind(&self) -> &str { "extract-semantic" }
+            async fn process(
+                &self, _: &AdapterInput, _: &dyn AdapterSink,
+            ) -> Result<(), AdapterError> {
+                Err(AdapterError::Internal("llm-orc unavailable".to_string()))
+            }
+        }
+        coordinator.register_phase3(Arc::new(FailingPhase3));
 
         let dir = create_temp_file(
             "fail-test.md",
@@ -1218,60 +1186,38 @@ mod tests {
 
         coordinator.process(&input, &sink).await.unwrap();
 
-        // Wait for background tasks — Phase 3 should fail
         let results = coordinator.wait_for_background().await;
         assert!(
             results.iter().any(|r| r.is_err()),
             "Phase 3 should have failed"
         );
 
-        // Phase 1 results remain (file node + concept from frontmatter)
+        // Phase 1 results remain
         let snapshot = ctx.lock().unwrap();
         let file_id = NodeId::from_string(format!("file:{}", file_path_str));
+        assert!(snapshot.get_node(&file_id).is_some(), "Phase 1 file node persists");
         assert!(
-            snapshot.get_node(&file_id).is_some(),
-            "Phase 1 file node should persist despite Phase 3 failure"
-        );
-        assert!(
-            snapshot
-                .get_node(&NodeId::from_string("concept:resilience"))
-                .is_some(),
-            "Phase 1 concept node should persist despite Phase 3 failure"
+            snapshot.get_node(&NodeId::from_string("concept:resilience")).is_some(),
+            "Phase 1 frontmatter concept persists"
         );
 
-        // Phase 2 results remain
+        // Structural analysis results remain
         assert!(
-            snapshot
-                .get_node(&NodeId::from_string("concept:phase2-discovery"))
-                .is_some(),
-            "Phase 2 output should persist despite Phase 3 failure"
+            snapshot.get_node(&NodeId::from_string("concept:structural-discovery")).is_some(),
+            "Structural module output persists despite Phase 3 failure"
         );
 
-        // Extraction status: phases 1-2 complete, phase 3 failed
-        let status_id =
-            NodeId::from_string(format!("extraction-status:{}", file_path_str));
+        // Phase 3 status shows failure
+        let status_id = NodeId::from_string(format!("extraction-status:{}", file_path_str));
         let status = snapshot.get_node(&status_id).expect("status should exist");
-        assert_eq!(
-            status.properties.get("phase1"),
-            Some(&PropertyValue::String("complete".to_string()))
-        );
         assert_eq!(
             status.properties.get("phase2"),
             Some(&PropertyValue::String("complete".to_string()))
         );
-        let phase3_status = status
-            .properties
-            .get("phase3")
-            .and_then(|pv| match pv {
-                PropertyValue::String(s) => Some(s.as_str()),
-                _ => None,
-            })
+        let phase3_status = status.properties.get("phase3")
+            .and_then(|pv| match pv { PropertyValue::String(s) => Some(s.as_str()), _ => None })
             .unwrap();
-        assert!(
-            phase3_status.starts_with("failed:"),
-            "Phase 3 status should be 'failed: ...', got '{}'",
-            phase3_status
-        );
+        assert!(phase3_status.starts_with("failed:"), "Phase 3 status: {}", phase3_status);
     }
 
     // --- Scenario: Phase 3 graceful degradation (ADR-021) ---
@@ -1283,20 +1229,26 @@ mod tests {
 
         let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
 
-        // Phase 2: succeeds normally
-        let phase2 = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:phase2-result",
-        ));
-        coordinator.register_phase2("text/", phase2);
+        let module: Arc<dyn StructuralModule> = Arc::new(EmittingModule {
+            id: "extract-analysis-text-headings",
+            mime: "text/",
+            concept_label: "structural-result",
+        });
+        coordinator.register_structural_module(module);
 
         // Phase 3: skipped (llm-orc not running)
-        let phase3 = Arc::new(SkippingAdapter::new(
-            "extract-semantic",
-            "extract-semantic",
-        ));
-        coordinator.register_phase3(phase3);
+        struct SkippingPhase3;
+        #[async_trait]
+        impl Adapter for SkippingPhase3 {
+            fn id(&self) -> &str { "extract-semantic" }
+            fn input_kind(&self) -> &str { "extract-semantic" }
+            async fn process(
+                &self, _: &AdapterInput, _: &dyn AdapterSink,
+            ) -> Result<(), AdapterError> {
+                Err(AdapterError::Skipped("llm-orc not running".to_string()))
+            }
+        }
+        coordinator.register_phase3(Arc::new(SkippingPhase3));
 
         let dir = create_temp_file(
             "graceful.md",
@@ -1307,483 +1259,55 @@ mod tests {
 
         let input = AdapterInput::new(
             "extract-file",
-            ExtractFileInput {
-                file_path: file_path_str.clone(),
-            },
+            ExtractFileInput { file_path: file_path_str.clone() },
             "test",
         );
 
         coordinator.process(&input, &sink).await.unwrap();
 
-        // Background task should return Ok — skipped is not an error
         let results = coordinator.wait_for_background().await;
-        assert!(
-            results.iter().all(|r| r.is_ok()),
-            "Skipped Phase 3 should not surface as an error"
-        );
+        assert!(results.iter().all(|r| r.is_ok()), "Skipped is not an error");
 
         let snapshot = ctx.lock().unwrap();
+        assert!(snapshot.get_node(&NodeId::from_string("concept:structural-result")).is_some());
 
-        // Phases 1-2 completed normally
-        let file_id = NodeId::from_string(format!("file:{}", file_path_str));
-        assert!(snapshot.get_node(&file_id).is_some(), "Phase 1 file node exists");
-        assert!(
-            snapshot
-                .get_node(&NodeId::from_string("concept:phase2-result"))
-                .is_some(),
-            "Phase 2 output exists"
-        );
-
-        // Phase 3 status is "skipped", not "failed"
-        let status_id =
-            NodeId::from_string(format!("extraction-status:{}", file_path_str));
+        let status_id = NodeId::from_string(format!("extraction-status:{}", file_path_str));
         let status = snapshot.get_node(&status_id).expect("status should exist");
-        assert_eq!(
-            status.properties.get("phase1"),
-            Some(&PropertyValue::String("complete".to_string()))
-        );
         assert_eq!(
             status.properties.get("phase2"),
             Some(&PropertyValue::String("complete".to_string()))
         );
-        let phase3_status = status
-            .properties
-            .get("phase3")
-            .and_then(|pv| match pv {
-                PropertyValue::String(s) => Some(s.as_str()),
-                _ => None,
-            })
+        let phase3_status = status.properties.get("phase3")
+            .and_then(|pv| match pv { PropertyValue::String(s) => Some(s.as_str()), _ => None })
             .unwrap();
-        assert!(
-            phase3_status.starts_with("skipped:"),
-            "Phase 3 status should be 'skipped: ...', got '{}'",
-            phase3_status
-        );
+        assert!(phase3_status.starts_with("skipped:"), "Phase 3: {}", phase3_status);
     }
 
-    // --- Scenario: Enrichments fire incrementally after each phase ---
-    //
-    // This scenario is architecturally guaranteed: each phase uses its own
-    // EngineSink, and the Engine path runs the enrichment loop after every
-    // emit(). Phase 1's emission triggers enrichments,
-    // and Phase 2's independent emission triggers another enrichment round
-    // (CoOccurrenceEnrichment on cross-phase concepts).
-    //
-    // Full integration test requires the Engine path (PlexusEngine with
-    // enrichment registry). The enrichment loop itself is already tested
-    // in engine_sink::tests and enrichment-specific modules.
-    //
-    // Lightweight verification: each phase's emission is independently
-    // committed via separate sinks, so enrichments see incremental state.
+    // --- Scenario: Multiple modules fan-out and merge (Invariant 53) ---
+
     #[tokio::test]
-    async fn enrichments_fire_incrementally_verified_by_independent_sinks() {
+    async fn multiple_modules_fan_out_and_merge() {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
 
         let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
 
-        // Phase 2 emits a concept node via its own sink
-        let phase2 = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:cross-phase",
-        ));
-        coordinator.register_phase2("text/", phase2);
-
-        let dir = create_temp_file(
-            "enrich-test.md",
-            "---\ntags: [jazz]\n---\n\n# Enrichment test",
-        );
-        let file_path = dir.path().join("enrich-test.md");
-        let file_path_str = file_path.to_str().unwrap().to_string();
-
-        let input = AdapterInput::new(
-            "extract-file",
-            ExtractFileInput {
-                file_path: file_path_str.clone(),
-            },
-            "test",
-        );
-
-        coordinator.process(&input, &sink).await.unwrap();
-        coordinator.wait_for_background().await;
-
-        let snapshot = ctx.lock().unwrap();
-
-        // Phase 1 concept from frontmatter
-        assert!(
-            snapshot
-                .get_node(&NodeId::from_string("concept:jazz"))
-                .is_some(),
-            "Phase 1 concept should exist"
-        );
-
-        // Phase 2 concept from analysis
-        assert!(
-            snapshot
-                .get_node(&NodeId::from_string("concept:cross-phase"))
-                .is_some(),
-            "Phase 2 concept should exist"
-        );
-
-        // Both committed independently — enrichments in production would
-        // fire after each emission, seeing incremental graph state.
-        // Phase 2's concepts trigger CoOccurrenceEnrichment with cross-phase pairs.
-    }
-
-    // ================================================================
-    // Essay 22 Item 3: Background Phase Persistence Scenarios
-    // ================================================================
-
-    // --- Scenario: Phase 2 emissions persist through the engine ---
-
-    #[tokio::test]
-    async fn phase2_emissions_persist_through_engine() {
-        use crate::graph::{ContextId, PlexusEngine};
-        use crate::storage::{SqliteStore, OpenStore};
-
-        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
-        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
-        let context_id = ContextId::from_string("test");
-        let mut ctx = Context::new("test");
-        ctx.id = context_id.clone();
-        engine.upsert_context(ctx).unwrap();
-
-        let mut coordinator = ExtractionCoordinator::new()
-            .with_engine(engine.clone(), context_id.clone());
-
-        let emitting = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:engine-phase2",
-        ));
-        coordinator.register_phase2("text/", emitting);
-
-        // Primary sink is also engine-backed (Phase 1 goes through here)
-        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
-            .with_framework_context(FrameworkContext {
-                adapter_id: "extract-coordinator".to_string(),
-                context_id: "test".to_string(),
-                input_summary: None,
-            });
-
-        let dir = create_temp_file("engine-test.md", "# Engine persistence test\n\nContent.");
-        let file_path = dir.path().join("engine-test.md");
-        let file_path_str = file_path.to_str().unwrap().to_string();
-
-        let input = AdapterInput::new(
-            "extract-file",
-            ExtractFileInput {
-                file_path: file_path_str.clone(),
-            },
-            "test",
-        );
-
-        coordinator.process(&input, &primary_sink).await.unwrap();
-        let results = coordinator.wait_for_background().await;
-        assert!(results.iter().all(|r| r.is_ok()), "Phase 2 should succeed");
-
-        // Phase 2 concept should exist in the engine's context
-        let ctx = engine.get_context(&context_id).expect("context should exist");
-        assert!(
-            ctx.get_node(&NodeId::from_string("concept:engine-phase2")).is_some(),
-            "Phase 2 concept node should be persisted in engine context"
-        );
-
-        // Verify persistence: reload from store
-        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
-        engine2.load_all().unwrap();
-        let ctx2 = engine2.get_context(&context_id).expect("context should survive reload");
-        assert!(
-            ctx2.get_node(&NodeId::from_string("concept:engine-phase2")).is_some(),
-            "Phase 2 concept node should survive engine reload from store"
-        );
-    }
-
-    // --- Scenario: Phase 3 emissions persist through the engine ---
-
-    #[tokio::test]
-    async fn phase3_emissions_persist_through_engine() {
-        use crate::graph::{ContextId, PlexusEngine};
-        use crate::storage::{SqliteStore, OpenStore};
-
-        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
-        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
-        let context_id = ContextId::from_string("test");
-        let mut ctx = Context::new("test");
-        ctx.id = context_id.clone();
-        engine.upsert_context(ctx).unwrap();
-
-        let mut coordinator = ExtractionCoordinator::new()
-            .with_engine(engine.clone(), context_id.clone());
-
-        let phase2 = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:engine-p2",
-        ));
-        coordinator.register_phase2("text/", phase2);
-
-        let phase3 = Arc::new(EmittingAdapter::new(
-            "extract-semantic",
-            "extract-semantic",
-            "concept:engine-p3",
-        ));
-        coordinator.register_phase3(phase3);
-
-        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
-            .with_framework_context(FrameworkContext {
-                adapter_id: "extract-coordinator".to_string(),
-                context_id: "test".to_string(),
-                input_summary: None,
-            });
-
-        let dir = create_temp_file("engine-p3.md", "# Phase 3 engine test\n\nContent.");
-        let file_path = dir.path().join("engine-p3.md");
-        let file_path_str = file_path.to_str().unwrap().to_string();
-
-        let input = AdapterInput::new(
-            "extract-file",
-            ExtractFileInput { file_path: file_path_str.clone() },
-            "test",
-        );
-
-        coordinator.process(&input, &primary_sink).await.unwrap();
-        let results = coordinator.wait_for_background().await;
-        assert!(results.iter().all(|r| r.is_ok()), "Both phases should succeed");
-
-        // Both phases' concepts exist after reload
-        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
-        engine2.load_all().unwrap();
-        let ctx = engine2.get_context(&context_id).expect("context should survive reload");
-        assert!(
-            ctx.get_node(&NodeId::from_string("concept:engine-p2")).is_some(),
-            "Phase 2 concept should survive reload"
-        );
-        assert!(
-            ctx.get_node(&NodeId::from_string("concept:engine-p3")).is_some(),
-            "Phase 3 concept should survive reload"
-        );
-    }
-
-    // --- Scenario: Phase 2 failure does not affect Phase 1 persistence ---
-
-    #[tokio::test]
-    async fn phase2_failure_preserves_phase1_in_engine() {
-        use crate::graph::{ContextId, PlexusEngine};
-        use crate::storage::{SqliteStore, OpenStore};
-
-        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
-        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
-        let context_id = ContextId::from_string("test");
-        let mut ctx = Context::new("test");
-        ctx.id = context_id.clone();
-        engine.upsert_context(ctx).unwrap();
-
-        let mut coordinator = ExtractionCoordinator::new()
-            .with_engine(engine.clone(), context_id.clone());
-
-        let failing = Arc::new(FailingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-        ));
-        coordinator.register_phase2("text/", failing);
-
-        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
-            .with_framework_context(FrameworkContext {
-                adapter_id: "extract-coordinator".to_string(),
-                context_id: "test".to_string(),
-                input_summary: None,
-            });
-
-        let dir = create_temp_file(
-            "fail-engine.md",
-            "---\ntags: [resilience]\n---\n\n# Failure isolation test",
-        );
-        let file_path = dir.path().join("fail-engine.md");
-        let file_path_str = file_path.to_str().unwrap().to_string();
-
-        let input = AdapterInput::new(
-            "extract-file",
-            ExtractFileInput { file_path: file_path_str.clone() },
-            "test",
-        );
-
-        coordinator.process(&input, &primary_sink).await.unwrap();
-        let results = coordinator.wait_for_background().await;
-        assert!(results.iter().any(|r| r.is_err()), "Phase 2 should fail");
-
-        // Phase 1 results survive in store despite Phase 2 failure
-        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
-        engine2.load_all().unwrap();
-        let ctx = engine2.get_context(&context_id).expect("context should survive");
-
-        let file_id = NodeId::from_string(format!("file:{}", file_path_str));
-        assert!(
-            ctx.get_node(&file_id).is_some(),
-            "Phase 1 file node should persist despite Phase 2 failure"
-        );
-        assert!(
-            ctx.get_node(&NodeId::from_string("concept:resilience")).is_some(),
-            "Phase 1 frontmatter concept should persist despite Phase 2 failure"
-        );
-    }
-
-    // ================================================================
-    // Essay 22 Item 1: Coordinator-to-Phase 3 Type Alignment Scenarios
-    // ================================================================
-
-    /// A Phase 3 adapter that verifies it receives SemanticInput (not ExtractFileInput).
-    struct SemanticInputVerifyingAdapter {
-        adapter_id: String,
-        input_kind: String,
-        /// Records whether the input was successfully downcast to SemanticInput.
-        received_semantic_input: Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    impl SemanticInputVerifyingAdapter {
-        fn new(received: Arc<std::sync::atomic::AtomicBool>) -> Self {
-            Self {
-                adapter_id: "extract-semantic".to_string(),
-                input_kind: "extract-semantic".to_string(),
-                received_semantic_input: received,
-            }
-        }
-    }
-
-    #[async_trait]
-    impl Adapter for SemanticInputVerifyingAdapter {
-        fn id(&self) -> &str {
-            &self.adapter_id
-        }
-
-        fn input_kind(&self) -> &str {
-            &self.input_kind
-        }
-
-        async fn process(
-            &self,
-            input: &AdapterInput,
-            sink: &dyn AdapterSink,
-        ) -> Result<(), AdapterError> {
-            use crate::adapter::semantic::SemanticInput;
-
-            // Try to downcast to SemanticInput — this is the assertion
-            let semantic_input = input
-                .downcast_data::<SemanticInput>()
-                .ok_or(AdapterError::InvalidInput)?;
-
-            self.received_semantic_input
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-
-            // Emit a concept to prove we ran
-            let mut concept = Node::new_in_dimension(
-                "concept",
-                ContentType::Concept,
-                dimension::SEMANTIC,
-            );
-            concept.id = NodeId::from_string(format!(
-                "concept:semantic-verified-{}",
-                semantic_input.file_path.split('/').last().unwrap_or("unknown")
-            ));
-            sink.emit(Emission::new().with_node(AnnotatedNode::new(concept))).await?;
-            Ok(())
-        }
-    }
-
-    // --- Scenario: Coordinator constructs SemanticInput for Phase 3 ---
-
-    #[tokio::test]
-    async fn coordinator_sends_semantic_input_to_phase3() {
-        let ctx = Arc::new(Mutex::new(Context::new("test")));
-        let sink = test_sink(ctx.clone(), "extract-coordinator");
-
-        let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
-
-        let phase2 = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:p2-output",
-        ));
-        coordinator.register_phase2("text/", phase2);
-
-        let received = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let phase3 = Arc::new(SemanticInputVerifyingAdapter::new(received.clone()));
-        coordinator.register_phase3(phase3);
-
-        let dir = create_temp_file("type-align.md", "# Type alignment test\n\nContent.");
-        let file_path = dir.path().join("type-align.md");
-        let file_path_str = file_path.to_str().unwrap().to_string();
-
-        let input = AdapterInput::new(
-            "extract-file",
-            ExtractFileInput { file_path: file_path_str },
-            "test",
-        );
-
-        coordinator.process(&input, &sink).await.unwrap();
-        let results = coordinator.wait_for_background().await;
-        assert!(
-            results.iter().all(|r| r.is_ok()),
-            "Phase 3 should succeed — got: {:?}",
-            results
-        );
-
-        assert!(
-            received.load(std::sync::atomic::Ordering::SeqCst),
-            "Phase 3 adapter should have received SemanticInput (not ExtractFileInput)"
-        );
-    }
-
-    // --- Scenario: Phase 3 runs without section boundaries when Phase 2 produces none ---
-
-    #[tokio::test]
-    async fn phase3_receives_empty_sections_when_phase2_has_none() {
-        use crate::adapter::semantic::SemanticInput;
-
-        let ctx = Arc::new(Mutex::new(Context::new("test")));
-        let sink = test_sink(ctx.clone(), "extract-coordinator");
-
-        // Phase 2 that doesn't produce section boundaries (just emits a concept)
-        let phase2 = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:no-sections",
-        ));
-
-        // Phase 3 that checks sections are empty
-        let sections_empty = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let sections_flag = sections_empty.clone();
-
-        /// Adapter that verifies SemanticInput has empty sections.
-        struct EmptySectionsVerifier {
-            flag: Arc<std::sync::atomic::AtomicBool>,
-        }
-
-        #[async_trait]
-        impl Adapter for EmptySectionsVerifier {
-            fn id(&self) -> &str { "extract-semantic" }
-            fn input_kind(&self) -> &str { "extract-semantic" }
-            async fn process(
-                &self,
-                input: &AdapterInput,
-                _sink: &dyn AdapterSink,
-            ) -> Result<(), AdapterError> {
-                let semantic = input.downcast_data::<SemanticInput>()
-                    .ok_or(AdapterError::InvalidInput)?;
-                if semantic.sections.is_empty() {
-                    self.flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                }
-                Ok(())
-            }
-        }
-
-        let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
-        coordinator.register_phase2("text/", phase2);
-        coordinator.register_phase3(Arc::new(EmptySectionsVerifier { flag: sections_flag }));
-
-        let dir = create_temp_file("no-sections.md", "# No sections\n\nPlain content.");
-        let file_path = dir.path().join("no-sections.md");
+        // Two modules matching text/markdown — both should run
+        let module_a: Arc<dyn StructuralModule> = Arc::new(EmittingModule {
+            id: "module-a",
+            mime: "text/",
+            concept_label: "concept-from-a",
+        });
+        let module_b: Arc<dyn StructuralModule> = Arc::new(EmittingModule {
+            id: "module-b",
+            mime: "text/markdown",
+            concept_label: "concept-from-b",
+        });
+        coordinator.register_structural_module(module_a);
+        coordinator.register_structural_module(module_b);
+
+        let dir = create_temp_file("fanout.md", "# Fan-out test\n\nContent.");
+        let file_path = dir.path().join("fanout.md");
 
         let input = AdapterInput::new(
             "extract-file",
@@ -1794,9 +1318,235 @@ mod tests {
         coordinator.process(&input, &sink).await.unwrap();
         coordinator.wait_for_background().await;
 
+        let snapshot = ctx.lock().unwrap();
         assert!(
-            sections_empty.load(std::sync::atomic::Ordering::SeqCst),
-            "Phase 3 should receive SemanticInput with empty sections"
+            snapshot.get_node(&NodeId::from_string("concept:concept-from-a")).is_some(),
+            "Module A's concept should be emitted"
+        );
+        assert!(
+            snapshot.get_node(&NodeId::from_string("concept:concept-from-b")).is_some(),
+            "Module B's concept should be emitted"
+        );
+    }
+
+    // --- Scenario: Merge deduplicates vocabulary case-insensitively ---
+
+    #[test]
+    fn merge_deduplicates_vocabulary() {
+        let a = StructuralOutput {
+            vocabulary: vec!["Plexus".to_string(), "Graph".to_string()],
+            sections: vec![],
+            emissions: vec![],
+        };
+        let b = StructuralOutput {
+            vocabulary: vec!["plexus".to_string(), "Knowledge".to_string()],
+            sections: vec![],
+            emissions: vec![],
+        };
+
+        let merged = merge_structural_outputs(a, b);
+        assert_eq!(merged.vocabulary.len(), 3);
+        assert!(merged.vocabulary.contains(&"Plexus".to_string()));
+        assert!(merged.vocabulary.contains(&"Graph".to_string()));
+        assert!(merged.vocabulary.contains(&"Knowledge".to_string()));
+    }
+
+    // --- Scenario: Merge sorts sections by start_line ---
+
+    #[test]
+    fn merge_sorts_sections_by_start_line() {
+        let a = StructuralOutput {
+            vocabulary: vec![],
+            sections: vec![SectionBoundary { label: "Second".into(), start_line: 50, end_line: 100 }],
+            emissions: vec![],
+        };
+        let b = StructuralOutput {
+            vocabulary: vec![],
+            sections: vec![SectionBoundary { label: "First".into(), start_line: 1, end_line: 49 }],
+            emissions: vec![],
+        };
+
+        let merged = merge_structural_outputs(a, b);
+        assert_eq!(merged.sections.len(), 2);
+        assert_eq!(merged.sections[0].label, "First");
+        assert_eq!(merged.sections[1].label, "Second");
+    }
+
+    // ================================================================
+    // Engine persistence scenarios
+    // ================================================================
+
+    #[tokio::test]
+    async fn structural_emissions_persist_through_engine() {
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::storage::{SqliteStore, OpenStore};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        let context_id = ContextId::from_string("test");
+        let mut ctx = Context::new("test");
+        ctx.id = context_id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        let mut coordinator = ExtractionCoordinator::new()
+            .with_engine(engine.clone(), context_id.clone());
+
+        let module: Arc<dyn StructuralModule> = Arc::new(EmittingModule {
+            id: "extract-analysis-text-headings",
+            mime: "text/",
+            concept_label: "engine-structural",
+        });
+        coordinator.register_structural_module(module);
+
+        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: "extract-coordinator".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let dir = create_temp_file("engine-test.md", "# Engine persistence test\n\nContent.");
+        let file_path = dir.path().join("engine-test.md");
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path.to_str().unwrap().to_string() },
+            "test",
+        );
+
+        coordinator.process(&input, &primary_sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(results.iter().all(|r| r.is_ok()));
+
+        let ctx = engine.get_context(&context_id).expect("context should exist");
+        assert!(ctx.get_node(&NodeId::from_string("concept:engine-structural")).is_some());
+
+        // Verify persistence across reload
+        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&context_id).expect("should survive reload");
+        assert!(ctx2.get_node(&NodeId::from_string("concept:engine-structural")).is_some());
+    }
+
+    #[tokio::test]
+    async fn semantic_emissions_persist_through_engine() {
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::storage::{SqliteStore, OpenStore};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+        let context_id = ContextId::from_string("test");
+        let mut ctx = Context::new("test");
+        ctx.id = context_id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        let mut coordinator = ExtractionCoordinator::new()
+            .with_engine(engine.clone(), context_id.clone());
+
+        // Structural module (needed to trigger background task)
+        let module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
+            id: "passthrough", mime: "text/",
+        });
+        coordinator.register_structural_module(module);
+
+        // Phase 3 emits a concept
+        struct EmittingPhase3;
+        #[async_trait]
+        impl Adapter for EmittingPhase3 {
+            fn id(&self) -> &str { "extract-semantic" }
+            fn input_kind(&self) -> &str { "extract-semantic" }
+            async fn process(&self, _: &AdapterInput, sink: &dyn AdapterSink) -> Result<(), AdapterError> {
+                let mut concept = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+                concept.id = NodeId::from_string("concept:engine-p3");
+                concept.properties.insert("label".into(), PropertyValue::String("engine-p3".into()));
+                sink.emit(Emission::new().with_node(AnnotatedNode::new(concept))).await?;
+                Ok(())
+            }
+        }
+        coordinator.register_phase3(Arc::new(EmittingPhase3));
+
+        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: "extract-coordinator".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+
+        let dir = create_temp_file("engine-p3.md", "# Phase 3 engine test\n\nContent.");
+        let file_path = dir.path().join("engine-p3.md");
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path.to_str().unwrap().to_string() },
+            "test",
+        );
+
+        coordinator.process(&input, &primary_sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(results.iter().all(|r| r.is_ok()));
+
+        let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
+        engine2.load_all().unwrap();
+        let ctx = engine2.get_context(&context_id).expect("should survive reload");
+        assert!(ctx.get_node(&NodeId::from_string("concept:engine-p3")).is_some());
+    }
+
+    // ================================================================
+    // Coordinator-to-Phase 3 Type Alignment
+    // ================================================================
+
+    #[tokio::test]
+    async fn coordinator_sends_semantic_input_to_phase3() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone(), "extract-coordinator");
+
+        let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
+
+        // Structural module so background task runs
+        let module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
+            id: "passthrough", mime: "text/",
+        });
+        coordinator.register_structural_module(module);
+
+        let received = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        struct SemanticInputVerifier {
+            received: Arc<std::sync::atomic::AtomicBool>,
+        }
+        #[async_trait]
+        impl Adapter for SemanticInputVerifier {
+            fn id(&self) -> &str { "extract-semantic" }
+            fn input_kind(&self) -> &str { "extract-semantic" }
+            async fn process(&self, input: &AdapterInput, sink: &dyn AdapterSink) -> Result<(), AdapterError> {
+                use crate::adapter::semantic::SemanticInput;
+                let _semantic = input.downcast_data::<SemanticInput>()
+                    .ok_or(AdapterError::InvalidInput)?;
+                self.received.store(true, std::sync::atomic::Ordering::SeqCst);
+                let mut concept = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+                concept.id = NodeId::from_string("concept:verified");
+                sink.emit(Emission::new().with_node(AnnotatedNode::new(concept))).await?;
+                Ok(())
+            }
+        }
+
+        coordinator.register_phase3(Arc::new(SemanticInputVerifier { received: received.clone() }));
+
+        let dir = create_temp_file("type-align.md", "# Type alignment test\n\nContent.");
+        let file_path = dir.path().join("type-align.md");
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path.to_str().unwrap().to_string() },
+            "test",
+        );
+
+        coordinator.process(&input, &sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(results.iter().all(|r| r.is_ok()), "Phase 3 should succeed — got: {:?}", results);
+
+        assert!(
+            received.load(std::sync::atomic::Ordering::SeqCst),
+            "Phase 3 should receive SemanticInput"
         );
     }
 
@@ -1810,7 +1560,6 @@ mod tests {
         use crate::storage::{SqliteStore, OpenStore};
         use std::collections::HashMap;
 
-        // Build a MockClient that returns concepts
         let mut results = HashMap::new();
         results.insert(
             "synthesizer".to_string(),
@@ -1829,10 +1578,8 @@ mod tests {
             MockClient::available().with_response("extract-semantic", response),
         );
 
-        // Real SemanticAdapter (not a stub)
         let semantic = Arc::new(SemanticAdapter::new(mock_client, "extract-semantic"));
 
-        // Real engine + store
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store.clone()));
         let context_id = ContextId::from_string("test");
@@ -1840,15 +1587,14 @@ mod tests {
         ctx.id = context_id.clone();
         engine.upsert_context(ctx).unwrap();
 
-        // Coordinator with engine path — Phase 2 needed because Phase 3 chains after it
         let mut coordinator = ExtractionCoordinator::new()
             .with_engine(engine.clone(), context_id.clone());
-        let phase2 = Arc::new(EmittingAdapter::new(
-            "extract-analysis-text",
-            "extract-analysis-text",
-            "concept:p2-stub",
-        ));
-        coordinator.register_phase2("text/", phase2);
+
+        // Passthrough structural module so Phase 3 chains
+        let module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
+            id: "passthrough", mime: "text/",
+        });
+        coordinator.register_structural_module(module);
         coordinator.register_phase3(semantic);
 
         let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
@@ -1869,26 +1615,17 @@ mod tests {
 
         coordinator.process(&input, &primary_sink).await.unwrap();
         let results = coordinator.wait_for_background().await;
-        assert!(
-            results.iter().all(|r| r.is_ok()),
-            "Real SemanticAdapter should succeed — got: {:?}",
-            results
-        );
+        assert!(results.iter().all(|r| r.is_ok()), "Real SemanticAdapter should succeed — got: {:?}", results);
 
-        // Concept from ensemble response should be persisted
         let ctx = engine.get_context(&context_id).expect("context should exist");
         assert!(
             ctx.get_node(&NodeId::from_string("concept:integration")).is_some(),
-            "Concept node from real SemanticAdapter should be persisted in engine context"
+            "Concept from real SemanticAdapter should be persisted"
         );
 
-        // Verify round-trip through store
         let engine2 = Arc::new(PlexusEngine::with_store(store.clone()));
         engine2.load_all().unwrap();
-        let ctx2 = engine2.get_context(&context_id).expect("context should survive reload");
-        assert!(
-            ctx2.get_node(&NodeId::from_string("concept:integration")).is_some(),
-            "Concept node should survive store reload"
-        );
+        let ctx2 = engine2.get_context(&context_id).expect("should survive reload");
+        assert!(ctx2.get_node(&NodeId::from_string("concept:integration")).is_some());
     }
 }

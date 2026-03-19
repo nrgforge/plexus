@@ -20,37 +20,37 @@ use crate::llm_orc::{LlmOrcClient, LlmOrcError};
 use async_trait::async_trait;
 use std::sync::Arc;
 
+pub use super::structural::SectionBoundary;
+
 /// Input for the semantic adapter.
 ///
-/// Extends the basic file path with optional section boundaries from Phase 2.
-/// When sections are present, llm-orc can chunk the document along structural
-/// boundaries for parallel fan-out (ADR-021 Scenario 3).
+/// Extends the basic file path with optional section boundaries and vocabulary
+/// from structural analysis. When sections are present, llm-orc can chunk the
+/// document along structural boundaries (ADR-021 Scenario 3). Vocabulary terms
+/// are passed as a glossary hint for entity-primed extraction (ADR-031).
 #[derive(Debug, Clone)]
 pub struct SemanticInput {
     pub file_path: String,
-    /// Section boundaries identified by Phase 2 (heuristic analysis).
+    /// Section boundaries identified by structural analysis.
     /// Each entry is (label, start_line, end_line). Empty = process whole file.
     pub sections: Vec<SectionBoundary>,
-}
-
-/// A structural boundary identified by Phase 2 analysis.
-#[derive(Debug, Clone)]
-pub struct SectionBoundary {
-    pub label: String,
-    pub start_line: usize,
-    pub end_line: usize,
+    /// Vocabulary terms from structural analysis — entity names, key terms,
+    /// link targets. Passed to llm-orc as a glossary hint (not a constraint).
+    /// Empty when no structural modules matched or produced vocabulary.
+    pub vocabulary: Vec<String>,
 }
 
 impl SemanticInput {
-    /// Create input for a single file with no section boundaries.
+    /// Create input for a single file with no structural context.
     pub fn for_file(file_path: impl Into<String>) -> Self {
         Self {
             file_path: file_path.into(),
             sections: Vec::new(),
+            vocabulary: Vec::new(),
         }
     }
 
-    /// Create input with section boundaries from Phase 2.
+    /// Create input with section boundaries from structural analysis.
     pub fn with_sections(
         file_path: impl Into<String>,
         sections: Vec<SectionBoundary>,
@@ -58,6 +58,21 @@ impl SemanticInput {
         Self {
             file_path: file_path.into(),
             sections,
+            vocabulary: Vec::new(),
+        }
+    }
+
+    /// Create input with full structural context — sections and vocabulary
+    /// from structural analysis modules (ADR-031).
+    pub fn with_structural_context(
+        file_path: impl Into<String>,
+        sections: Vec<SectionBoundary>,
+        vocabulary: Vec<String>,
+    ) -> Self {
+        Self {
+            file_path: file_path.into(),
+            sections,
+            vocabulary,
         }
     }
 }
@@ -149,7 +164,7 @@ impl SemanticAdapter {
             "file_path": input.file_path,
         });
 
-        // Include section boundaries from Phase 2
+        // Include section boundaries from structural analysis
         if !input.sections.is_empty() {
             let sections: Vec<serde_json::Value> = input
                 .sections
@@ -161,6 +176,11 @@ impl SemanticAdapter {
                 }))
                 .collect();
             payload["sections"] = serde_json::Value::Array(sections);
+        }
+
+        // Include vocabulary from structural analysis (ADR-031)
+        if !input.vocabulary.is_empty() {
+            payload["vocabulary"] = serde_json::json!(input.vocabulary);
         }
 
         if let Some(ctx) = context {
@@ -918,6 +938,69 @@ mod tests {
         assert_eq!(sections[2]["label"], "Act III");
         assert_eq!(sections[2]["start_line"], 1001);
         assert_eq!(sections[2]["end_line"], 1500);
+    }
+
+    // --- Scenario: Vocabulary from structural analysis included in build_input (ADR-031) ---
+
+    #[test]
+    fn build_input_includes_vocabulary() {
+        let client = Arc::new(MockClient::unavailable());
+        let adapter = SemanticAdapter::new(client, "semantic-extraction");
+
+        let input = SemanticInput::with_structural_context(
+            "/docs/readme.md",
+            vec![SectionBoundary {
+                label: "Introduction".to_string(),
+                start_line: 1,
+                end_line: 50,
+            }],
+            vec!["Plexus".to_string(), "knowledge graph".to_string()],
+        );
+
+        let payload = adapter.build_input(&input, None);
+        let parsed: serde_json::Value = serde_json::from_str(&payload)
+            .expect("build_input should produce valid JSON");
+
+        assert_eq!(parsed["file_path"], "/docs/readme.md");
+
+        let vocab = parsed["vocabulary"].as_array().expect("vocabulary should be array");
+        assert_eq!(vocab.len(), 2);
+        assert_eq!(vocab[0], "Plexus");
+        assert_eq!(vocab[1], "knowledge graph");
+
+        // Sections also present
+        assert!(parsed["sections"].is_array());
+    }
+
+    #[test]
+    fn build_input_omits_empty_vocabulary() {
+        let client = Arc::new(MockClient::unavailable());
+        let adapter = SemanticAdapter::new(client, "semantic-extraction");
+
+        // for_file produces empty vocabulary
+        let input = SemanticInput::for_file("/docs/test.md");
+        let payload = adapter.build_input(&input, None);
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+
+        // Empty vocabulary should not appear in JSON
+        assert!(parsed.get("vocabulary").is_none());
+    }
+
+    #[test]
+    fn with_structural_context_carries_all_fields() {
+        let input = SemanticInput::with_structural_context(
+            "/docs/test.md",
+            vec![SectionBoundary {
+                label: "Header".to_string(),
+                start_line: 1,
+                end_line: 10,
+            }],
+            vec!["term1".to_string(), "term2".to_string()],
+        );
+
+        assert_eq!(input.file_path, "/docs/test.md");
+        assert_eq!(input.sections.len(), 1);
+        assert_eq!(input.vocabulary.len(), 2);
     }
 
     #[tokio::test]

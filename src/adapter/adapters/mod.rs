@@ -10,3 +10,4 @@ pub mod extraction;
 pub mod graph_analysis;
 pub mod provenance_adapter;
 pub mod semantic;
+pub mod structural;

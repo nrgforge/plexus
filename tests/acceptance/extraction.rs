@@ -9,7 +9,8 @@
 use super::helpers::TestEnv;
 use plexus::adapter::extraction::{ExtractionCoordinator, ExtractFileInput};
 use plexus::adapter::semantic::SemanticAdapter;
-use plexus::adapter::{Adapter, AdapterInput, AdapterSink, AdapterError, EngineSink, FrameworkContext};
+use plexus::adapter::structural::{StructuralModule, StructuralOutput};
+use plexus::adapter::{Adapter, AdapterInput, EngineSink, FrameworkContext};
 use plexus::llm_orc::{AgentResult, InvokeResponse, MockClient};
 use plexus::storage::{OpenStore, SqliteStore};
 use plexus::{Context, ContextId, NodeId, PlexusEngine, PropertyValue};
@@ -17,31 +18,16 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Minimal Phase 2 stub that succeeds without emitting anything.
-/// Required because Phase 3 chains only after Phase 2 succeeds.
-struct PassthroughPhase2 {
-    input_kind: String,
-}
-
-impl PassthroughPhase2 {
-    fn new() -> Self {
-        Self {
-            input_kind: "extract-analysis-text".to_string(),
-        }
-    }
-}
+/// Minimal structural module that succeeds without emitting anything.
+/// Required because Phase 3 chains after structural analysis.
+struct PassthroughModule;
 
 #[async_trait]
-impl Adapter for PassthroughPhase2 {
-    fn id(&self) -> &str { "phase2-passthrough" }
-    fn input_kind(&self) -> &str { &self.input_kind }
-
-    async fn process(
-        &self,
-        _input: &AdapterInput,
-        _sink: &dyn AdapterSink,
-    ) -> Result<(), AdapterError> {
-        Ok(())
+impl StructuralModule for PassthroughModule {
+    fn id(&self) -> &str { "passthrough-module" }
+    fn mime_affinity(&self) -> &str { "text/" }
+    async fn analyze(&self, _file_path: &str, _content: &str) -> StructuralOutput {
+        StructuralOutput::default()
     }
 }
 
@@ -183,11 +169,11 @@ async fn phase3_with_mock_ensemble_produces_concepts() {
     ctx.id = context_id.clone();
     engine.upsert_context(ctx).unwrap();
 
-    // Wire coordinator with Phase 2 passthrough + Phase 3 semantic
+    // Wire coordinator with structural passthrough + Phase 3 semantic
     let semantic = Arc::new(SemanticAdapter::new(mock_client, "extract-semantic"));
     let mut coordinator = ExtractionCoordinator::new()
         .with_engine(engine.clone(), context_id.clone());
-    coordinator.register_phase2("text/", Arc::new(PassthroughPhase2::new()));
+    coordinator.register_structural_module(Arc::new(PassthroughModule));
     coordinator.register_phase3(semantic);
 
     let fixture_path = TestEnv::fixture("simple.md");

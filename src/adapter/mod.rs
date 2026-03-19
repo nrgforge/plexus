@@ -44,6 +44,7 @@ pub use adapters::extraction;
 pub use adapters::graph_analysis;
 pub use adapters::provenance_adapter;
 pub use adapters::semantic;
+pub use adapters::structural;
 
 // Flat adapter type re-exports
 pub use content::{ContentAdapter, FragmentInput, normalize_chain_name};
