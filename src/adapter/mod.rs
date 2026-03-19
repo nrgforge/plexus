@@ -51,6 +51,7 @@ pub use content::{ContentAdapter, FragmentInput, normalize_chain_name};
 pub use declarative::DeclarativeAdapter;
 pub use extraction::ExtractionCoordinator;
 pub use graph_analysis::{GraphAnalysisAdapter, run_analysis, export_graph_for_analysis};
+pub use structural::MarkdownStructureModule;
 pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 
 // Enrichment submodule re-exports (preserve crate::adapter::<name>::* paths)
