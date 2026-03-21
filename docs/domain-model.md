@@ -467,3 +467,17 @@ Does not block extraction architecture or external enrichment work. Shapes the f
 
 **15. Context field encapsulation.**
 `Context.nodes` (`HashMap<NodeId, Node>`) and `Context.edges` (`Vec<Edge>`) are public fields. This means any code with a `&mut Context` can modify the graph without going through `add_node()`/`add_edge()`. Future migration to encapsulated accessors (private fields + getter/setter methods) would enable structural changes (e.g., `Vec<Edge>` → `HashMap<EdgeId, Edge>` for O(1) lookup) without breaking consumers. Does not block current work — flagged as an architectural open question for a future performance pass.
+
+### Introduced by Trellis Integration Scoping (2026-03-20)
+
+**16. Query translation layer.**
+The current query system is programmatic (`FindQuery`, `TraverseQuery`, `FindPathQuery` on `PlexusApi`), but consumer scenarios describe natural-language-style queries ("where is the main module?", "what themes connect these fragments?"). Who translates natural-language questions into graph operations? Three possible loci: (a) Plexus engine adds a query interpretation layer; (b) MCP tool composition — the LLM client decomposes questions into sequences of `find_nodes` / `traverse` / `evidence_trail` calls; (c) the consumer app (e.g., Trellis) handles translation in its own domain. The answer determines whether Plexus needs a query DSL, richer MCP tools, or nothing beyond what exists.
+
+**17. MCP query surface.**
+Only `evidence_trail` is currently exposed as an MCP tool. `find_nodes`, `traverse`, and `find_path` exist on `PlexusApi` but have no MCP counterparts. What does a consumer actually need from MCP? Options range from minimal (expose existing `PlexusApi` query methods as MCP tools) to rich (add filtered traversal, neighborhood queries, concept search with normalization). The MCP surface is the de facto consumer API — gaps here block Trellis integration.
+
+**18. Insight surfacing.**
+Raw query results (lists of nodes, edge weights, traversal paths) are not insights. A consumer like Trellis needs actionable signals: "these two concepts are strongly connected but unexplored," "this fragment bridges two otherwise disconnected clusters," "these themes emerged from your recent writing." Where does interpretation live? Plexus could provide structured signals (e.g., discovery gap summaries, high-betweenness nodes). Or the consumer could derive insights from raw graph data. Or an llm-orc ensemble could generate narrative interpretations. This shapes whether Plexus is a graph engine that returns data or a knowledge system that returns understanding.
+
+**19. Normalization at query time via MCP.**
+`NormalizationStrategy` exists (`OutgoingDivisive`, `Softmax`) but is only usable programmatically. Should MCP query tools accept normalization strategy parameters? If a consumer wants softmax-normalized weights for a traversal, they currently cannot request it through MCP. This may be premature — depends on whether consumers need to control normalization or whether a sensible default suffices.
