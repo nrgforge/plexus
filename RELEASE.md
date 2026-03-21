@@ -14,6 +14,9 @@ $EDITOR Cargo.toml
 
 # 3. Regenerate the release workflow (picks up any dist config changes)
 dist generate
+# test-corpora submodule has filenames invalid on Windows (colons),
+# so disable submodule checkout in the generated workflow:
+sed -i '' 's/submodules: recursive/submodules: false/' .github/workflows/release.yml
 
 # 4. Commit the version bump
 git add Cargo.toml Cargo.lock dist-workspace.toml .github/workflows/release.yml
