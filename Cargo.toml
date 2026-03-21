@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/mrilikecoding/plexus"
+homepage = "https://github.com/mrilikecoding/plexus"
 
 [[bin]]
 name = "plexus"
@@ -53,3 +54,7 @@ walkdir = "2.4"
 tokio-test = "0.4"
 regex-lite = "0.1"
 rand = "0.8"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
