@@ -4,8 +4,8 @@ description = "Network-aware knowledge graph engine with self-reinforcing edges"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/mrilikecoding/plexus"
-homepage = "https://github.com/mrilikecoding/plexus"
+repository = "https://github.com/nrgforge/plexus"
+homepage = "https://github.com/nrgforge/plexus"
 
 [[bin]]
 name = "plexus"

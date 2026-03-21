@@ -33,10 +33,10 @@ CI handles the rest: builds binaries, creates the GitHub Release, and publishes 
 brew install nrgforge/tap/plexus
 
 # Shell installer (macOS/Linux)
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mrilikecoding/plexus/releases/latest/download/plexus-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/nrgforge/plexus/releases/latest/download/plexus-installer.sh | sh
 
 # PowerShell (Windows)
-powershell -ExecutionPolicy ByPass -c "irm https://github.com/mrilikecoding/plexus/releases/latest/download/plexus-installer.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/nrgforge/plexus/releases/latest/download/plexus-installer.ps1 | iex"
 ```
 
 ## Updating cargo-dist

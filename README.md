@@ -24,7 +24,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-plexus = { git = "https://github.com/mrilikecoding/plexus.git", branch = "main" }
+plexus = { git = "https://github.com/nrgforge/plexus.git", branch = "main" }
 ```
 
 ```rust
