@@ -21,3 +21,5 @@ install-updater = false
 tap = "nrgforge/homebrew-tap"
 # Enable auto-publishing to the Homebrew tap
 publish-jobs = ["homebrew"]
+# Allow hand-edited CI (we patch submodules: recursive → false for Windows compat)
+allow-dirty = ["ci"]
