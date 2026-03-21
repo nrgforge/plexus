@@ -1,6 +1,6 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-03-18 (Track A complete)
+**Last updated:** 2026-03-20 (Both tracks complete)
 **Derived from:** System Design v1.0, ADR-029, Essay 26, conformance audit, operationalization design
 
 ## Current Cycle: Operationalization (2026-03-17 — )
@@ -26,7 +26,7 @@ Track A is complete. Work packages are archived in the Completed Work Log below.
 | WP-B1 | .llm-orc cleanup | None | Done (`e29c081`) |
 | WP-B2 | Tier 1 acceptance tests | WP-B1 | Done (`4d82b59`, `83176ad`, `6712562`, `a012c5b`) |
 | WP-B3 | Research graduation | WP-B2 | Done (`b917ae6`, `1041ef7`) |
-| WP-B4 | Tier 2 acceptance tests | Track A, WP-B2 | Pending |
+| WP-B4 | Tier 2 acceptance tests | Track A, WP-B2 | Done (`bf018cf`) |
 
 ### Cross-Track Dependency Graph
 
@@ -43,7 +43,7 @@ WP-A4: Builder ────► ✓               │
        │                             │
        └──────────┬──────────────────┘
                   ▼
-              WP-B4: Tier 2 acceptance tests  ← current
+              WP-B4: Tier 2 acceptance tests  ✓
 ```
 
 ---
