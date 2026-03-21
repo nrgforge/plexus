@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 
 # llm-orc execution artifacts (transient, not tracked)
 .llm-orc/artifacts/
