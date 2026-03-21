@@ -22,3 +22,5 @@ mod persistence;
 mod degradation;
 #[path = "acceptance/query.rs"]
 mod query;
+#[path = "acceptance/integration.rs"]
+mod integration;
