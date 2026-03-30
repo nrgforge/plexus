@@ -218,6 +218,70 @@ impl PlexusEngine {
         Ok(result)
     }
 
+    /// Query events after the given cursor (ADR-035).
+    ///
+    /// Delegates to the store's `query_events_since`. Returns empty vec if no store.
+    pub fn query_events_since(
+        &self,
+        context_id: &str,
+        cursor: u64,
+        filter: Option<&crate::query::CursorFilter>,
+    ) -> PlexusResult<Vec<crate::query::PersistedEvent>> {
+        let Some(ref store) = self.store else {
+            return Ok(Vec::new());
+        };
+        store.query_events_since(context_id, cursor, filter)
+            .map_err(PlexusError::from)
+    }
+
+    /// Return the latest event sequence number for a context (ADR-035).
+    pub fn latest_sequence(&self, context_id: &str) -> PlexusResult<u64> {
+        let Some(ref store) = self.store else {
+            return Ok(0);
+        };
+        store.latest_sequence(context_id)
+            .map_err(PlexusError::from)
+    }
+
+    /// Persist graph events to the event log (ADR-035).
+    ///
+    /// Best-effort: logs and continues on failure. Event persistence should
+    /// not fail the emission — a missing event degrades the cursor but not
+    /// the graph.
+    pub fn persist_events(&self, events: &[crate::graph::events::GraphEvent]) {
+        let Some(ref store) = self.store else { return };
+        for event in events {
+            let (context_id, event_type, node_ids, edge_ids, adapter_id) = match event {
+                crate::graph::events::GraphEvent::NodesAdded { node_ids, adapter_id, context_id } => {
+                    let nids: Vec<String> = node_ids.iter().map(|n| n.as_str().to_string()).collect();
+                    (context_id.as_str(), "NodesAdded", nids, vec![], adapter_id.as_str())
+                }
+                crate::graph::events::GraphEvent::EdgesAdded { edge_ids, adapter_id, context_id } => {
+                    let eids: Vec<String> = edge_ids.iter().map(|e| e.as_str().to_string()).collect();
+                    (context_id.as_str(), "EdgesAdded", vec![], eids, adapter_id.as_str())
+                }
+                crate::graph::events::GraphEvent::NodesRemoved { node_ids, adapter_id, context_id } => {
+                    let nids: Vec<String> = node_ids.iter().map(|n| n.as_str().to_string()).collect();
+                    (context_id.as_str(), "NodesRemoved", nids, vec![], adapter_id.as_str())
+                }
+                crate::graph::events::GraphEvent::EdgesRemoved { edge_ids, adapter_id, context_id, .. } => {
+                    let eids: Vec<String> = edge_ids.iter().map(|e| e.as_str().to_string()).collect();
+                    (context_id.as_str(), "EdgesRemoved", vec![], eids, adapter_id.as_str())
+                }
+                crate::graph::events::GraphEvent::WeightsChanged { edge_ids, adapter_id, context_id } => {
+                    let eids: Vec<String> = edge_ids.iter().map(|e| e.as_str().to_string()).collect();
+                    (context_id.as_str(), "WeightsChanged", vec![], eids, adapter_id.as_str())
+                }
+                crate::graph::events::GraphEvent::ContributionsRetracted { adapter_id, context_id, .. } => {
+                    (context_id.as_str(), "ContributionsRetracted", vec![], vec![], adapter_id.as_str())
+                }
+            };
+            if let Err(e) = store.persist_event(context_id, event_type, &node_ids, &edge_ids, adapter_id) {
+                tracing::warn!(error = %e, "failed to persist event to event log (best-effort)");
+            }
+        }
+    }
+
     /// Retract all contributions from an adapter/enrichment (ADR-027).
     ///
     /// Removes the adapter's contribution slot from every edge in the context,

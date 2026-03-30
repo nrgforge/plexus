@@ -526,6 +526,29 @@ impl PlexusApi {
         Ok(query::shared_concepts(&ctx_a, &ctx_b))
     }
 
+    /// Query events after the given cursor (ADR-035).
+    ///
+    /// Returns events with sequence > cursor for the named context.
+    pub fn changes_since(
+        &self,
+        context_name: &str,
+        cursor: u64,
+        filter: Option<&query::CursorFilter>,
+    ) -> PlexusResult<query::ChangeSet> {
+        let context_id = self.resolve(context_name)?;
+        let events = self.engine.query_events_since(context_id.as_str(), cursor, filter)?;
+        let latest = if events.is_empty() {
+            let stored = self.engine.latest_sequence(context_id.as_str())?;
+            std::cmp::max(cursor, stored)
+        } else {
+            events.last().unwrap().sequence
+        };
+        Ok(query::ChangeSet {
+            events,
+            latest_sequence: latest,
+        })
+    }
+
     fn prov(&self, context_name: &str) -> PlexusResult<ProvenanceApi> {
         let cid = self.resolve(context_name)?;
         Ok(ProvenanceApi::new(&self.engine, cid))

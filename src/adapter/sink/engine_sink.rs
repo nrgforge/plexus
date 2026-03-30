@@ -399,6 +399,9 @@ impl AdapterSink for EngineSink {
                     "emission committed"
                 );
 
+                // Persist events to event log (ADR-035, best-effort)
+                engine.persist_events(&result.events);
+
                 // Accumulate events for pipeline collection
                 self.accumulated_events.lock().unwrap()
                     .extend(result.events.clone());

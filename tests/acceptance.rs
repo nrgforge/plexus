@@ -24,3 +24,5 @@ mod degradation;
 mod query;
 #[path = "acceptance/integration.rs"]
 mod integration;
+#[path = "acceptance/cursor.rs"]
+mod cursor;

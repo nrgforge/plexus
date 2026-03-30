@@ -2,6 +2,7 @@
 
 use super::traits::{GraphStore, OpenStore, StorageError, StorageResult};
 use crate::graph::{Context, ContextId, Edge, Node, NodeId};
+use crate::query::{CursorFilter, PersistedEvent};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -99,6 +100,7 @@ impl SqliteStore {
         Self::migrate_legacy_edge_columns(conn)?;
         Self::migrate_add_dimensions(conn)?;
         Self::migrate_add_contributions(conn)?;
+        Self::migrate_add_events_table(conn)?;
 
         // Phase 3: Create dimension indexes (now that columns exist)
         Self::create_dimension_indexes(conn)?;
@@ -257,6 +259,42 @@ impl SqliteStore {
             conn.execute(
                 "ALTER TABLE edges ADD COLUMN contributions_json TEXT NOT NULL DEFAULT '{}'",
                 [],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Migration: Add events table for cursor-based change queries (ADR-035).
+    ///
+    /// The events table persists graph events with sequence numbers, enabling
+    /// pull-based "changes since N" queries that preserve the library rule.
+    fn migrate_add_events_table(conn: &Connection) -> StorageResult<()> {
+        // Check if events table already exists
+        let has_events: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='events'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_events {
+            conn.execute_batch(
+                r#"
+                CREATE TABLE events (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    context_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    node_ids_json TEXT,
+                    edge_ids_json TEXT,
+                    adapter_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX idx_events_context_sequence
+                    ON events (context_id, sequence);
+                "#,
             )?;
         }
 
@@ -636,6 +674,108 @@ impl GraphStore for SqliteStore {
         let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
         let version: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
         Ok(version as u64)
+    }
+
+    fn persist_event(
+        &self,
+        context_id: &str,
+        event_type: &str,
+        node_ids: &[String],
+        edge_ids: &[String],
+        adapter_id: &str,
+    ) -> StorageResult<u64> {
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
+        let node_ids_json = serde_json::to_string(node_ids)?;
+        let edge_ids_json = serde_json::to_string(edge_ids)?;
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO events (context_id, event_type, node_ids_json, edge_ids_json, adapter_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![context_id, event_type, node_ids_json, edge_ids_json, adapter_id, created_at],
+        )?;
+
+        let sequence = conn.last_insert_rowid() as u64;
+        Ok(sequence)
+    }
+
+    fn query_events_since(
+        &self,
+        context_id: &str,
+        cursor: u64,
+        filter: Option<&CursorFilter>,
+    ) -> StorageResult<Vec<PersistedEvent>> {
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
+
+        // Build query dynamically based on filter
+        let mut sql = String::from(
+            "SELECT sequence, context_id, event_type, node_ids_json, edge_ids_json, adapter_id, created_at
+             FROM events WHERE context_id = ?1 AND sequence > ?2"
+        );
+        let mut param_idx = 3;
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(context_id.to_string()),
+            Box::new(cursor as i64),
+        ];
+
+        if let Some(f) = filter {
+            if let Some(ref adapter_id) = f.adapter_id {
+                sql.push_str(&format!(" AND adapter_id = ?{param_idx}"));
+                param_values.push(Box::new(adapter_id.clone()));
+                param_idx += 1;
+            }
+            if let Some(ref event_types) = f.event_types {
+                if !event_types.is_empty() {
+                    let placeholders: Vec<String> = event_types.iter().enumerate()
+                        .map(|(i, _)| format!("?{}", param_idx + i))
+                        .collect();
+                    sql.push_str(&format!(" AND event_type IN ({})", placeholders.join(",")));
+                    for et in event_types {
+                        param_values.push(Box::new(et.clone()));
+                        param_idx += 1;
+                    }
+                }
+            }
+        }
+
+        sql.push_str(" ORDER BY sequence ASC");
+
+        if let Some(f) = filter {
+            if let Some(limit) = f.limit {
+                sql.push_str(&format!(" LIMIT {limit}"));
+            }
+        }
+
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter()
+            .map(|p| p.as_ref())
+            .collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let events = stmt.query_map(params_refs.as_slice(), |row| {
+            let node_ids_json: String = row.get::<_, String>(3)?;
+            let edge_ids_json: String = row.get::<_, String>(4)?;
+            Ok(PersistedEvent {
+                sequence: row.get::<_, i64>(0)? as u64,
+                context_id: row.get(1)?,
+                event_type: row.get(2)?,
+                node_ids: serde_json::from_str(&node_ids_json).unwrap_or_default(),
+                edge_ids: serde_json::from_str(&edge_ids_json).unwrap_or_default(),
+                adapter_id: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })?.collect::<Result<Vec<_>, _>>()?;
+
+        Ok(events)
+    }
+
+    fn latest_sequence(&self, context_id: &str) -> StorageResult<u64> {
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
+        let seq: Option<i64> = conn.query_row(
+            "SELECT MAX(sequence) FROM events WHERE context_id = ?1",
+            params![context_id],
+            |row| row.get(0),
+        ).optional()?.flatten();
+        Ok(seq.unwrap_or(0) as u64)
     }
 }
 
@@ -1117,5 +1257,122 @@ mod tests {
         let v1 = store.data_version().unwrap();
         let v2 = store.data_version().unwrap();
         assert_eq!(v1, v2, "data_version must be stable when no external writes occur");
+    }
+
+    // === Event cursor tests (ADR-035) ===
+
+    #[test]
+    fn persist_event_returns_monotonic_sequences() {
+        let store = create_test_store();
+        let seq1 = store.persist_event("ctx", "NodesAdded", &["n1".into()], &[], "adapter-1").unwrap();
+        let seq2 = store.persist_event("ctx", "EdgesAdded", &[], &["e1".into()], "adapter-1").unwrap();
+        assert!(seq2 > seq1, "sequences must be monotonically increasing");
+    }
+
+    #[test]
+    fn query_events_since_returns_events_after_cursor() {
+        let store = create_test_store();
+        let _s1 = store.persist_event("ctx", "NodesAdded", &["n1".into()], &[], "a1").unwrap();
+        let _s2 = store.persist_event("ctx", "EdgesAdded", &[], &["e1".into()], "a1").unwrap();
+        let s3 = store.persist_event("ctx", "NodesAdded", &["n2".into()], &[], "a1").unwrap();
+
+        // Query after sequence 1 should return events 2 and 3
+        let events = store.query_events_since("ctx", 1, None).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_type, "EdgesAdded");
+        assert_eq!(events[1].sequence, s3);
+    }
+
+    #[test]
+    fn query_events_since_cursor_zero_returns_all() {
+        let store = create_test_store();
+        store.persist_event("ctx", "NodesAdded", &["n1".into()], &[], "a1").unwrap();
+        store.persist_event("ctx", "EdgesAdded", &[], &["e1".into()], "a1").unwrap();
+
+        let events = store.query_events_since("ctx", 0, None).unwrap();
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn query_events_filters_by_event_type() {
+        use crate::query::CursorFilter;
+
+        let store = create_test_store();
+        store.persist_event("ctx", "NodesAdded", &["n1".into()], &[], "a1").unwrap();
+        store.persist_event("ctx", "EdgesAdded", &[], &["e1".into()], "a1").unwrap();
+        store.persist_event("ctx", "NodesAdded", &["n2".into()], &[], "a1").unwrap();
+
+        let filter = CursorFilter {
+            event_types: Some(vec!["EdgesAdded".into()]),
+            ..Default::default()
+        };
+        let events = store.query_events_since("ctx", 0, Some(&filter)).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "EdgesAdded");
+    }
+
+    #[test]
+    fn query_events_filters_by_adapter_id() {
+        use crate::query::CursorFilter;
+
+        let store = create_test_store();
+        store.persist_event("ctx", "NodesAdded", &["n1".into()], &[], "adapter-a").unwrap();
+        store.persist_event("ctx", "EdgesAdded", &[], &["e1".into()], "adapter-b").unwrap();
+
+        let filter = CursorFilter {
+            adapter_id: Some("adapter-b".into()),
+            ..Default::default()
+        };
+        let events = store.query_events_since("ctx", 0, Some(&filter)).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].adapter_id, "adapter-b");
+    }
+
+    #[test]
+    fn query_events_scoped_to_context() {
+        let store = create_test_store();
+        store.persist_event("ctx-a", "NodesAdded", &["n1".into()], &[], "a1").unwrap();
+        store.persist_event("ctx-b", "NodesAdded", &["n2".into()], &[], "a1").unwrap();
+
+        let events = store.query_events_since("ctx-a", 0, None).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].node_ids, vec!["n1"]);
+    }
+
+    #[test]
+    fn latest_sequence_returns_max_for_context() {
+        let store = create_test_store();
+        store.persist_event("ctx", "NodesAdded", &[], &[], "a1").unwrap();
+        let seq2 = store.persist_event("ctx", "EdgesAdded", &[], &[], "a1").unwrap();
+
+        assert_eq!(store.latest_sequence("ctx").unwrap(), seq2);
+    }
+
+    #[test]
+    fn latest_sequence_returns_zero_for_empty_context() {
+        let store = create_test_store();
+        assert_eq!(store.latest_sequence("no-events").unwrap(), 0);
+    }
+
+    #[test]
+    fn events_survive_persistence_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("events-roundtrip.db");
+
+        // Write events
+        {
+            let store = SqliteStore::open(&db_path).unwrap();
+            store.persist_event("ctx", "NodesAdded", &["n1".into()], &[], "a1").unwrap();
+            store.persist_event("ctx", "EdgesAdded", &[], &["e1".into()], "a1").unwrap();
+        }
+
+        // Reopen and verify
+        {
+            let store = SqliteStore::open(&db_path).unwrap();
+            let events = store.query_events_since("ctx", 0, None).unwrap();
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].event_type, "NodesAdded");
+            assert_eq!(events[1].event_type, "EdgesAdded");
+        }
     }
 }
