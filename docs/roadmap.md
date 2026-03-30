@@ -1,74 +1,135 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-03-20 (Both tracks complete)
-**Derived from:** System Design v1.0, ADR-029, Essay 26, conformance audit, operationalization design
+**Last updated:** 2026-03-29 (WP-A complete)
+**Derived from:** System Design v1.1, ADR-033, ADR-034, ADR-035, Essays 001–002, conformance scan
 
-## Current Cycle: Operationalization (2026-03-17 — )
+## Current Cycle: Query Surface (2026-03-26 — )
 
-**Objective:** Make Plexus production-ready for Trellis integration. Two parallel tracks.
-**Design spec:** `docs/superpowers/specs/2026-03-17-operationalization-design.md`
+**Objective:** Enable consumer-scoped query over the shared graph — lens-based domain translation, composable provenance filtering, and pull-based change tracking via event cursors.
 
-### Track A — Structural Module System (RDD)
-
-| Phase | Scope | Status |
-|-------|-------|--------|
-| Model | StructuralModule, ModuleRegistry, StructuralOutput, Vocabulary bootstrap — domain model extension (Invariants 51–55) | Done |
-| Decide | ADR-030 (trait), ADR-031 (output + handoff), ADR-032 (markdown module) — 22 scenarios, 13 conformance debt items | Done |
-| Architect | System design amendment — extraction pipeline flow, responsibility allocation, test architecture | Done |
-| Build | TDD — implement structural module system per work packages below | Done |
-
-Track A is complete. Work packages are archived in the Completed Work Log below.
-
-### Track B — Operationalization
+**Design spec:** ADR-033 (lens declaration), ADR-034 (composable query filters), ADR-035 (event cursor persistence)
 
 | WP | Title | Dependencies | Status |
 |----|-------|-------------|--------|
-| WP-B1 | .llm-orc cleanup | None | Done (`e29c081`) |
-| WP-B2 | Tier 1 acceptance tests | WP-B1 | Done (`4d82b59`, `83176ad`, `6712562`, `a012c5b`) |
-| WP-B3 | Research graduation | WP-B2 | Done (`b917ae6`, `1041ef7`) |
-| WP-B4 | Tier 2 acceptance tests | Track A, WP-B2 | Done (`bf018cf`) |
+| WP-A | Event Cursor Persistence | None | **Done** |
+| WP-B | Lens Declaration and Translation | WP-A (implied) | Pending |
+| WP-C | Composable Query Filters | WP-B (implied) | Pending |
 
-### Cross-Track Dependency Graph
+## Work Packages
 
-```
-Track A (RDD)                    Track B (Operationalization)
-─────────────                    ───────────────────────────
-                                 WP-B1: .llm-orc cleanup     ✓
-WP-A1: Types ──────► ✓               │
-WP-A2: Coordinator ► ✓              ▼
-WP-A3: Markdown ───► ✓          WP-B2: Tier 1 acceptance     ✓
-WP-A4: Builder ────► ✓               │
-       │                             ▼
-       │                         WP-B3: Research graduation   ✓
-       │                             │
-       └──────────┬──────────────────┘
-                  ▼
-              WP-B4: Tier 2 acceptance tests  ✓
-```
+### WP-A: Event Cursor Persistence — DONE
+
+**Objective:** Persist graph events in SQLite with sequence numbering, enabling pull-based "changes since N" queries that preserve the library rule (Invariant 58).
+
+**Changes:**
+- storage: `events` table schema + migration in `SqliteStore::init_schema()`; `persist_event()` and `query_events_since()` methods on `GraphStore` trait (with default no-op implementations for non-SQLite backends)
+- adapter/sink: `EngineSink::emit_inner()` calls `persist_event()` after commit succeeds
+- query: Define `PersistedEvent`, `ChangeSet`, `CursorFilter` types
+- api: `PlexusApi::changes_since()` method
+
+**Scenarios covered:** 7 of 9 event cursor scenarios satisfied. Deferred: enrichment loop per-round events (testable with WP-B), stale cursor error (requires retention implementation).
+
+**Dependencies:** None — foundational; no dependency on ADR-033 or ADR-034.
+
+**What was built:**
+- `src/query/cursor.rs`: `PersistedEvent`, `ChangeSet`, `CursorFilter`
+- `src/storage/traits.rs`: `persist_event()`, `query_events_since()`, `latest_sequence()` on `GraphStore` (default no-ops)
+- `src/storage/sqlite.rs`: `events` table + migration, full implementations
+- `src/graph/engine.rs`: `persist_events()` (best-effort), `query_events_since()`, `latest_sequence()`
+- `src/adapter/sink/engine_sink.rs`: event persistence after commit in Engine path
+- `src/api.rs`: `PlexusApi::changes_since()`
+- `tests/acceptance/cursor.rs`: 7 acceptance tests
+
+**Decisions resolved:** GraphStore extensibility → default no-ops. Event persistence errors → best-effort (log+continue).
+
+**Enhancement noted:** PersistedEvent carries only IDs; light metadata (relationship types, node types) would help consumers filter without fetching. Tracked in OQ-22.
 
 ---
 
+### WP-B: Lens Declaration and Translation
+
+**Objective:** Enable consumers to declare domain vocabulary translation rules in their adapter spec YAML, producing a `LensEnrichment` that creates translated edges at write time (Invariants 56–57).
+
+**Changes:**
+- adapter/adapters: `LensSpec`, `TranslationRule`, `NodePredicate` types in `declarative.rs`; `DeclarativeAdapter::lens()` method; YAML deserialization for `lens:` section
+- adapter/enrichments: `LensEnrichment` in new `lens.rs` — implements `Enrichment` trait, namespace convention `lens:{consumer}:{to}:{from}`
+- adapter/pipeline: Registration wiring — `PipelineBuilder` or `register_integration` caller pushes lens alongside other enrichments
+
+**Scenarios covered:** Lens declaration and translation scenarios (033-035-query-surface.md §Lens Declaration — 7 scenarios)
+
+**Dependencies:** WP-A (implied logic) — lens-created edges automatically appear in the event log once WP-A is in place, but lens can be built without events (lens scenarios don't require cursor queries).
+
+---
+
+### WP-C: Composable Query Filters
+
+**Objective:** Add optional `QueryFilter` to all query primitives for provenance-scoped filtering and corroboration ranking (Invariant 59).
+
+**Changes:**
+- query: `QueryFilter` struct in `filter.rs` or `types.rs`; `RankBy` enum; optional `filter` field on `FindQuery`, `TraverseQuery`, `PathQuery`, `StepQuery`; filter evaluation in each query's `execute()`; ranking post-processing on result types; `evidence_trail()` signature update to accept optional filter
+- api: Updated call sites in `PlexusApi` (pass-through, no new methods needed)
+
+**Scenarios covered:** Composable query filter scenarios (033-035-query-surface.md §Composable Query Filters — 9 scenarios), integration scenarios (3 scenarios)
+
+**Dependencies:** WP-B (implied logic) — `relationship_prefix: "lens:trellis:"` use case is meaningful only after lens edges exist, but the filter mechanism works on any edge. WP-A (open choice) — filter and cursor are independent capabilities.
+
+---
+
+## Dependency Graph
+
+```
+WP-A: Event Cursors
+  │
+  │ (implied logic — lens edges appear in cursor)
+  ▼
+WP-B: Lens Declaration
+  │
+  │ (implied logic — filter prefix meaningful with lens edges)
+  ▼
+WP-C: Query Filters
+```
+
+**Classification key:**
+- **Hard dependency:** cannot build B without A — structural necessity
+- **Implied logic:** simpler to build A first, but not required
+- **Open choice:** genuinely independent — build any first
+
+All three WPs have **implied logic** dependencies, not hard dependencies. A builder could start with any WP — WP-C works on existing edges without lens, WP-B works without event persistence, WP-A works without either. The recommended order (A → B → C) follows the conformance scan's build order and produces the most natural progression: infrastructure → domain enrichment → query composition.
+
+## Transition States
+
+### TS-1: Pull-Ready (after WP-A)
+
+Event cursors are functional. Consumers can query "changes since sequence N" on any context. The graph still has no lens-translated edges and no composable filters, but pull-based workflows work for consumers who interpret raw graph events.
+
+**Capabilities:** Full write pipeline + push events + pull cursor. No lens translation, no provenance-scoped query.
+
+### TS-2: Lens-Translated (after WP-A + WP-B)
+
+Consumers with a `lens:` section in their adapter spec see domain-translated edges. Cursor events include lens-created edges. The query surface still uses existing query primitives without filters — consumers scope to their lens by relationship-type string matching in their application code.
+
+**Capabilities:** Full write pipeline + push/pull events + lens translation. No composable filters (consumers do their own edge filtering).
+
+### TS-3: Full Query Surface (after WP-A + WP-B + WP-C)
+
+Complete query surface. Consumers query through composable filters — provenance-scoped, corroboration-ranked, lens-prefix-scoped. The pull paradigm (cursor + filter) and push paradigm (transform_events) are both fully operational.
+
 ## Open Decision Points
 
-- **Pipeline construction location** — Currently in `PipelineBuilder`. Consider extracting to transport-neutral binary entry point. Deferred — revisit if transport proliferation creates duplication.
-- **Batched normalization / persist** — O(edges × adapters) per emission scaling concern. Deferred — requires profiling data from real Trellis workloads.
-- **Context field encapsulation** — `Context.nodes` and `Context.edges` are public fields. Enable future `Vec<Edge>` → `HashMap` migration. Deferred — internal refactor, no consumer impact.
-- **Release process** — Crate publishing, semver, changelogs. Deferred — downstream of operationalization.
-- **Research graduation format** — Resolved: `docs/essays/` moved to `docs/archive/essays/`. Research corpus preserved, operational docs remain at top level.
-
-### Resolved This Cycle
-
-- **Phase 2 extraction** — Track A: RDD cycle to design Phase 2 module system (MIME-dispatched router, registered structural analyzers, output feeds Phase 3).
-- **SemanticAdapter / DeclarativeAdapter convergence** — Deferred. Both serve distinct roles (internal vs. consumer-owned). Revisit after Trellis integration reveals whether convergence is needed.
-- **WP-6 scope** — Absorbed into WP-B2 (Tier 1 acceptance tests). MCP-layer test gaps from WP-6 become part of the ingest contract tests.
+- **GraphStore trait extensibility** — `persist_event()` and `query_events_since()` are breaking additions to the `GraphStore` trait. Default no-op implementations (like `data_version()`) ease adoption but mean non-SQLite backends silently skip event persistence. Alternative: a separate `EventStore` trait. Decision deferred to BUILD.
+- **Event persistence error handling** — ADR-035 is silent on whether event persistence failure should fail the emission. The system design recommends best-effort (log and continue) to avoid blocking the write path. Confirm during BUILD.
+- **Lens `involving` predicate complexity** — The `NodePredicate` type for filtering which endpoints qualify for translation is specified in ADR-033 but the exact predicate surface (dimension, content_type, node_type, property match?) is a BUILD-time decision. Start minimal and expand.
+- **`evidence_trail` signature change** — Adding optional `QueryFilter` to `evidence_trail()` breaks the existing call site in `api.rs`. The fix is straightforward (add `None` default) but touches a public API. Confirm approach during BUILD.
 
 ---
 
 ## Completed Work Log
 
-### Track A: Structural Module System (2026-03-18)
+### Cycle: Operationalization (2026-03-17 — 2026-03-20)
 
-**Derived from:** ADR-030, ADR-031, ADR-032, operationalization design spec
+**Derived from:** ADR-029, Essay 26, operationalization design spec
+
+**Track A — Structural Module System (RDD)**
 
 | WP | Title | Status |
 |----|-------|--------|
@@ -77,14 +138,19 @@ WP-A4: Builder ────► ✓               │
 | WP-A3 | MarkdownStructureModule (pulldown-cmark, heading/link extraction) | Done |
 | WP-A4 | PipelineBuilder wiring (with_structural_module, with_default_structural_modules) | Done |
 
-**What was built:**
-- `src/adapter/adapters/structural.rs`: `StructuralModule` trait (async, `id`, `mime_affinity`, `analyze`), `StructuralOutput`, `SectionBoundary`, `ModuleEmission`, `MarkdownStructureModule`
-- `src/adapter/adapters/extraction.rs`: `ExtractionCoordinator` refactored to use structural module registry — fan-out dispatch, output merge, per-module emission, `matching_modules()` replaces `find_phase2_adapter()`
-- `src/adapter/adapters/semantic.rs`: `SemanticInput` gained `vocabulary: Vec<String>` field and `with_structural_context()` constructor; `SectionBoundary` re-exported from structural
-- `src/adapter/pipeline/builder.rs`: `PipelineBuilder` gained `with_structural_module()` and `with_default_structural_modules()`
-- New dependency: `pulldown-cmark` (Markdown parsing)
+**Track B — Operationalization**
 
-**Unblocks:** WP-B4 (Tier 2 acceptance tests)
+| WP | Title | Commit | Status |
+|----|-------|--------|--------|
+| WP-B1 | .llm-orc cleanup | `e29c081` | Done |
+| WP-B2 | Tier 1 acceptance tests | `4d82b59`, `83176ad`, `6712562`, `a012c5b` | Done |
+| WP-B3 | Research graduation | `b917ae6`, `1041ef7` | Done |
+| WP-B4 | Tier 2 acceptance tests | `bf018cf` | Done |
+
+**Summary:**
+- Track A delivered the structural module system (StructuralModule trait, ExtractionCoordinator fan-out, MarkdownStructureModule, PipelineBuilder wiring)
+- Track B delivered operationalization (llm-orc cleanup, acceptance tests Tier 1+2, research graduation)
+- Final state: 382 lib tests + 30 acceptance tests
 
 ---
 
@@ -100,25 +166,7 @@ WP-A4: Builder ────► ✓               │
 | WP-4 | Remaining ADR-029 cleanup | (prior session commits) | Done |
 | WP-5 | Note open questions in domain model | (prior session commits) | Done |
 
-**Post-build:**
-- TagConceptBridger removed entirely (`feb6499`) — tag bridging is domain-specific
-- Documentation drift fixed across 36+ files (`fc69209`, `d6586b7`)
-- `get_links` returns `Vec<MarkView>`, empty chain name validation added (`3e69a16`)
-- 2 new integration tests (`a8f5cf5`)
-
-**Transition state achieved:** TS-3 (Fully consolidated) — ADR-029 fully implemented, EngineSink is purely commit+persist, PipelineBuilder owns construction, MCP is a thin shell.
-
-**Final state:** 364 lib tests, clippy clean, all conformance drift addressed.
-
-#### Original Dependency Graph
-
-```
-WP-5 ─────────────────────────── (open choice, independent)
-
-WP-1 ◄──── WP-2 (implied logic)
-  ▲
-  │
-  └──── WP-3 (implied logic)
-           │
-           └──── WP-4 (hard dependency)
-```
+**Summary:**
+- ADR-029 fully implemented. EngineSink is purely commit+persist. PipelineBuilder owns construction. MCP is a thin shell.
+- TagConceptBridger removed entirely.
+- Final state: 364 lib tests, clippy clean, all conformance drift addressed.

@@ -17,3 +17,5 @@ Scenarios are organized by ADR group in [`docs/scenarios/`](scenarios/).
 | [022-integration-gap](scenarios/022-integration-gap.md) | ADR-019–021, 025, 028 | Essay 22 conformance gaps — coordinator alignment, ensemble invocation, provenance |
 | [024-025-enrichment-and-spec-extensions](scenarios/024-025-enrichment-and-spec-extensions.md) | ADR-024–025 | Core/external enrichment, declarative spec extensions |
 | [026-027-embedding-and-retraction](scenarios/026-027-embedding-and-retraction.md) | ADR-026–027 | Embedding enrichment, contribution retraction |
+| [030-032-structural-module-system](scenarios/030-032-structural-module-system.md) | ADR-030–032 | Structural module trait, output, first module |
+| [033-035-query-surface](scenarios/033-035-query-surface.md) | ADR-033–035 | Lens declaration, composable query filters, event cursor persistence |

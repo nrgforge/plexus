@@ -1,8 +1,8 @@
 # System Design: Plexus
 
-**Version:** 1.0
+**Version:** 1.1
 **Status:** Current (Retrofit)
-**Last amended:** 2026-03-16
+**Last amended:** 2026-03-26
 
 ## Architectural Drivers
 
@@ -22,6 +22,11 @@
 | Structural analysis: MIME-dispatched fan-out modules | Constraint | ADR-030; Invariants 51–55 |
 | Vocabulary bootstrap: structural modules → semantic extraction | Constraint | ADR-031; Invariant 54; Essay 25 |
 | Declarative adapters: consumer-owned YAML specs via llm-orc | Extension point | ADR-028; Essay 19 |
+| Lens is an enrichment, not a fourth axis | Constraint | Invariants 56–57; ADR-033; Essay 001 |
+| Lens output is public — visible to all consumers | Constraint | Invariant 56; ADR-033 |
+| Provenance-scoped filtering composable with all query primitives | Quality Attribute (Composability) | Invariant 59; ADR-034; Essay 001 |
+| Event cursors preserve library rule for reads | Constraint | Invariant 58; ADR-035 |
+| Push (Inv 37) and pull (Inv 58) are separate event delivery paradigms | Constraint | Invariant 37 (amended); ADR-035 |
 
 ## Module Decomposition
 
@@ -70,7 +75,7 @@
 ### Module: adapter/adapters
 **Purpose:** Domain adapter implementations — each transforms a specific input kind into graph mutations.
 **Provenance:** Invariants 5, 7 (provenance rules), 19–22 (fragment rules), 45–48 (extraction rules), 51–55 (structural analysis rules); ADR-001, ADR-022, ADR-028, ADR-030, ADR-031, ADR-032
-**Owns:** ContentAdapter (fragment), ExtractionCoordinator (file extraction + structural analysis dispatch), SemanticAdapter (semantic extraction via LLM), DeclarativeAdapter (YAML spec), GraphAnalysisAdapter (external enrichment), ProvenanceAdapter (mark/chain lifecycle), StructuralModule (trait), StructuralOutput, ModuleEmission, MarkdownStructureModule, SemanticInput, SectionBoundary
+**Owns:** ContentAdapter (fragment), ExtractionCoordinator (file extraction + structural analysis dispatch), SemanticAdapter (semantic extraction via LLM), DeclarativeAdapter (YAML spec), GraphAnalysisAdapter (external enrichment), ProvenanceAdapter (mark/chain lifecycle), StructuralModule (trait), StructuralOutput, ModuleEmission, MarkdownStructureModule, SemanticInput, SectionBoundary, LensSpec, TranslationRule, NodePredicate
 **Depends on:** graph, adapter/sink, adapter/traits, adapter/types, llm_orc (SemanticAdapter, DeclarativeAdapter), pulldown-cmark (MarkdownStructureModule)
 **Depended on by:** (registered into adapter/pipeline at construction time)
 
@@ -126,25 +131,40 @@ ingest("extract-file", { file_path: "doc.md" })
 
 ### Module: adapter/enrichments
 **Purpose:** Core enrichment implementations — reactive graph intelligence algorithms.
-**Provenance:** Invariants 27, 39, 50 (enrichment behavior); ADR-010, ADR-024, ADR-026
-**Owns:** CoOccurrenceEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment, EmbeddingSimilarityEnrichment (+ Embedder trait, VectorStore, FastEmbedEmbedder)
+**Provenance:** Invariants 27, 39, 50 (enrichment behavior); ADR-010, ADR-024, ADR-026, ADR-033
+**Owns:** CoOccurrenceEnrichment, DiscoveryGapEnrichment, TemporalProximityEnrichment, EmbeddingSimilarityEnrichment (+ Embedder trait, VectorStore, FastEmbedEmbedder), LensEnrichment
 **Removed:** TagConceptBridger — tag bridging is domain-specific; domains needing it implement their own adapter.
 **Depends on:** graph, adapter/enrichment (trait), adapter/types
-**Depended on by:** (registered into adapter/pipeline at construction time)
+**Depended on by:** adapter/adapters (DeclarativeAdapter::lens() constructs LensEnrichment), (registered into adapter/pipeline at construction time)
+
+#### LensEnrichment (ADR-033)
+
+A consumer-scoped enrichment that translates cross-domain graph content into one consumer's domain vocabulary. Implements the `Enrichment` trait — same interface as all other core enrichments, same enrichment loop participation.
+
+**Construction:** `LensEnrichment` is constructed by `DeclarativeAdapter::lens()` from the adapter spec's `lens:` section. Not constructed directly by consumers.
+
+**Algorithm:** On `EdgesAdded` events, scan new edges for matches against `from` relationship types. For each match, check `involving` node predicates and `min_weight` threshold. If all pass, emit a translated edge with relationship `lens:{consumer}:{to}` and contribution key `lens:{consumer}:{to}:{from}`.
+
+**Namespace convention:**
+- Edge relationship: `lens:{consumer}:{to_relationship}` (e.g., `lens:trellis:thematic_connection`)
+- Contribution key: `lens:{consumer}:{to_relationship}:{from_relationship}` (e.g., `lens:trellis:thematic_connection:may_be_related`)
+- Per-source-relationship keys preserve evidence diversity for many-to-one translations (ADR-033, argument audit P1-B fix)
+
+**Idempotency:** Guard checks whether a translated edge already exists between the same endpoints with the same relationship. Returns `None` when no new translations are needed.
 
 ### Module: query
-**Purpose:** Read-only graph traversal, search, normalization, and evidence trail computation.
-**Provenance:** Invariant 37 (outbound events flow through adapter); ADR-003 (normalized weight)
-**Owns:** FindQuery, TraverseQuery, PathQuery, StepQuery, NormalizationStrategy, OutgoingDivisive, Softmax, NormalizedEdge, normalized_weights, evidence_trail, shared_concepts, QueryResult, TraversalResult, PathResult, EvidenceTrailResult, Direction
+**Purpose:** Read-only graph traversal, search, normalization, evidence trail computation, and cursor-based change queries.
+**Provenance:** Invariant 37 (push delivery), Invariant 58 (pull delivery), Invariant 59 (composable provenance filtering); ADR-003, ADR-034, ADR-035
+**Owns:** FindQuery, TraverseQuery, PathQuery, StepQuery, NormalizationStrategy, OutgoingDivisive, Softmax, NormalizedEdge, normalized_weights, evidence_trail, shared_concepts, QueryResult, TraversalResult, PathResult, EvidenceTrailResult, Direction, QueryFilter, RankBy, ChangeSet, PersistedEvent, CursorFilter
 **Depends on:** graph
-**Depended on by:** api
+**Depended on by:** api, storage (imports CursorFilter, PersistedEvent for event query methods)
 
 ### Module: storage
-**Purpose:** Persistence abstraction and implementations.
-**Provenance:** Invariant 41 (library rule — store takes a path); ADR-006, Essay 17
+**Purpose:** Persistence abstraction and implementations — graph state and event log.
+**Provenance:** Invariant 41 (library rule — store takes a path), Invariant 58 (event cursor persistence); ADR-006, ADR-035, Essay 17
 **Owns:** GraphStore (trait), OpenStore (trait), SqliteStore, SqliteVecStore, StorageError, StorageResult
-**Depends on:** graph (for Context type)
-**Depended on by:** graph (PlexusEngine holds optional Arc\<dyn GraphStore\>)
+**Depends on:** graph (for Context type), query (for CursorFilter, PersistedEvent types used in GraphStore trait methods)
+**Depended on by:** graph (PlexusEngine holds optional Arc\<dyn GraphStore\>), adapter/sink (EngineSink calls persist_event after commit)
 
 ### Module: provenance
 **Purpose:** Read-only provenance query API — marks, chains, links.
@@ -432,6 +452,17 @@ Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `t
 | PlexusApi | api | ADR-014 |
 | PlexusMcpServer | mcp | ADR-028 |
 | LlmOrcClient (trait), SubprocessClient | llm_orc | ADR-024 |
+| LensSpec, TranslationRule, NodePredicate | adapter/adapters | ADR-033 |
+| DeclarativeAdapter::lens() | adapter/adapters | ADR-033 |
+| LensEnrichment | adapter/enrichments | ADR-033 |
+| QueryFilter | query | ADR-034 |
+| RankBy | query | ADR-034 |
+| PersistedEvent, ChangeSet, CursorFilter | query | ADR-035 |
+| persist_event (on GraphStore trait) | storage | ADR-035 |
+| query_events_since (on GraphStore trait) | storage | ADR-035 |
+| events table (SQLite schema) | storage | ADR-035 |
+| Event persistence in emit_inner | adapter/sink | ADR-035 |
+| PlexusApi::changes_since() | api | ADR-035 |
 
 ## Dependency Graph
 
@@ -486,6 +517,7 @@ flowchart TD
 
     query_mod --> graph_mod
     prov_mod --> graph_mod
+    storage_mod -->|"imports CursorFilter,<br>PersistedEvent"| query_mod
 
     graph_mod --> query_mod
     graph_mod <-->|"trait abstraction<br>(GraphStore)"| storage_mod
@@ -561,6 +593,24 @@ flowchart TD
 **Error handling:** `StorageError` mapped to `PlexusError::Storage`
 **Owned by:** storage (defines the persistence contract via trait)
 
+### adapter/sink → storage (event persistence, ADR-035)
+**Protocol:** `EngineSink::emit_inner()` calls `GraphStore::persist_event()` after commit succeeds, before returning to enrichment loop
+**Shared types:** `PersistedEvent` (from query), event type string, node/edge IDs
+**Error handling:** `StorageError` logged but does not fail the emission — event persistence is best-effort to avoid blocking the write path. Missing events degrade the cursor but not the graph.
+**Owned by:** storage (defines persist_event contract via GraphStore trait)
+
+### api → query (cursor queries, ADR-035)
+**Protocol:** `PlexusApi::changes_since()` calls `GraphStore::query_events_since()` through engine
+**Shared types:** `CursorFilter`, `ChangeSet`, `PersistedEvent` (all defined in query)
+**Error handling:** `PlexusError` propagates; stale cursor returns a specific error variant
+**Owned by:** query (defines cursor types), storage (implements query)
+
+### adapter/adapters → adapter/enrichments (lens construction, ADR-033)
+**Protocol:** `DeclarativeAdapter::lens()` constructs `LensEnrichment` from `LensSpec` parsed from YAML
+**Shared types:** `LensEnrichment` (from adapter/enrichments), `LensSpec`/`TranslationRule` (from adapter/adapters)
+**Error handling:** Invalid lens spec returns `AdapterError` at YAML parse time
+**Owned by:** adapter/enrichments (defines LensEnrichment), adapter/adapters (defines spec types)
+
 ### mcp → api
 **Protocol:** MCP tool handlers call `PlexusApi` methods
 **Shared types:** `PlexusApi`, all query/write types
@@ -579,6 +629,10 @@ flowchart TD
 | Persist-per-emission | `save_context()` calls per `emit()` | Exactly 1 | Invariant 30 |
 | No dependency cycles | Cycle count in module dependency graph | 0 | Architectural principle |
 | Contribution survival | Round-trip through save→load→compare | 100% identical | Invariant 31 |
+| Lens is an enrichment | LensEnrichment implements Enrichment trait; no new extension axis | 0 new public traits for lens | Invariant 57 |
+| Query filter composability | QueryFilter field present on all query structs (Find, Traverse, Path, Step, evidence_trail) | 5/5 query primitives support filter | Invariant 59 |
+| Event persistence consistency | Events in `events` table correspond to committed graph state | 100% consistency on save→reload→query | Invariant 58 |
+| Cursor type ownership | CursorFilter, PersistedEvent, ChangeSet defined in query module, not storage | 0 consumer-facing cursor types in storage | Layering rule: query is read-only |
 
 ## Test Architecture
 
@@ -596,6 +650,11 @@ flowchart TD
 | ExtractionCoordinator → StructuralModule | `extraction::tests::structural_*` | Real coordinator dispatches to real MarkdownStructureModule, output contains sections and vocabulary |
 | ExtractionCoordinator → SemanticAdapter | `extraction::tests::phase3_receives_structural_context` | Real coordinator passes vocabulary and sections to real SemanticAdapter (mock llm-orc) |
 | PipelineBuilder → MarkdownStructureModule | `builder::tests::default_pipeline_registers_markdown_module` | Default pipeline has markdown module registered; markdown files trigger structural analysis |
+| adapter/adapters → adapter/enrichments (lens) | `declarative::tests::lens_construction_from_yaml` | DeclarativeAdapter::lens() constructs real LensEnrichment from parsed YAML spec |
+| adapter/enrichments (lens) → enrichment loop | `integration_tests::lens_creates_translated_edges` | LensEnrichment runs in real enrichment loop, creates edges with `lens:` namespace |
+| adapter/sink → storage (event persistence) | `engine_sink::tests::emit_persists_events_to_store` | Real EngineSink writes events to real SqliteStore after commit |
+| api → storage (cursor query) | `api::tests::changes_since_returns_events_after_cursor` | PlexusApi::changes_since() queries real SqliteStore event log |
+| query (filter) → graph | `traverse::tests::traverse_with_query_filter` | Real TraverseQuery with QueryFilter filters edges by contributor_ids/prefix/corroboration |
 
 ### Invariant Enforcement Tests
 
@@ -614,6 +673,10 @@ flowchart TD
 | Inv 53 (merge not select) | adapter/adapters: ExtractionCoordinator | `extraction::tests::structural_outputs_merged` — vocabulary unioned, sections concatenated |
 | Inv 54 (entity not relationship) | adapter/adapters: ExtractionCoordinator | `extraction::tests::vocabulary_contains_entities_not_relationships` |
 | Inv 55 (MIME dispatch, not input-kind) | adapter/adapters: ExtractionCoordinator | `extraction::tests::structural_module_uses_mime_dispatch` — module dispatched by MIME, not registered on IngestPipeline |
+| Inv 56 (lens output public) | adapter/enrichments: LensEnrichment | `lens::tests::lens_output_visible_to_all_consumers` — lens edges traversable without lens prefix filter |
+| Inv 57 (lens is enrichment, not new axis) | adapter/enrichments: LensEnrichment | `lens::tests::implements_enrichment_trait` — LensEnrichment compiles as `dyn Enrichment` |
+| Inv 58 (cursors preserve library rule) | storage: SqliteStore | `sqlite::tests::events_persist_and_query_without_runtime` — write events, stop, reload, query cursor |
+| Inv 59 (provenance filter composable) | query: all query structs | `traverse::tests::filter_by_contributor`, `find::tests::filter_by_corroboration`, `step::tests::filter_composes_with_step_relationship` |
 
 ### Test Layers
 
@@ -633,3 +696,4 @@ See [`./docs/roadmap.md`](./docs/roadmap.md) for the current roadmap — work pa
 | 1 | 2026-03-16 | Added Pipeline Flow, Enrichment Architecture, Core Enrichment Algorithms, Enrichment Loop Mechanics, Declarative Enrichment Configuration sections with mermaid diagrams | Product discovery feedback — enrichment algorithms and pipeline flow not modeled | ADR-010, ADR-024, ADR-025, ADR-026 | Current |
 | 2 | 2026-03-16 | Replaced ASCII dependency graph with mermaid diagram. Fixed missing edges: adapter/adapters → sink, traits, types; adapter/enrichments → enrichment, types, graph. Shows registration-time wiring as dashed edges. | ASCII graph was incomplete and showed graph node duplicated | Module decomposition | Current |
 | 3 | 2026-03-18 | Added structural module system to adapter/adapters: StructuralModule trait, StructuralOutput/ModuleEmission types, MarkdownStructureModule, vocabulary handoff to SemanticInput. Updated adapter taxonomy, extraction pipeline flow, responsibility matrix, integration contracts, test architecture, invariant enforcement. PipelineBuilder gains `with_structural_module()`. New dependency: `pulldown-cmark`. | Track A RDD cycle: ADR-030 (structural module trait), ADR-031 (structural output + handoff), ADR-032 (markdown module) | ADR-030, ADR-031, ADR-032; Invariants 51–55 | Current |
+| 4 | 2026-03-26 | Query surface cycle: (1) LensEnrichment added to adapter/enrichments with namespace convention; LensSpec/TranslationRule/NodePredicate added to adapter/adapters. (2) QueryFilter and RankBy added to query; optional filter field on all query structs. (3) Event cursor types (PersistedEvent, ChangeSet, CursorFilter) added to query; events table and persist_event/query_events_since added to storage; emit_inner gains event persistence; PlexusApi gains changes_since(). New dependency: storage → query (cursor types). New integration contracts: sink→storage (events), api→query (cursor), adapters→enrichments (lens). | Query surface RDD cycle: ADR-033 (lens), ADR-034 (query filters), ADR-035 (event cursors) | ADR-033, ADR-034, ADR-035; Invariants 56–59; Essays 001, 002 | Current |
