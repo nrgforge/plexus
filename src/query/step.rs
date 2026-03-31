@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use crate::{Context, Edge, Node, NodeId};
 
+use super::filter::QueryFilter;
 use super::types::Direction;
 
 /// A single traversal step: direction + relationship filter.
@@ -22,6 +23,8 @@ struct Step {
 pub struct StepQuery {
     origin: NodeId,
     steps: Vec<Step>,
+    /// Optional composable filter applied to every step (ADR-034)
+    filter: Option<QueryFilter>,
 }
 
 /// Result of a StepQuery execution.
@@ -42,6 +45,7 @@ impl StepQuery {
         Self {
             origin: origin_id.into(),
             steps: Vec::new(),
+            filter: None,
         }
     }
 
@@ -51,6 +55,12 @@ impl StepQuery {
             direction,
             relationship: relationship.into(),
         });
+        self
+    }
+
+    /// Apply a composable query filter to all steps (ADR-034).
+    pub fn with_filter(mut self, filter: QueryFilter) -> Self {
+        self.filter = Some(filter);
         self
     }
 
@@ -83,6 +93,13 @@ impl StepQuery {
                 for edge in candidates {
                     if edge.relationship != step.relationship {
                         continue;
+                    }
+
+                    // Apply composable filter (ADR-034)
+                    if let Some(ref filter) = self.filter {
+                        if !filter.edge_passes(edge) {
+                            continue;
+                        }
                     }
 
                     let reached = match step.direction {

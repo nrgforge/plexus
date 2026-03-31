@@ -28,3 +28,5 @@ mod integration;
 mod cursor;
 #[path = "acceptance/lens.rs"]
 mod lens;
+#[path = "acceptance/filter.rs"]
+mod filter;

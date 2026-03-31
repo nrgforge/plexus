@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::graph::{Context, Edge, Node, NodeId};
+use super::filter::QueryFilter;
 use super::types::{Direction, TraversalResult};
 
 /// Query for traversing the graph from a starting node
@@ -17,6 +18,8 @@ pub struct TraverseQuery {
     pub relationship: Option<String>,
     /// Minimum edge weight filter
     pub min_weight: Option<f32>,
+    /// Optional composable filter (ADR-034)
+    pub filter: Option<QueryFilter>,
 }
 
 impl TraverseQuery {
@@ -28,6 +31,7 @@ impl TraverseQuery {
             direction: Direction::Outgoing,
             relationship: None,
             min_weight: None,
+            filter: None,
         }
     }
 
@@ -52,6 +56,12 @@ impl TraverseQuery {
     /// Filter by minimum edge weight
     pub fn min_weight(mut self, min_weight: f32) -> Self {
         self.min_weight = Some(min_weight);
+        self
+    }
+
+    /// Apply a composable query filter (ADR-034)
+    pub fn with_filter(mut self, filter: QueryFilter) -> Self {
+        self.filter = Some(filter);
         self
     }
 
@@ -149,6 +159,13 @@ impl TraverseQuery {
         // Check weight filter
         if let Some(min) = self.min_weight {
             if edge.combined_weight < min {
+                return false;
+            }
+        }
+
+        // Check composable filter (ADR-034)
+        if let Some(ref filter) = self.filter {
+            if !filter.edge_passes(edge) {
                 return false;
             }
         }

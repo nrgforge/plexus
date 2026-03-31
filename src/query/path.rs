@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use crate::graph::{Context, Edge, Node, NodeId};
+use super::filter::QueryFilter;
 use super::types::{Direction, PathResult};
 
 /// Query for finding paths between nodes
@@ -17,6 +18,8 @@ pub struct PathQuery {
     pub direction: Direction,
     /// Optional relationship type filter
     pub relationship: Option<String>,
+    /// Optional composable filter (ADR-034)
+    pub filter: Option<QueryFilter>,
 }
 
 impl PathQuery {
@@ -28,6 +31,7 @@ impl PathQuery {
             max_length: 10, // Default max
             direction: Direction::Outgoing,
             relationship: None,
+            filter: None,
         }
     }
 
@@ -49,6 +53,12 @@ impl PathQuery {
         self
     }
 
+    /// Apply a composable query filter (ADR-034)
+    pub fn with_filter(mut self, filter: QueryFilter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
     /// Execute the path query (BFS for shortest path)
     pub fn execute(&self, context: &Context) -> PathResult {
         // Quick checks
@@ -64,7 +74,7 @@ impl PathQuery {
         }
 
         // Build edge index
-        let edge_index = EdgeIndex::build(context, &self.relationship);
+        let edge_index = EdgeIndex::build(context, &self.relationship, &self.filter);
 
         // BFS to find shortest path
         let mut visited: HashSet<NodeId> = HashSet::new();
@@ -180,7 +190,7 @@ struct EdgeIndex<'a> {
 }
 
 impl<'a> EdgeIndex<'a> {
-    fn build(context: &'a Context, relationship_filter: &Option<String>) -> Self {
+    fn build(context: &'a Context, relationship_filter: &Option<String>, query_filter: &Option<QueryFilter>) -> Self {
         let mut outgoing: HashMap<NodeId, Vec<&Edge>> = HashMap::new();
         let mut incoming: HashMap<NodeId, Vec<&Edge>> = HashMap::new();
 
@@ -188,6 +198,13 @@ impl<'a> EdgeIndex<'a> {
             // Apply relationship filter
             if let Some(ref rel) = relationship_filter {
                 if &edge.relationship != rel {
+                    continue;
+                }
+            }
+
+            // Apply composable filter (ADR-034)
+            if let Some(ref filter) = query_filter {
+                if !filter.edge_passes(edge) {
                     continue;
                 }
             }

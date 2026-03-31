@@ -1,6 +1,7 @@
 //! Query types and result structures
 
 use crate::graph::{Edge, Node, NodeId};
+use super::filter::RankBy;
 
 /// Direction for edge traversal
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,6 +72,39 @@ impl TraversalResult {
     /// Get the maximum depth reached
     pub fn max_depth(&self) -> usize {
         self.levels.len().saturating_sub(1)
+    }
+
+    /// Rank nodes within each depth level by the given dimension.
+    ///
+    /// Ranking reorders nodes within each level but does not change which
+    /// nodes appear or which level they belong to. Ordering is descending.
+    pub fn rank_by(&mut self, rank: RankBy, edges: &[Edge]) {
+        use std::collections::HashMap;
+
+        // Build a lookup: node_id → best score from incident edges in result
+        let mut scores: HashMap<&NodeId, f64> = HashMap::new();
+
+        for edge in edges {
+            let score = match rank {
+                RankBy::RawWeight => edge.combined_weight as f64,
+                RankBy::Corroboration => edge.contributions.len() as f64,
+            };
+            // Use the max score across all incident edges for each node
+            for node_id in [&edge.source, &edge.target] {
+                let entry = scores.entry(node_id).or_insert(0.0);
+                if score > *entry {
+                    *entry = score;
+                }
+            }
+        }
+
+        for level in &mut self.levels {
+            level.sort_by(|a, b| {
+                let sa = scores.get(&a.id).copied().unwrap_or(0.0);
+                let sb = scores.get(&b.id).copied().unwrap_or(0.0);
+                sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
     }
 }
 

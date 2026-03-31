@@ -1,6 +1,7 @@
 //! Find queries for locating nodes
 
 use crate::graph::{Context, ContentType, Node, PropertyValue};
+use super::filter::QueryFilter;
 use super::types::QueryResult;
 
 /// Query for finding nodes by various criteria
@@ -20,6 +21,10 @@ pub struct FindQuery {
     pub limit: Option<usize>,
     /// Number of results to skip
     pub offset: Option<usize>,
+    /// Optional composable filter (ADR-034).
+    /// When present, a node qualifies only if it has at least one incident
+    /// edge passing the filter.
+    pub filter: Option<QueryFilter>,
 }
 
 impl FindQuery {
@@ -70,12 +75,19 @@ impl FindQuery {
         self
     }
 
+    /// Apply a composable query filter (ADR-034).
+    pub fn with_filter(mut self, filter: QueryFilter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
     /// Execute the query against a context
     pub fn execute(&self, context: &Context) -> QueryResult {
         let mut nodes: Vec<Node> = context
             .nodes
             .values()
             .filter(|node| self.matches(node))
+            .filter(|node| self.passes_edge_filter(node, context))
             .cloned()
             .collect();
 
@@ -96,6 +108,17 @@ impl FindQuery {
         }
 
         QueryResult { nodes, total_count }
+    }
+
+    /// Check if a node has at least one incident edge passing the filter.
+    /// Returns true if no filter is set.
+    fn passes_edge_filter(&self, node: &Node, context: &Context) -> bool {
+        let Some(ref filter) = self.filter else {
+            return true;
+        };
+        context.edges.iter().any(|edge| {
+            (edge.source == node.id || edge.target == node.id) && filter.edge_passes(edge)
+        })
     }
 
     /// Check if a node matches all query criteria
