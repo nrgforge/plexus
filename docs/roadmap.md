@@ -1,6 +1,6 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-03-29 (WP-A complete)
+**Last updated:** 2026-03-31 (WP-B complete)
 **Derived from:** System Design v1.1, ADR-033, ADR-034, ADR-035, Essays 001–002, conformance scan
 
 ## Current Cycle: Query Surface (2026-03-26 — )
@@ -12,7 +12,7 @@
 | WP | Title | Dependencies | Status |
 |----|-------|-------------|--------|
 | WP-A | Event Cursor Persistence | None | **Done** |
-| WP-B | Lens Declaration and Translation | WP-A (implied) | Pending |
+| WP-B | Lens Declaration and Translation | WP-A (implied) | **Done** |
 | WP-C | Composable Query Filters | WP-B (implied) | Pending |
 
 ## Work Packages
@@ -46,16 +46,24 @@
 
 ---
 
-### WP-B: Lens Declaration and Translation
+### WP-B: Lens Declaration and Translation — DONE
 
 **Objective:** Enable consumers to declare domain vocabulary translation rules in their adapter spec YAML, producing a `LensEnrichment` that creates translated edges at write time (Invariants 56–57).
 
 **Changes:**
 - adapter/adapters: `LensSpec`, `TranslationRule`, `NodePredicate` types in `declarative.rs`; `DeclarativeAdapter::lens()` method; YAML deserialization for `lens:` section
 - adapter/enrichments: `LensEnrichment` in new `lens.rs` — implements `Enrichment` trait, namespace convention `lens:{consumer}:{to}:{from}`
-- adapter/pipeline: Registration wiring — `PipelineBuilder` or `register_integration` caller pushes lens alongside other enrichments
+- adapter/pipeline: Registration wiring — `PipelineBuilder.with_enrichment()` caller pushes lens alongside other enrichments
 
-**Scenarios covered:** Lens declaration and translation scenarios (033-035-query-surface.md §Lens Declaration — 7 scenarios)
+**What was built:**
+- `src/adapter/adapters/declarative.rs`: `LensSpec`, `TranslationRule`, `NodePredicate` types; `DeclarativeSpec.lens` optional field; `DeclarativeAdapter::lens()` → `Option<Arc<dyn Enrichment>>`
+- `src/adapter/enrichments/lens.rs`: `LensEnrichment` — reacts to `EdgesAdded`, many-to-one merging (per-source contribution keys), `min_weight` filtering, idempotency guard
+- `src/adapter/enrichments/mod.rs`, `src/adapter/mod.rs`: module registration and re-exports
+- `tests/acceptance/lens.rs`: 9 acceptance tests (7 scenarios + YAML deser + integration through real pipeline enrichment loop)
+
+**Scenarios covered:** All 7 lens declaration scenarios (033-035-query-surface.md §Lens Declaration) satisfied.
+
+**Decisions resolved:** Many-to-one → single edge with merged contributions, `combined_weight` = max across sources. `NodePredicate` type defined, logic deferred (no scenario exercises `involving` yet).
 
 **Dependencies:** WP-A (implied logic) — lens-created edges automatically appear in the event log once WP-A is in place, but lens can be built without events (lens scenarios don't require cursor queries).
 
