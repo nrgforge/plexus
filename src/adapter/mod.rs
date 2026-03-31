@@ -58,10 +58,12 @@ pub use provenance_adapter::{ProvenanceAdapter, ProvenanceInput};
 pub use enrichments::cooccurrence;
 pub use enrichments::discovery_gap;
 pub use enrichments::embedding;
+pub use enrichments::lens;
 pub use enrichments::temporal_proximity;
 
 // Flat enrichment type re-exports
 pub use cooccurrence::CoOccurrenceEnrichment;
+pub use lens::LensEnrichment;
 pub use discovery_gap::DiscoveryGapEnrichment;
 pub use embedding::{Embedder, EmbeddingError, EmbeddingSimilarityEnrichment, InMemoryVectorStore, VectorStore};
 #[cfg(feature = "embeddings")]

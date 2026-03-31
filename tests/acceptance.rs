@@ -26,3 +26,5 @@ mod query;
 mod integration;
 #[path = "acceptance/cursor.rs"]
 mod cursor;
+#[path = "acceptance/lens.rs"]
+mod lens;

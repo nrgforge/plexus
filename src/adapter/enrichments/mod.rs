@@ -7,4 +7,5 @@
 pub mod cooccurrence;
 pub mod discovery_gap;
 pub mod embedding;
+pub mod lens;
 pub mod temporal_proximity;

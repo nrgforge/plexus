@@ -340,6 +340,49 @@ pub struct EnrichmentDeclaration {
     pub similarity_threshold: Option<f32>,
 }
 
+// ---------------------------------------------------------------------------
+// Lens declaration types (ADR-033)
+// ---------------------------------------------------------------------------
+
+/// Node predicate for filtering which endpoints qualify for lens translation.
+///
+/// When present on a translation rule, only edges whose endpoints match
+/// the predicate are translated. All specified fields must match (AND semantics).
+#[derive(Debug, Clone, Deserialize)]
+pub struct NodePredicate {
+    pub dimension: Option<String>,
+    pub content_type: Option<String>,
+    pub node_type: Option<String>,
+}
+
+/// A single translation rule within a lens specification.
+///
+/// Maps one or more source relationship types to a single output relationship
+/// in the consumer's domain vocabulary.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TranslationRule {
+    /// Source relationship types to watch for.
+    pub from: Vec<String>,
+    /// Output relationship type in the consumer's vocabulary.
+    pub to: String,
+    /// Minimum raw weight on the source edge to trigger translation (default 0.0).
+    #[serde(default)]
+    pub min_weight: Option<f32>,
+    /// Optional node predicate filtering which endpoints qualify.
+    pub involving: Option<NodePredicate>,
+}
+
+/// Lens specification declaring domain vocabulary translation rules (ADR-033).
+///
+/// Appears as the `lens:` section in a declarative adapter spec YAML.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LensSpec {
+    /// Consumer identifier used in the namespace prefix.
+    pub consumer: String,
+    /// Translation rules mapping source relationships to consumer vocabulary.
+    pub translations: Vec<TranslationRule>,
+}
+
 /// A declarative adapter spec describing the adapter's behavior.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeclarativeSpec {
@@ -348,6 +391,8 @@ pub struct DeclarativeSpec {
     pub ensemble: Option<String>,
     pub input_schema: Option<Vec<InputField>>,
     pub enrichments: Option<Vec<EnrichmentDeclaration>>,
+    /// Lens declaration for domain vocabulary translation (ADR-033).
+    pub lens: Option<LensSpec>,
     pub emit: Vec<Primitive>,
 }
 
@@ -480,6 +525,16 @@ impl DeclarativeAdapter {
         embedder: Box<dyn crate::adapter::embedding::Embedder>,
     ) -> Result<Vec<Arc<dyn Enrichment>>, AdapterError> {
         self.build_enrichments(Some(embedder), None)
+    }
+
+    /// Construct a lens enrichment from the spec's `lens:` section (ADR-033).
+    ///
+    /// Returns `None` if the spec has no `lens:` section.
+    pub fn lens(&self) -> Option<Arc<dyn Enrichment>> {
+        self.spec.lens.as_ref().map(|spec| {
+            Arc::new(crate::adapter::enrichments::lens::LensEnrichment::new(spec.clone()))
+                as Arc<dyn Enrichment>
+        })
     }
 
     /// Instantiate core enrichments, providing both an embedder and a vector store
@@ -1023,6 +1078,7 @@ mod tests {
             ensemble: None,
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![Primitive::CreateNode(CreateNodePrimitive {
                 id: IdStrategy::Template("artifact:{input.file_path}".to_string()),
                 node_type: "artifact".to_string(),
@@ -1067,6 +1123,7 @@ mod tests {
             ensemble: None,
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![
                 // Source node
                 Primitive::CreateNode(CreateNodePrimitive {
@@ -1144,6 +1201,7 @@ mod tests {
             ensemble: None,
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![Primitive::CreateNode(CreateNodePrimitive {
                 id: IdStrategy::Hash { hash: vec![
                     "{adapter_id}".to_string(),
@@ -1203,6 +1261,7 @@ mod tests {
             ensemble: None,
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![
                 Primitive::CreateNode(CreateNodePrimitive {
                     id: IdStrategy::Template("concept:{input.topic}".to_string()),
@@ -1278,6 +1337,7 @@ mod tests {
             input_kind: "extract-file".to_string(),
             ensemble: None,
             enrichments: None,
+            lens: None,
             input_schema: Some(vec![
                 InputField {
                     name: "file_path".to_string(),
@@ -1329,6 +1389,7 @@ mod tests {
             ensemble: None,
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![Primitive::CreateProvenance(CreateProvenancePrimitive {
                 chain_id: "chain:{adapter_id}".to_string(),
                 mark_annotation: "note".to_string(),
@@ -1353,6 +1414,7 @@ mod tests {
             ensemble: None,
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![Primitive::UpdateProperties(UpdatePropertiesPrimitive {
                 node_id: "concept:{input.tag | lowercase}".to_string(),
                 properties: HashMap::from([
@@ -1410,6 +1472,7 @@ mod tests {
             ensemble: None,
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![Primitive::UpdateProperties(UpdatePropertiesPrimitive {
                 node_id: "concept:nonexistent".to_string(),
                 properties: HashMap::from([
@@ -1676,6 +1739,7 @@ emit:
             ensemble: Some(ensemble_name.to_string()),
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![
                 Primitive::CreateNode(CreateNodePrimitive {
                     id: IdStrategy::Template("concept:{input.name | lowercase}".to_string()),
@@ -1761,6 +1825,7 @@ emit:
             ensemble: Some("test-ensemble".to_string()),
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![
                 Primitive::ForEach(ForEachPrimitive {
                     collection: "ensemble.concepts".to_string(),
@@ -1855,6 +1920,7 @@ emit:
             ensemble: None,
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![
                 Primitive::CreateNode(CreateNodePrimitive {
                     id: IdStrategy::Template("concept:{input.name | lowercase}".to_string()),
@@ -1903,6 +1969,7 @@ emit:
             ensemble: Some("test-ensemble".to_string()),
             input_schema: None,
             enrichments: None,
+            lens: None,
             emit: vec![
                 Primitive::ForEach(ForEachPrimitive {
                     collection: "ensemble.concepts".to_string(),
