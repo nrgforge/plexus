@@ -70,6 +70,9 @@ pub(crate) fn run_enrichment_loop(
                 EngineSink::emit_inner(ctx, emission, &enrichment_framework)
             }).map_err(EngineSink::map_engine_error)??;
 
+            // Persist enrichment events to event log (ADR-035)
+            engine.persist_events(&enrichment_result.events);
+
             new_events.extend(enrichment_result.events.clone());
 
             // Accumulate enrichment results
