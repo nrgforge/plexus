@@ -1,7 +1,7 @@
 # Field Guide: Plexus
 
-**Generated:** 2026-03-18
-**Derived from:** System Design v1.0, current implementation
+**Generated:** 2026-04-01
+**Derived from:** System Design v1.1, current implementation
 
 ## How to Use This Guide
 
@@ -182,7 +182,7 @@ Adapters fall into three categories: Rust-native (ContentAdapter, ExtractionCoor
 ## Module: adapter/enrichments
 
 **Implementation state:** Complete
-**Code location:** `src/adapter/enrichments/` (5 files)
+**Code location:** `src/adapter/enrichments/` (6 files)
 **Stability:** Settled
 
 ### Domain Concepts in Code
@@ -193,13 +193,14 @@ Adapters fall into three categories: Rust-native (ContentAdapter, ExtractionCoor
 | DiscoveryGapEnrichment | `pub struct DiscoveryGapEnrichment` | `src/adapter/enrichments/discovery_gap.rs` |
 | TemporalProximityEnrichment | `pub struct TemporalProximityEnrichment` | `src/adapter/enrichments/temporal_proximity.rs` |
 | EmbeddingSimilarityEnrichment | `pub struct EmbeddingSimilarityEnrichment` | `src/adapter/enrichments/embedding.rs` |
+| LensEnrichment | `pub struct LensEnrichment` | `src/adapter/enrichments/lens.rs` |
 | Embedder | `pub trait Embedder` | `src/adapter/enrichments/embedding.rs` |
 | VectorStore | `pub trait VectorStore` | `src/adapter/enrichments/embedding.rs` |
 | FastEmbedEmbedder | `pub struct FastEmbedEmbedder` (behind `embeddings` flag) | `src/adapter/enrichments/embedding.rs` |
 
 ### Design Rationale
 
-Each enrichment is a reactive algorithm implementing the `Enrichment` trait. They are domain-agnostic — they operate on graph structure, not content. `EmbeddingSimilarityEnrichment` and its backends are behind the `embeddings` feature flag (ADR-026). TagConceptBridger was removed — tag bridging is domain-specific and belongs in domain code, not the core engine.
+Each enrichment is a reactive algorithm implementing the `Enrichment` trait. They are domain-agnostic — they operate on graph structure, not content. `EmbeddingSimilarityEnrichment` and its backends are behind the `embeddings` feature flag (ADR-026). `LensEnrichment` (ADR-033) is a consumer-scoped enrichment that translates cross-domain edges into one consumer's vocabulary. TagConceptBridger was removed — tag bridging is domain-specific and belongs in domain code, not the core engine.
 
 ### Key Integration Points
 
@@ -211,7 +212,7 @@ Each enrichment is a reactive algorithm implementing the `Enrichment` trait. The
 ## Module: query
 
 **Implementation state:** Complete
-**Code location:** `src/query/` (8 files, ~1800 lines)
+**Code location:** `src/query/` (9 files)
 **Stability:** Settled
 
 ### Domain Concepts in Code
@@ -222,21 +223,33 @@ Each enrichment is a reactive algorithm implementing the `Enrichment` trait. The
 | TraverseQuery | `pub struct TraverseQuery` | `src/query/traverse.rs` |
 | PathQuery | `pub struct PathQuery` | `src/query/path.rs` |
 | StepQuery | `pub struct StepQuery` | `src/query/step.rs` |
+| QueryFilter | `pub struct QueryFilter` | `src/query/filter.rs` |
+| RankBy | `pub enum RankBy` | `src/query/filter.rs` |
 | evidence_trail | `pub fn evidence_trail()` | `src/query/step.rs` |
 | NormalizationStrategy | `pub trait NormalizationStrategy` | `src/query/normalize.rs` |
 | OutgoingDivisive | `pub struct OutgoingDivisive` | `src/query/normalize.rs` |
 | Softmax | `pub struct Softmax` | `src/query/normalize.rs` |
+| PersistedEvent | `pub struct PersistedEvent` | `src/query/cursor.rs` |
+| ChangeSet | `pub struct ChangeSet` | `src/query/cursor.rs` |
+| CursorFilter | `pub struct CursorFilter` | `src/query/cursor.rs` |
 | shared_concepts | `pub fn shared_concepts()` | `src/query/shared.rs` |
 | Direction | `pub enum Direction` | `src/query/types.rs` |
 
 ### Design Rationale
 
-Query is strictly read-only — it never writes to the graph (layering rule 4). All query types take `&Context` directly, not the engine. This means queries operate on in-memory snapshots with no persistence dependency. `evidence_trail()` composes two `StepQuery` branches per ADR-013.
+Query is strictly read-only — it never writes to the graph. All query types take `&Context` directly, not the engine. This means queries operate on in-memory snapshots with no persistence dependency. `evidence_trail()` composes two `StepQuery` branches per ADR-013.
+
+`QueryFilter` (ADR-034) composes with all query primitives via an optional `filter` field. Fields are AND-composed; `None` fields apply no constraint. For traversal queries, the filter prunes edges during traversal (pre-filter, not post-filter). For `FindQuery`, filter uses incident-edge semantics: a node qualifies if at least one incident edge passes.
+
+`RankBy` is applied as post-processing on `TraversalResult` via `rank_by()`, reordering nodes within depth levels without affecting traversal reachability.
+
+Cursor types (`PersistedEvent`, `ChangeSet`, `CursorFilter`) support pull-based event delivery (ADR-035). Storage implementations persist events; query types define the query interface.
 
 ### Key Integration Points
 
 - **graph** — All query types take `&Context` and navigate `Node`/`Edge` structures.
 - **api** — `PlexusApi` wraps engine query methods for transport consumption.
+- **storage** — `GraphStore` trait includes `persist_event()`, `query_events_since()`, `latest_sequence()` (default no-ops for non-SQLite backends).
 
 ---
 
@@ -377,7 +390,9 @@ External LLM orchestration runs as a subprocess (ADR-024). The trait abstraction
 | Add a new adapter | Implement `Adapter` trait (`adapter/traits.rs`), register in `PipelineBuilder` |
 | Add a structural module | Implement `StructuralModule` trait (`adapter/adapters/structural.rs`), register via `PipelineBuilder::with_structural_module()` |
 | Add a new enrichment | Implement `Enrichment` trait (`adapter/enrichment/traits.rs`), register in `EnrichmentRegistry` |
-| Query the graph | `query/` — FindQuery, TraverseQuery, PathQuery, StepQuery |
+| Query the graph | `query/` — FindQuery, TraverseQuery, PathQuery, StepQuery (all accept optional `QueryFilter`) |
+| Filter queries by provenance/corroboration | `query/filter.rs` — QueryFilter, RankBy |
+| Pull-based change queries | `query/cursor.rs` — PersistedEvent, ChangeSet, CursorFilter |
 | Understand provenance reads | `provenance/api.rs` |
 | Understand the MCP surface | `mcp/mod.rs` (9 tools) |
 | Understand weight normalization | `graph/context.rs` (scale norm), `query/normalize.rs` (query-time norm) |

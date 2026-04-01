@@ -1,19 +1,11 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-03-31 (WP-B complete)
+**Last updated:** 2026-04-01 (WP-C complete — query surface cycle done)
 **Derived from:** System Design v1.1, ADR-033, ADR-034, ADR-035, Essays 001–002, conformance scan
 
-## Current Cycle: Query Surface (2026-03-26 — )
+## Current State
 
-**Objective:** Enable consumer-scoped query over the shared graph — lens-based domain translation, composable provenance filtering, and pull-based change tracking via event cursors.
-
-**Design spec:** ADR-033 (lens declaration), ADR-034 (composable query filters), ADR-035 (event cursor persistence)
-
-| WP | Title | Dependencies | Status |
-|----|-------|-------------|--------|
-| WP-A | Event Cursor Persistence | None | **Done** |
-| WP-B | Lens Declaration and Translation | WP-A (implied) | **Done** |
-| WP-C | Composable Query Filters | WP-B (implied) | Pending |
+No active cycle. Query surface cycle completed 2026-04-01.
 
 ## Work Packages
 
@@ -69,15 +61,23 @@
 
 ---
 
-### WP-C: Composable Query Filters
+### WP-C: Composable Query Filters — DONE
 
 **Objective:** Add optional `QueryFilter` to all query primitives for provenance-scoped filtering and corroboration ranking (Invariant 59).
 
-**Changes:**
-- query: `QueryFilter` struct in `filter.rs` or `types.rs`; `RankBy` enum; optional `filter` field on `FindQuery`, `TraverseQuery`, `PathQuery`, `StepQuery`; filter evaluation in each query's `execute()`; ranking post-processing on result types; `evidence_trail()` signature update to accept optional filter
-- api: Updated call sites in `PlexusApi` (pass-through, no new methods needed)
+**What was built:**
+- `src/query/filter.rs`: `QueryFilter` (contributor_ids, relationship_prefix, min_corroboration) with `edge_passes()` method; `RankBy` enum (RawWeight, Corroboration)
+- `src/query/traverse.rs`: `filter: Option<QueryFilter>` field + `with_filter()` builder; filter applied in `edge_matches()`
+- `src/query/find.rs`: `filter: Option<QueryFilter>` field + `with_filter()` builder; incident-edge semantics (node qualifies if any incident edge passes)
+- `src/query/path.rs`: `filter: Option<QueryFilter>` field + `with_filter()` builder; filter applied in edge index construction
+- `src/query/step.rs`: `filter: Option<QueryFilter>` field + `with_filter()` builder; filter applied as additional predicate per step
+- `src/query/types.rs`: `TraversalResult::rank_by()` post-processing method (reorders within depth levels)
+- `src/adapter/enrichment/enrichment_loop.rs`: **Bug fix** — enrichment emissions now persist to event log (pre-existing WP-A gap)
+- `tests/acceptance/filter.rs`: 12 acceptance tests (9 scenario + 3 cross-WP integration)
 
-**Scenarios covered:** Composable query filter scenarios (033-035-query-surface.md §Composable Query Filters — 9 scenarios), integration scenarios (3 scenarios)
+**Scenarios covered:** All 9 composable query filter scenarios + all 3 integration scenarios (033-035-query-surface.md).
+
+**Decisions resolved:** FindQuery incident-edge semantics (existential: node qualifies if ≥1 incident edge passes). `evidence_trail()` signature unchanged — filter deferred (no scenario exercises it).
 
 **Dependencies:** WP-B (implied logic) — `relationship_prefix: "lens:trellis:"` use case is meaningful only after lens edges exist, but the filter mechanism works on any edge. WP-A (open choice) — filter and cursor are independent capabilities.
 
@@ -124,14 +124,33 @@ Complete query surface. Consumers query through composable filters — provenanc
 
 ## Open Decision Points
 
-- **GraphStore trait extensibility** — `persist_event()` and `query_events_since()` are breaking additions to the `GraphStore` trait. Default no-op implementations (like `data_version()`) ease adoption but mean non-SQLite backends silently skip event persistence. Alternative: a separate `EventStore` trait. Decision deferred to BUILD.
-- **Event persistence error handling** — ADR-035 is silent on whether event persistence failure should fail the emission. The system design recommends best-effort (log and continue) to avoid blocking the write path. Confirm during BUILD.
-- **Lens `involving` predicate complexity** — The `NodePredicate` type for filtering which endpoints qualify for translation is specified in ADR-033 but the exact predicate surface (dimension, content_type, node_type, property match?) is a BUILD-time decision. Start minimal and expand.
-- **`evidence_trail` signature change** — Adding optional `QueryFilter` to `evidence_trail()` breaks the existing call site in `api.rs`. The fix is straightforward (add `None` default) but touches a public API. Confirm approach during BUILD.
+- **GraphStore trait extensibility** — `persist_event()` and `query_events_since()` are breaking additions to the `GraphStore` trait. Default no-op implementations ease adoption but mean non-SQLite backends silently skip event persistence. Alternative: a separate `EventStore` trait.
+- **Lens `involving` predicate complexity** — `NodePredicate` type defined (ADR-033), logic deferred. No scenario exercises `involving` yet. Expand when a consumer needs endpoint-filtered translation.
+- **`evidence_trail` + QueryFilter** — Deferred. No scenario exercises filtered evidence trails. Straightforward addition when needed.
+- **Cross-cutting concern at commit boundary** — Enrichment event persistence was missed because `emit_inner()` and `emit()` are separate commit paths. Consider pushing event persistence into `emit_inner()` or engine-level commit to prevent recurrence.
 
 ---
 
 ## Completed Work Log
+
+### Cycle: Query Surface (2026-03-26 — 2026-04-01)
+
+**Derived from:** System Design v1.1, ADR-033, ADR-034, ADR-035, Essays 001–002
+
+| WP | Title | Commits | Status |
+|----|-------|---------|--------|
+| WP-A | Event Cursor Persistence | `7222991` | Done |
+| WP-B | Lens Declaration and Translation | `8333d10` | Done |
+| WP-C | Composable Query Filters | `8b3230b`, `4cb566e` | Done |
+
+**Summary:**
+- WP-A: Event persistence in SQLite, `changes_since()` API, cursor types, 7 acceptance tests
+- WP-B: LensSpec/TranslationRule types, LensEnrichment (many-to-one, idempotent), YAML deserialization, 9 acceptance tests
+- WP-C: QueryFilter (contributor_ids, relationship_prefix, min_corroboration), RankBy enum, filter on all query structs, 12 acceptance tests (9 scenario + 3 cross-WP integration)
+- Bug fix: enrichment loop events now persist to event log (pre-existing gap)
+- Final state: 403 lib tests + 58 acceptance tests (461 total)
+
+---
 
 ### Cycle: Operationalization (2026-03-17 — 2026-03-20)
 
