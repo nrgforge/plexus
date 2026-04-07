@@ -1,6 +1,6 @@
 # ADR-034: Composable Query Filters
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 001](../essays/001-query-surface-design.md)
 

@@ -1,6 +1,6 @@
 # ADR-033: Lens Declaration in Declarative Adapter Spec
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 001](../essays/001-query-surface-design.md), [Essay 002](../essays/002-lens-storage-mechanism.md)
 

@@ -1,6 +1,6 @@
 # ADR-035: Event Cursor Persistence
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Research:** [Essay 001](../essays/001-query-surface-design.md)
 
