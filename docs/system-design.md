@@ -1,8 +1,8 @@
 # System Design: Plexus
 
-**Version:** 1.1
-**Status:** Current (Retrofit)
-**Last amended:** 2026-03-26
+**Version:** 1.2
+**Status:** Current (Retrofit + MCP consumer interaction amendment)
+**Last amended:** 2026-04-07
 
 ## Architectural Drivers
 
@@ -27,6 +27,11 @@
 | Provenance-scoped filtering composable with all query primitives | Quality Attribute (Composability) | Invariant 59; ADR-034; Essay 001 |
 | Event cursors preserve library rule for reads | Constraint | Invariant 58; ADR-035 |
 | Push (Inv 37) and pull (Inv 58) are separate event delivery paradigms | Constraint | Invariant 37 (amended); ADR-035 |
+| Spec validation gates graph work — `load_spec` is fail-fast, no partial state | Constraint | Invariant 60; ADR-037 |
+| Consumer owns the spec — Plexus never generates, mutates, or derives specs | Constraint | Invariant 61; ADR-037 |
+| Vocabulary layers are durable graph data; lens enrichments are durably registered on the context | Constraint | Invariant 62; ADR-037 |
+| Specs table is the context's lens registry — any library instance against a context transiently runs those lenses on behalf of the context, not on behalf of the original loader | Quality Attribute (Multi-consumer cross-pollination) | Invariant 62; ADR-037; Reflection 003 |
+| MCP query surface reaches parity with PlexusApi for read operations (16 tools total) | Quality Attribute (Consumability) | Invariant 38; ADR-036 |
 
 ## Module Decomposition
 
@@ -66,11 +71,13 @@
 **Depended on by:** adapter/adapters, adapter/pipeline
 
 ### Module: adapter/pipeline
-**Purpose:** The unified ingest pipeline — routing, adapter dispatch, enrichment loop orchestration, outbound event transformation, and transport-neutral construction.
-**Provenance:** Invariant 34 (single write path), Invariant 17 (fan-out routing); ADR-012, ADR-028, ADR-032
-**Owns:** IngestPipeline, PipelineBuilder (including `with_structural_module()`, `default_pipeline()`), classify_input, ClassifyError, input routing logic
+**Purpose:** The unified ingest pipeline — routing, adapter dispatch, enrichment loop orchestration, outbound event transformation, transport-neutral construction, and runtime spec registration.
+**Provenance:** Invariant 34 (single write path), Invariant 17 (fan-out routing), Invariant 62 (durable enrichment registration); ADR-012, ADR-028, ADR-032, ADR-037
+**Owns:** IngestPipeline (adapter vector and enrichment registry behind interior mutability for runtime registration — ADR-037 §5; specific mechanism a BUILD decision), PipelineBuilder (`with_structural_module()`, `with_adapter_specs()`, `with_persisted_specs()`, `default_pipeline()`), classify_input, ClassifyError, input routing logic
 **Depends on:** graph, adapter/sink, adapter/enrichment, adapter/traits, adapter/types, adapter/adapters (PipelineBuilder imports ExtractionCoordinator, ContentAdapter, MarkdownStructureModule for default wiring)
 **Depended on by:** api, mcp
+
+**Spec source precedence (all handled at builder time):** (1) code-registered adapters/enrichments via `with_adapter()`/`with_enrichment()`; (2) file-based specs via `with_adapter_specs(dir)` — deployment-time configuration; (3) DB-persisted specs via `with_persisted_specs(Vec<(ContextId, String)>)` — per-context rehydration of lens enrichments written to the `specs` table by prior `load_spec` calls. The builder takes pre-fetched spec data rather than importing storage directly — the host reads the specs table via `GraphStore::query_specs_for_context` and passes the data in. This preserves the library rule (Invariant 41): the builder takes data, not resources, and layering edges remain unchanged. Rehydration at construction time is **enrichment-only** — the lens enrichment is re-instantiated and registered so it fires on future emissions, but the original adapter is NOT re-registered for ingest routing (the originating consumer may not be present) and the lens is NOT re-run over existing content (the vocabulary edges from the original `load_spec` call already persist — Invariant 62 effect a).
 
 ### Module: adapter/adapters
 **Purpose:** Domain adapter implementations — each transforms a specific input kind into graph mutations.
@@ -160,11 +167,11 @@ A consumer-scoped enrichment that translates cross-domain graph content into one
 **Depended on by:** api, storage (imports CursorFilter, PersistedEvent for event query methods)
 
 ### Module: storage
-**Purpose:** Persistence abstraction and implementations — graph state and event log.
-**Provenance:** Invariant 41 (library rule — store takes a path), Invariant 58 (event cursor persistence); ADR-006, ADR-035, Essay 17
-**Owns:** GraphStore (trait), OpenStore (trait), SqliteStore, SqliteVecStore, StorageError, StorageResult
+**Purpose:** Persistence abstraction and implementations — graph state, event log, and consumer spec persistence.
+**Provenance:** Invariant 41 (library rule — store takes a path), Invariant 58 (event cursor persistence), Invariant 62 (durable enrichment registration — specs table is the context's lens registry); ADR-006, ADR-035, ADR-037, Essay 17
+**Owns:** GraphStore (trait — `persist_event`/`query_events_since`/`latest_sequence` plus `persist_spec`/`query_specs_for_context`/`delete_spec`; all with default no-op implementations on the trait for non-SQLite backends), OpenStore (trait), SqliteStore (includes `events` and `specs` table migrations), SqliteVecStore, StorageError, StorageResult
 **Depends on:** graph (for Context type), query (for CursorFilter, PersistedEvent types used in GraphStore trait methods)
-**Depended on by:** graph (PlexusEngine holds optional Arc\<dyn GraphStore\>), adapter/sink (EngineSink calls persist_event after commit)
+**Depended on by:** graph (PlexusEngine holds optional Arc\<dyn GraphStore\>), adapter/sink (EngineSink calls persist_event after commit), api (PlexusApi::load_spec/unload_spec write through engine to spec methods; host code reads specs table before constructing PipelineBuilder)
 
 ### Module: provenance
 **Purpose:** Read-only provenance query API — marks, chains, links.
@@ -174,17 +181,19 @@ A consumer-scoped enrichment that translates cross-domain graph content into one
 **Depended on by:** api
 
 ### Module: api
-**Purpose:** Transport-independent routing facade — single entry point for all consumer-facing operations.
-**Provenance:** Invariant 34 (all writes via ingest), Invariant 38 (thin transports); ADR-014
-**Owns:** PlexusApi
+**Purpose:** Transport-independent routing facade — single entry point for all consumer-facing operations, including runtime spec lifecycle.
+**Provenance:** Invariant 34 (all writes via ingest), Invariant 38 (thin transports), Invariant 60 (upfront spec validation), Invariant 61 (consumer owns the spec); ADR-014, ADR-036, ADR-037
+**Owns:** PlexusApi, `load_spec`/`unload_spec` methods, `SpecLoadResult`, `SpecLoadError`, `SpecUnloadError` types. Does NOT own spec generation, mutation, or derivation — consumers author and deliver specs.
 **Depends on:** graph, adapter/pipeline, provenance, query
 **Depended on by:** mcp
 
+**Spec lifecycle ownership (ADR-037):** `PlexusApi::load_spec(context_id, spec_yaml)` orchestrates the three-effect model — validate → parse → register → persist → run lens over existing content. The operation is fail-fast (Invariant 60): if validation fails, no pipeline mutation, no storage write, no graph mutation. `unload_spec(context_id, adapter_id)` reverses (b) and (c) — deregister the lens enrichment and the adapter, delete the specs table row — but NOT (a): vocabulary edges remain in the graph as durable data (Invariant 62). Startup rehydration happens at `PipelineBuilder` construction time (see adapter/pipeline), NOT through an `api`-level reload method — this avoids host-side ceremony and eliminates the "forgot to call reload" failure mode.
+
 ### Module: mcp
-**Purpose:** MCP transport — thin shell that forwards requests to PlexusApi.
-**Provenance:** Invariant 38 (transports are thin shells); ADR-028
-**Owns:** PlexusMcpServer, MCP tool handlers, MCP params
-**Depends on:** api, adapter (PipelineBuilder, classify_input), graph (Source), storage (OpenStore, SqliteStore — initialization)
+**Purpose:** MCP transport — thin shell that forwards requests to PlexusApi. 16 tools total after ADR-036 expansion (9 prior + 7 new).
+**Provenance:** Invariant 38 (transports are thin shells); ADR-028, ADR-036
+**Owns:** PlexusMcpServer, 16 MCP tool handlers (prior: `set_context`, `ingest`, 6 context lifecycle, `evidence_trail`; new: `load_spec`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`), MCP params. All 7 new tools use flat optional parameter fields (no nested objects) — LLM consumers construct flat JSON more reliably.
+**Depends on:** api, adapter (PipelineBuilder, classify_input), graph (Source), storage (OpenStore, SqliteStore — initialization; host code also reads specs table before pipeline construction)
 **Depended on by:** (binary entry point)
 
 ### Module: llm_orc
@@ -463,6 +472,23 @@ Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `t
 | events table (SQLite schema) | storage | ADR-035 |
 | Event persistence in emit_inner | adapter/sink | ADR-035 |
 | PlexusApi::changes_since() | api | ADR-035 |
+| PlexusApi::load_spec, PlexusApi::unload_spec | api | ADR-037 §1, §6 |
+| SpecLoadResult, SpecLoadError, SpecUnloadError | api | ADR-037 §1, §6 |
+| `specs` table (SQLite schema, migration) | storage | ADR-037 §2 |
+| persist_spec, query_specs_for_context, delete_spec (on GraphStore trait, default no-ops) | storage | ADR-037 §2 |
+| IngestPipeline interior mutability (adapter vector + enrichment registry) | adapter/pipeline | ADR-037 §5 |
+| Runtime adapter/enrichment registration (`&self` path via interior mutability) | adapter/pipeline | ADR-037 §1, §5 |
+| PipelineBuilder::with_persisted_specs — rehydration at construction (enrichment-only, skip effect a) | adapter/pipeline | ADR-037 §2; Reflection 003 |
+| register_specs_from_dir full-spec wiring (extract enrichments + lens, not just adapter) | adapter/pipeline | ADR-037 §4 (conformance debt fix) |
+| evidence_trail accepts optional QueryFilter (piped through StepQuery) | api, query | ADR-036 §5, Invariant 59 |
+| MCP tool: load_spec | mcp | ADR-036 §1, §2 |
+| MCP tool: find_nodes (flat optional filter fields) | mcp | ADR-036 §1, §2 |
+| MCP tool: traverse (flat optional filter + rank_by + direction fields) | mcp | ADR-036 §1, §2 |
+| MCP tool: find_path (flat optional filter + direction fields) | mcp | ADR-036 §1, §2 |
+| MCP tool: changes_since (flat optional CursorFilter fields) | mcp | ADR-036 §1, §2, §4 |
+| MCP tool: list_tags | mcp | ADR-036 §1 |
+| MCP tool: shared_concepts | mcp | ADR-036 §1 |
+| RankBy::NormalizedWeight(Box<dyn NormalizationStrategy>) variant wiring | query | ADR-034 (third variant, deferred in WP-C, slated for cycle-2 WP-G.2) |
 
 ## Dependency Graph
 
@@ -612,10 +638,28 @@ flowchart TD
 **Owned by:** adapter/enrichments (defines LensEnrichment), adapter/adapters (defines spec types)
 
 ### mcp → api
-**Protocol:** MCP tool handlers call `PlexusApi` methods
-**Shared types:** `PlexusApi`, all query/write types
-**Error handling:** `PlexusError`/`AdapterError` mapped to MCP `ErrorData`
+**Protocol:** MCP tool handlers call `PlexusApi` methods. After ADR-036, 16 tools total — 14 are pure thin wrappers, plus `ingest` (which wraps a thicker pipeline call) and `load_spec` (which wraps the new spec lifecycle orchestration). Tool parameters use flat optional fields throughout.
+**Shared types:** `PlexusApi`, all query/write types, `QueryFilter` fields flattened, `CursorFilter` fields flattened, `RankBy` and `Direction` as optional strings, `SpecLoadResult`/`SpecLoadError`
+**Error handling:** `PlexusError`/`AdapterError`/`SpecLoadError` mapped to MCP `ErrorData`
 **Owned by:** api (defines the consumer-facing contract)
+
+### api → graph (spec persistence, ADR-037)
+**Protocol:** `PlexusApi::load_spec` and `unload_spec` call `PlexusEngine` spec methods (`persist_spec`, `delete_spec`); engine delegates to `GraphStore` trait. Same pattern as event persistence (WP-A) — engine wraps store. Spec persistence happens AFTER pipeline registration succeeds, ensuring atomicity at the API level.
+**Shared types:** `ContextId`, adapter ID string, spec YAML string, `SpecLoadError`
+**Error handling:** `StorageError` from GraphStore mapped to `SpecLoadError::Persistence`. Validation errors mapped to `SpecLoadError::Validation` BEFORE any store call (Invariant 60).
+**Owned by:** graph (defines engine spec methods), storage (defines GraphStore trait contract)
+
+### api → adapter/pipeline (runtime registration, ADR-037)
+**Protocol:** `PlexusApi::load_spec` parses spec YAML into a `DeclarativeAdapter`, extracts adapter + enrichments + lens, then calls pipeline registration methods that mutate via interior mutability on `&self`. The interior-mutable cells are scoped to the adapter vector and enrichment registry only — core routing logic (`classify_input`, dispatch, enrichment loop orchestration) remains non-mutable. Specific concurrency mechanism (RwLock vs DashMap vs ArcSwap) deferred to BUILD.
+**Shared types:** `Arc<dyn Adapter>`, `Arc<dyn Enrichment>`, `DeclarativeAdapter`
+**Error handling:** Parse failures mapped to `SpecLoadError::Validation`. Registration failures mapped to `SpecLoadError::Registration`. The operation is all-or-nothing at the API level — partial registration (e.g., adapter registered but lens fails) must roll back via the API method's error path.
+**Owned by:** adapter/pipeline (defines runtime registration contract)
+
+### host → storage → adapter/pipeline (rehydration at construction, ADR-037)
+**Protocol:** The host (mcp binary, embedded consumer) opens a store, calls `GraphStore::query_specs_for_context(context_id)` to fetch persisted spec rows, then passes the resulting `Vec<PersistedSpec>` to `PipelineBuilder::with_persisted_specs(specs)`. The builder parses each spec, extracts the lens enrichment, and registers it on the pipeline being constructed. The original adapter is NOT registered (the loading consumer may not be present); the lens is NOT re-run over existing content (effect a is durable). **The host does not filter — every spec in the table for the context is rehydrated.** Runtime selectivity is forbidden by design: the specs table is the context's lens registry, and any library instance holding the context is bound to run every lens registered on it. Curation happens via `unload_spec` (durable, public) — not via startup filtering (transient, silent).
+**Shared types:** `PersistedSpec` struct (fields: `context_id`, `adapter_id`, `spec_yaml`, `loaded_at`; struct type rather than tuple to support non-breaking schema evolution)
+**Error handling:** A persisted spec that fails to **parse** or extract its lens is logged but does NOT block pipeline construction — the host gets a working pipeline minus the broken spec's lens. The broken spec remains in the table for diagnosis. This is the only place in the cycle where spec failures are non-fatal; at runtime via `load_spec`, validation errors abort the operation. **Caveat — grammar mismatch is a different failure class:** if a grammar change breaks every spec in the table, silent non-fatal behavior would cause every consumer to silently lose all vocabulary layers. This is why the "spec YAML grammar versioning" open decision point (see roadmap.md) matters — when versioning is introduced, unknown-version errors must be fail-loud, not logged-and-continue.
+**Owned by:** adapter/pipeline (defines `with_persisted_specs` builder API), storage (defines `query_specs_for_context` trait method and `PersistedSpec` struct)
 
 ## Fitness Criteria
 
@@ -633,6 +677,15 @@ flowchart TD
 | Query filter composability | QueryFilter field present on all query structs (Find, Traverse, Path, Step, evidence_trail) | 5/5 query primitives support filter | Invariant 59 |
 | Event persistence consistency | Events in `events` table correspond to committed graph state | 100% consistency on save→reload→query | Invariant 58 |
 | Cursor type ownership | CursorFilter, PersistedEvent, ChangeSet defined in query module, not storage | 0 consumer-facing cursor types in storage | Layering rule: query is read-only |
+| Spec validation gates graph work | Malformed YAML passed to `load_spec` → 0 store mutations, 0 pipeline mutations, 0 graph mutations | 100% in tests with malformed spec fixtures | Invariant 60 |
+| Consumer ownership of spec | No `PlexusApi` method generates, mutates, or derives a spec | 0 spec-mutation methods (only `load_spec`/`unload_spec`) | Invariant 61 |
+| Vocabulary layers durable | `unload_spec` leaves `lens:*` edges queryable | 100% in tests | Invariant 62 (effect a) |
+| Enrichment registration durable | Persisted lens fires on post-restart ingest by a different adapter (verified by construct → save → drop → reconstruct via builder → ingest → assert) | 100% in tests | Invariant 62 (effect b) |
+| Fail-fast atomicity of load_spec | Partial spec load states (e.g., adapter registered but lens failed) | 0 partial states — load_spec is all-or-nothing | Invariant 60 |
+| Interior mutability scope | Interior-mutable cells in `IngestPipeline` wrap only the adapter vector and enrichment registry. **Adapter storage remains a `Vec` indexed by registration order; restructuring to a keyed collection (e.g., `DashMap`) is out of scope for this cycle and would require a separate architectural decision.** Core routing logic (`classify_input`, dispatch, loop orchestration) remains non-mutable on `&self`; no lock held across an `ingest()` call. Tier 1 decision (`RwLock` vs `ArcSwap`) is local to BUILD; Tier 2 (restructure to keyed storage) requires a new ADR. | Inspection + no new public locking types exposed | ADR-037 §5 |
+| MCP tool count | `PlexusMcpServer` exposes exactly 16 `#[tool]` handlers | 16 (9 prior + 7 new) | ADR-036 §1 |
+| Transport thinness (still holds) | Lines of business logic in new MCP tool handlers | 0 — all new handlers delegate to `PlexusApi` | Invariant 38 |
+| No new module dependency edges | Edges added to the module dependency graph for this cycle | 0 — all new work uses existing edges (`api → graph → storage`, `api → adapter/pipeline`, `mcp → api`, host orchestration) | Amendment 5 design constraint |
 
 ## Test Architecture
 
@@ -655,6 +708,12 @@ flowchart TD
 | adapter/sink → storage (event persistence) | `engine_sink::tests::emit_persists_events_to_store` | Real EngineSink writes events to real SqliteStore after commit |
 | api → storage (cursor query) | `api::tests::changes_since_returns_events_after_cursor` | PlexusApi::changes_since() queries real SqliteStore event log |
 | query (filter) → graph | `traverse::tests::traverse_with_query_filter` | Real TraverseQuery with QueryFilter filters edges by contributor_ids/prefix/corroboration |
+| api → adapter/pipeline (runtime registration, ADR-037) | `api::tests::load_spec_registers_adapter_enrichments_and_lens_atomically` | Real PlexusApi loads spec YAML; real IngestPipeline receives real adapter + enrichments + lens via interior-mutable registration; adapter available for ingest routing after the call |
+| api → graph → storage (spec persistence, ADR-037) | `api::tests::load_spec_persists_to_specs_table`, `unload_spec_deletes_from_specs_table` | Real PlexusApi writes to / deletes from real SqliteStore via real PlexusEngine |
+| adapter/pipeline → storage via host (rehydration at construction, ADR-037) | `acceptance::persisted_lens_fires_after_library_reconstruction` | Load spec via PlexusApi, drop pipeline, query specs table, construct new pipeline via `PipelineBuilder::with_persisted_specs`, ingest via different adapter, assert persisted lens enrichment fires |
+| api → query (evidence_trail filter, ADR-036 §5) | `api::tests::evidence_trail_accepts_filter` | Real PlexusApi::evidence_trail with QueryFilter parameter filters the provenance trail by contributor_ids |
+| mcp → api (each new tool) | `mcp::tests::{load_spec, find_nodes, traverse, find_path, changes_since, list_tags, shared_concepts}_delegates_to_api` | Each new MCP tool handler calls the corresponding PlexusApi method with flat parameters correctly mapped to structured types |
+| query (RankBy::NormalizedWeight → normalize) | `traverse::tests::rank_by_normalized_weight_uses_outgoing_divisive` | Real traversal ranks edges by normalized weight using an injected `OutgoingDivisive` strategy (closes ADR-034 Violation 1) |
 
 ### Invariant Enforcement Tests
 
@@ -676,7 +735,11 @@ flowchart TD
 | Inv 56 (lens output public) | adapter/enrichments: LensEnrichment | `lens::tests::lens_output_visible_to_all_consumers` — lens edges traversable without lens prefix filter |
 | Inv 57 (lens is enrichment, not new axis) | adapter/enrichments: LensEnrichment | `lens::tests::implements_enrichment_trait` — LensEnrichment compiles as `dyn Enrichment` |
 | Inv 58 (cursors preserve library rule) | storage: SqliteStore | `sqlite::tests::events_persist_and_query_without_runtime` — write events, stop, reload, query cursor |
-| Inv 59 (provenance filter composable) | query: all query structs | `traverse::tests::filter_by_contributor`, `find::tests::filter_by_corroboration`, `step::tests::filter_composes_with_step_relationship` |
+| Inv 59 (provenance filter composable) | query: all query structs | `traverse::tests::filter_by_contributor`, `find::tests::filter_by_corroboration`, `step::tests::filter_composes_with_step_relationship`, `api::tests::evidence_trail_accepts_filter` (closes the last hole after WP-G.1) |
+| Inv 60 (spec validation upfront) | api: `PlexusApi::load_spec` | `api::tests::load_spec_invalid_yaml_leaves_no_mutations` — malformed YAML → error, no specs row, no adapter registered, no edges added |
+| Inv 61 (consumer owns spec) | api: static verification | Compile-time: no `update_spec`/`generate_spec`/`derive_spec` methods on PlexusApi — verified by inspection |
+| Inv 62 (effect a: durable vocabulary) | api: `PlexusApi::unload_spec` | `api::tests::unload_spec_preserves_lens_edges` — load, ingest, unload, assert `lens:*` edges still present and queryable |
+| Inv 62 (effect b: durable enrichment registration) | adapter/pipeline: `PipelineBuilder::with_persisted_specs` | `acceptance::persisted_lens_fires_after_library_reconstruction` — load spec, close, reopen store, reconstruct pipeline via builder, ingest via different adapter, assert lens fires |
 
 ### Test Layers
 
@@ -697,3 +760,4 @@ See [`./docs/roadmap.md`](./docs/roadmap.md) for the current roadmap — work pa
 | 2 | 2026-03-16 | Replaced ASCII dependency graph with mermaid diagram. Fixed missing edges: adapter/adapters → sink, traits, types; adapter/enrichments → enrichment, types, graph. Shows registration-time wiring as dashed edges. | ASCII graph was incomplete and showed graph node duplicated | Module decomposition | Current |
 | 3 | 2026-03-18 | Added structural module system to adapter/adapters: StructuralModule trait, StructuralOutput/ModuleEmission types, MarkdownStructureModule, vocabulary handoff to SemanticInput. Updated adapter taxonomy, extraction pipeline flow, responsibility matrix, integration contracts, test architecture, invariant enforcement. PipelineBuilder gains `with_structural_module()`. New dependency: `pulldown-cmark`. | Track A RDD cycle: ADR-030 (structural module trait), ADR-031 (structural output + handoff), ADR-032 (markdown module) | ADR-030, ADR-031, ADR-032; Invariants 51–55 | Current |
 | 4 | 2026-03-26 | Query surface cycle: (1) LensEnrichment added to adapter/enrichments with namespace convention; LensSpec/TranslationRule/NodePredicate added to adapter/adapters. (2) QueryFilter and RankBy added to query; optional filter field on all query structs. (3) Event cursor types (PersistedEvent, ChangeSet, CursorFilter) added to query; events table and persist_event/query_events_since added to storage; emit_inner gains event persistence; PlexusApi gains changes_since(). New dependency: storage → query (cursor types). New integration contracts: sink→storage (events), api→query (cursor), adapters→enrichments (lens). | Query surface RDD cycle: ADR-033 (lens), ADR-034 (query filters), ADR-035 (event cursors) | ADR-033, ADR-034, ADR-035; Invariants 56–59; Essays 001, 002 | Current |
+| 5 | 2026-04-07 | MCP consumer interaction surface cycle. (1) `api` gains `load_spec`/`unload_spec` methods and `SpecLoadResult`/`SpecLoadError`/`SpecUnloadError` types — transport-independent, fail-fast, all-or-nothing. (2) `storage` gains `specs` table (composite PK on `(context_id, adapter_id)`) and `persist_spec`/`query_specs_for_context`/`delete_spec` methods on `GraphStore` trait (default no-ops for non-SQLite backends). (3) `adapter/pipeline` gains interior mutability on the adapter vector and enrichment registry for runtime registration; `register_specs_from_dir` bug fix (extracts enrichments + lens, not just adapter); `PipelineBuilder::with_persisted_specs(Vec<(ContextId, String)>)` rehydrates persisted lens enrichments at construction time (enrichment-only, skips effect a and adapter wiring). (4) `mcp` gains 7 new `#[tool]` handlers (`load_spec`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`), bringing tool count from 9 to 16; all use flat optional parameter fields. (5) `api` + `query` + `mcp` — `evidence_trail` gains optional `QueryFilter` parameter piped through `StepQuery`, closing the last Invariant 59 gap. (6) `query` gains `RankBy::NormalizedWeight(Box<dyn NormalizationStrategy>)` variant wired to existing normalization strategies, closing ADR-034 conformance debt. (7) Architectural drivers expanded for Invariants 60–62. (8) Fitness criteria added: spec validation gates graph work, consumer ownership of spec, durable vocabulary, durable enrichment registration, fail-fast atomicity, interior mutability scope, MCP tool count = 16. (9) 7 new boundary integration tests and 4 new invariant enforcement tests. **No new module-level dependency edges** — all new work flows through existing seams (`api → graph → storage`, `api → adapter/pipeline`, `mcp → api`, host orchestrates rehydration at builder time). The specs table is the context's lens registry; any library instance against that context transiently runs those lenses on behalf of the context, not on behalf of the originally-loading consumer. | MCP consumer interaction surface RDD cycle: DISCOVER (update), MODEL (amendment), DECIDE (ADR-036, ADR-037), audits complete. Triggered by Reflection 003 surfacing the single-consumer assumption in the query surface cycle and product discovery (2026-04-02) formalizing multi-consumer interaction model with fail-fast validation as the e2e acceptance criterion. | ADR-036 (MCP query surface), ADR-037 (consumer spec loading); Invariants 60–62; Reflection 003 (multi-consumer lens interaction); product-discovery.md (2026-04-02); domain-model.md amendment 7 (2026-04-02) | Current |
