@@ -1,6 +1,6 @@
 //! SQLite storage backend for Plexus
 
-use super::traits::{GraphStore, OpenStore, StorageError, StorageResult};
+use super::traits::{GraphStore, OpenStore, PersistedSpec, StorageError, StorageResult};
 use crate::graph::{Context, ContextId, Edge, Node, NodeId};
 use crate::query::{CursorFilter, PersistedEvent};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -101,6 +101,7 @@ impl SqliteStore {
         Self::migrate_add_dimensions(conn)?;
         Self::migrate_add_contributions(conn)?;
         Self::migrate_add_events_table(conn)?;
+        Self::migrate_add_specs_table(conn)?;
 
         // Phase 3: Create dimension indexes (now that columns exist)
         Self::create_dimension_indexes(conn)?;
@@ -294,6 +295,33 @@ impl SqliteStore {
 
                 CREATE INDEX idx_events_context_sequence
                     ON events (context_id, sequence);
+                "#,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Migration: add `specs` table for consumer spec persistence (ADR-037 §2).
+    fn migrate_add_specs_table(conn: &Connection) -> StorageResult<()> {
+        let has_specs: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='specs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_specs {
+            conn.execute_batch(
+                r#"
+                CREATE TABLE specs (
+                    context_id TEXT NOT NULL,
+                    adapter_id TEXT NOT NULL,
+                    spec_yaml TEXT NOT NULL,
+                    loaded_at TEXT NOT NULL,
+                    PRIMARY KEY (context_id, adapter_id)
+                );
                 "#,
             )?;
         }
@@ -776,6 +804,42 @@ impl GraphStore for SqliteStore {
             |row| row.get(0),
         ).optional()?.flatten();
         Ok(seq.unwrap_or(0) as u64)
+    }
+
+    fn persist_spec(&self, spec: &PersistedSpec) -> StorageResult<()> {
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO specs (context_id, adapter_id, spec_yaml, loaded_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![spec.context_id, spec.adapter_id, spec.spec_yaml, spec.loaded_at],
+        )?;
+        Ok(())
+    }
+
+    fn query_specs_for_context(&self, context_id: &str) -> StorageResult<Vec<PersistedSpec>> {
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
+        let mut stmt = conn.prepare(
+            "SELECT context_id, adapter_id, spec_yaml, loaded_at
+             FROM specs WHERE context_id = ?1 ORDER BY loaded_at ASC"
+        )?;
+        let specs = stmt.query_map(params![context_id], |row| {
+            Ok(PersistedSpec {
+                context_id: row.get(0)?,
+                adapter_id: row.get(1)?,
+                spec_yaml: row.get(2)?,
+                loaded_at: row.get(3)?,
+            })
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(specs)
+    }
+
+    fn delete_spec(&self, context_id: &str, adapter_id: &str) -> StorageResult<bool> {
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
+        let rows = conn.execute(
+            "DELETE FROM specs WHERE context_id = ?1 AND adapter_id = ?2",
+            params![context_id, adapter_id],
+        )?;
+        Ok(rows > 0)
     }
 }
 
@@ -1373,6 +1437,131 @@ mod tests {
             assert_eq!(events.len(), 2);
             assert_eq!(events[0].event_type, "NodesAdded");
             assert_eq!(events[1].event_type, "EdgesAdded");
+        }
+    }
+
+    // === Spec persistence tests (ADR-037 §2) ===
+
+    #[test]
+    fn persist_spec_and_query_back() {
+        let store = create_test_store();
+        let spec = PersistedSpec {
+            context_id: "ctx-1".into(),
+            adapter_id: "trellis".into(),
+            spec_yaml: "adapter_id: trellis\ninput_kind: content".into(),
+            loaded_at: "2026-04-12T00:00:00Z".into(),
+        };
+        store.persist_spec(&spec).unwrap();
+
+        let specs = store.query_specs_for_context("ctx-1").unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].adapter_id, "trellis");
+        assert_eq!(specs[0].spec_yaml, "adapter_id: trellis\ninput_kind: content");
+    }
+
+    #[test]
+    fn persist_spec_upserts_on_duplicate_key() {
+        let store = create_test_store();
+        let spec1 = PersistedSpec {
+            context_id: "ctx-1".into(),
+            adapter_id: "trellis".into(),
+            spec_yaml: "version: 1".into(),
+            loaded_at: "2026-04-12T00:00:00Z".into(),
+        };
+        store.persist_spec(&spec1).unwrap();
+
+        let spec2 = PersistedSpec {
+            context_id: "ctx-1".into(),
+            adapter_id: "trellis".into(),
+            spec_yaml: "version: 2".into(),
+            loaded_at: "2026-04-12T01:00:00Z".into(),
+        };
+        store.persist_spec(&spec2).unwrap();
+
+        let specs = store.query_specs_for_context("ctx-1").unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].spec_yaml, "version: 2");
+    }
+
+    #[test]
+    fn query_specs_returns_empty_for_unknown_context() {
+        let store = create_test_store();
+        let specs = store.query_specs_for_context("no-such-context").unwrap();
+        assert!(specs.is_empty());
+    }
+
+    #[test]
+    fn query_specs_scoped_to_context() {
+        let store = create_test_store();
+        store.persist_spec(&PersistedSpec {
+            context_id: "ctx-a".into(),
+            adapter_id: "trellis".into(),
+            spec_yaml: "a".into(),
+            loaded_at: "2026-04-12T00:00:00Z".into(),
+        }).unwrap();
+        store.persist_spec(&PersistedSpec {
+            context_id: "ctx-b".into(),
+            adapter_id: "carrel".into(),
+            spec_yaml: "b".into(),
+            loaded_at: "2026-04-12T00:00:00Z".into(),
+        }).unwrap();
+
+        let a_specs = store.query_specs_for_context("ctx-a").unwrap();
+        assert_eq!(a_specs.len(), 1);
+        assert_eq!(a_specs[0].adapter_id, "trellis");
+
+        let b_specs = store.query_specs_for_context("ctx-b").unwrap();
+        assert_eq!(b_specs.len(), 1);
+        assert_eq!(b_specs[0].adapter_id, "carrel");
+    }
+
+    #[test]
+    fn delete_spec_removes_row() {
+        let store = create_test_store();
+        store.persist_spec(&PersistedSpec {
+            context_id: "ctx-1".into(),
+            adapter_id: "trellis".into(),
+            spec_yaml: "data".into(),
+            loaded_at: "2026-04-12T00:00:00Z".into(),
+        }).unwrap();
+
+        let deleted = store.delete_spec("ctx-1", "trellis").unwrap();
+        assert!(deleted);
+
+        let specs = store.query_specs_for_context("ctx-1").unwrap();
+        assert!(specs.is_empty());
+    }
+
+    #[test]
+    fn delete_spec_returns_false_for_nonexistent() {
+        let store = create_test_store();
+        let deleted = store.delete_spec("ctx-1", "no-such-adapter").unwrap();
+        assert!(!deleted);
+    }
+
+    #[test]
+    fn specs_survive_persistence_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("specs-roundtrip.db");
+
+        // Write specs
+        {
+            let store = SqliteStore::open(&db_path).unwrap();
+            store.persist_spec(&PersistedSpec {
+                context_id: "ctx-1".into(),
+                adapter_id: "trellis".into(),
+                spec_yaml: "adapter_id: trellis".into(),
+                loaded_at: "2026-04-12T00:00:00Z".into(),
+            }).unwrap();
+        }
+
+        // Reopen and verify
+        {
+            let store = SqliteStore::open(&db_path).unwrap();
+            let specs = store.query_specs_for_context("ctx-1").unwrap();
+            assert_eq!(specs.len(), 1);
+            assert_eq!(specs[0].adapter_id, "trellis");
+            assert_eq!(specs[0].spec_yaml, "adapter_id: trellis");
         }
     }
 }

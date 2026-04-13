@@ -15,6 +15,7 @@ use crate::adapter::enrichments::cooccurrence::CoOccurrenceEnrichment;
 use crate::adapter::enrichments::discovery_gap::DiscoveryGapEnrichment;
 use crate::adapter::enrichments::temporal_proximity::TemporalProximityEnrichment;
 use crate::graph::PlexusEngine;
+use crate::storage::PersistedSpec;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -127,6 +128,47 @@ impl PipelineBuilder {
                 tracing::info!(count = n, "adapter-specs: loaded spec(s)");
             }
         }
+        self
+    }
+
+    /// Rehydrate persisted lens enrichments at construction time (ADR-037 §2).
+    ///
+    /// For each persisted spec: parse the YAML, extract the lens enrichment
+    /// (if present), and register it on the pipeline. The original adapter is
+    /// NOT registered (the loading consumer may not be present), and the lens
+    /// is NOT re-run over existing content (vocabulary edges already persist
+    /// from the original `load_spec` call — Invariant 62 effect a).
+    ///
+    /// Failures to parse a single spec are logged and non-fatal — pipeline
+    /// construction continues with remaining specs.
+    pub fn with_persisted_specs(mut self, specs: Vec<PersistedSpec>) -> Self {
+        use crate::adapter::declarative::DeclarativeAdapter;
+
+        for spec in &specs {
+            let adapter = match DeclarativeAdapter::from_yaml(&spec.spec_yaml) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!(
+                        context_id = %spec.context_id,
+                        adapter_id = %spec.adapter_id,
+                        error = %e,
+                        "persisted spec: failed to parse, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            if let Some(lens) = adapter.lens() {
+                tracing::info!(
+                    context_id = %spec.context_id,
+                    adapter_id = %spec.adapter_id,
+                    lens_id = %lens.id(),
+                    "persisted spec: rehydrated lens enrichment"
+                );
+                self.enrichments.push(lens);
+            }
+        }
+
         self
     }
 

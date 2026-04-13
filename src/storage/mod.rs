@@ -9,6 +9,6 @@ mod sqlite_vec;
 mod traits;
 
 pub use sqlite::SqliteStore;
-pub use traits::{GraphStore, OpenStore, StorageError, StorageResult};
+pub use traits::{GraphStore, OpenStore, PersistedSpec, StorageError, StorageResult};
 #[cfg(feature = "embeddings")]
 pub use sqlite_vec::{SqliteVecStore, DEFAULT_EMBEDDING_DIMENSIONS};

@@ -104,6 +104,44 @@ pub trait GraphStore: Send + Sync {
         let _ = context_id;
         Ok(0)
     }
+
+    // === Spec Persistence Operations (ADR-037) ===
+
+    /// Persist a loaded spec to the specs table.
+    ///
+    /// Upserts by composite key `(context_id, adapter_id)`. Default no-op.
+    fn persist_spec(&self, spec: &PersistedSpec) -> StorageResult<()> {
+        let _ = spec;
+        Ok(())
+    }
+
+    /// Query all persisted specs for a context.
+    ///
+    /// Returns specs ordered by `loaded_at` ascending. Default no-op returns empty vec.
+    fn query_specs_for_context(&self, context_id: &str) -> StorageResult<Vec<PersistedSpec>> {
+        let _ = context_id;
+        Ok(Vec::new())
+    }
+
+    /// Delete a persisted spec by composite key `(context_id, adapter_id)`.
+    ///
+    /// Returns true if a row was deleted. Default no-op returns false.
+    fn delete_spec(&self, context_id: &str, adapter_id: &str) -> StorageResult<bool> {
+        let _ = (context_id, adapter_id);
+        Ok(false)
+    }
+}
+
+/// A persisted consumer spec row from the `specs` table (ADR-037 §2).
+///
+/// Struct rather than tuple to allow non-breaking schema evolution —
+/// additional fields can be added without breaking callers.
+#[derive(Debug, Clone)]
+pub struct PersistedSpec {
+    pub context_id: String,
+    pub adapter_id: String,
+    pub spec_yaml: String,
+    pub loaded_at: String,
 }
 
 /// Extension trait for opening stores from paths

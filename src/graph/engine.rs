@@ -282,6 +282,32 @@ impl PlexusEngine {
         }
     }
 
+    // === Spec Persistence (ADR-037) ===
+
+    /// Persist a loaded spec to the specs table.
+    pub fn persist_spec(&self, spec: &crate::storage::PersistedSpec) -> PlexusResult<()> {
+        let Some(ref store) = self.store else {
+            return Ok(());
+        };
+        store.persist_spec(spec).map_err(PlexusError::from)
+    }
+
+    /// Query all persisted specs for a context.
+    pub fn query_specs_for_context(&self, context_id: &str) -> PlexusResult<Vec<crate::storage::PersistedSpec>> {
+        let Some(ref store) = self.store else {
+            return Ok(Vec::new());
+        };
+        store.query_specs_for_context(context_id).map_err(PlexusError::from)
+    }
+
+    /// Delete a persisted spec.
+    pub fn delete_spec(&self, context_id: &str, adapter_id: &str) -> PlexusResult<bool> {
+        let Some(ref store) = self.store else {
+            return Ok(false);
+        };
+        store.delete_spec(context_id, adapter_id).map_err(PlexusError::from)
+    }
+
     /// Retract all contributions from an adapter/enrichment (ADR-027).
     ///
     /// Removes the adapter's contribution slot from every edge in the context,

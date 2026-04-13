@@ -4287,7 +4287,7 @@ emit:
 
         // Verify input_kind is registered
         assert!(
-            pipeline.registered_input_kinds().contains(&"sketchbin-asset"),
+            pipeline.registered_input_kinds().iter().any(|k| k == "sketchbin-asset"),
             "spec's input_kind should be registered in pipeline"
         );
 
@@ -4351,7 +4351,7 @@ emit:
 
         assert_eq!(count, 1, "should load 1 spec from directory");
         assert!(
-            pipeline.registered_input_kinds().contains(&"test-domain"),
+            pipeline.registered_input_kinds().iter().any(|k| k == "test-domain"),
             "loaded spec's input_kind should be in pipeline"
         );
 

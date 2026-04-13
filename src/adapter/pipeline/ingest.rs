@@ -16,17 +16,23 @@ use crate::adapter::traits::{Adapter, AdapterInput};
 use crate::adapter::types::OutboundEvent;
 use crate::graph::{ContextId, PlexusEngine};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// The unified ingest pipeline.
 ///
 /// All graph writes go through this pipeline. Consumers call `ingest()`
 /// with domain data; the pipeline routes to adapters, runs enrichments,
 /// and returns domain-meaningful outbound events.
+///
+/// Interior mutability (ADR-037 §5): the adapter vector and enrichment
+/// registry are behind `RwLock` to support runtime registration via
+/// `load_spec`. Core routing logic (`ingest`, `ingest_with_adapter`)
+/// takes read locks briefly to snapshot references, then releases before
+/// doing any work — no lock is held across an `ingest()` call.
 pub struct IngestPipeline {
     engine: Arc<PlexusEngine>,
-    adapters: Vec<Arc<dyn Adapter>>,
-    enrichments: Arc<EnrichmentRegistry>,
+    adapters: RwLock<Vec<Arc<dyn Adapter>>>,
+    enrichments: RwLock<Arc<EnrichmentRegistry>>,
 }
 
 impl IngestPipeline {
@@ -34,19 +40,19 @@ impl IngestPipeline {
     pub fn new(engine: Arc<PlexusEngine>) -> Self {
         Self {
             engine,
-            adapters: Vec::new(),
-            enrichments: Arc::new(EnrichmentRegistry::empty()),
+            adapters: RwLock::new(Vec::new()),
+            enrichments: RwLock::new(Arc::new(EnrichmentRegistry::empty())),
         }
     }
 
     /// Register an adapter.
-    pub fn register_adapter(&mut self, adapter: Arc<dyn Adapter>) {
-        self.adapters.push(adapter);
+    pub fn register_adapter(&self, adapter: Arc<dyn Adapter>) {
+        self.adapters.write().expect("adapters lock poisoned").push(adapter);
     }
 
-    /// Set the enrichment registry.
-    pub fn with_enrichments(mut self, registry: Arc<EnrichmentRegistry>) -> Self {
-        self.enrichments = registry;
+    /// Set the enrichment registry (builder-time bulk replacement).
+    pub fn with_enrichments(self, registry: Arc<EnrichmentRegistry>) -> Self {
+        *self.enrichments.write().expect("enrichments lock poisoned") = registry;
         self
     }
 
@@ -54,24 +60,26 @@ impl IngestPipeline {
     ///
     /// Enrichments are deduplicated by `id()` across all integrations.
     pub fn register_integration(
-        &mut self,
+        &self,
         adapter: Arc<dyn Adapter>,
         enrichments: Vec<Arc<dyn Enrichment>>,
     ) {
-        self.adapters.push(adapter);
-        let mut all: Vec<Arc<dyn Enrichment>> = self.enrichments.enrichments().to_vec();
+        self.adapters.write().expect("adapters lock poisoned").push(adapter);
+        let mut enrichment_lock = self.enrichments.write().expect("enrichments lock poisoned");
+        let mut all: Vec<Arc<dyn Enrichment>> = enrichment_lock.enrichments().to_vec();
         all.extend(enrichments);
-        self.enrichments = Arc::new(EnrichmentRegistry::new(all));
+        *enrichment_lock = Arc::new(EnrichmentRegistry::new(all));
     }
 
     /// Get the enrichment registry (for running enrichment loop outside ingest).
-    pub fn enrichment_registry(&self) -> &Arc<EnrichmentRegistry> {
-        &self.enrichments
+    pub fn enrichment_registry(&self) -> Arc<EnrichmentRegistry> {
+        self.enrichments.read().expect("enrichments lock poisoned").clone()
     }
 
     /// List the input kinds handled by registered adapters.
-    pub fn registered_input_kinds(&self) -> Vec<&str> {
-        self.adapters.iter().map(|a| a.input_kind()).collect()
+    pub fn registered_input_kinds(&self) -> Vec<String> {
+        self.adapters.read().expect("adapters lock poisoned")
+            .iter().map(|a| a.input_kind().to_string()).collect()
     }
 
     /// Load adapter specs from a directory and register each (ADR-028).
@@ -81,7 +89,7 @@ impl IngestPipeline {
     /// the resulting adapter. Returns the count of successfully loaded specs.
     /// Invalid specs are logged to stderr and skipped.
     pub fn register_specs_from_dir(
-        &mut self,
+        &self,
         dir: &Path,
         llm_client: Option<Arc<dyn crate::llm_orc::LlmOrcClient>>,
     ) -> usize {
@@ -180,12 +188,13 @@ impl IngestPipeline {
         adapter.process(&input, &sink).await?;
         let mut all_events: Vec<GraphEvent> = sink.drain_events();
 
-        // Step 2: Enrichment loop
-        if !self.enrichments.enrichments().is_empty() && !all_events.is_empty() {
+        // Step 2: Enrichment loop — snapshot the registry, release lock before work
+        let enrichments = self.enrichment_registry();
+        if !enrichments.enrichments().is_empty() && !all_events.is_empty() {
             let enrichment_result = crate::adapter::enrichment::run_enrichment_loop(
                 &self.engine,
                 &ctx_id,
-                &self.enrichments,
+                &enrichments,
                 &all_events,
             )?;
             tracing::debug!(
@@ -229,12 +238,14 @@ impl IngestPipeline {
 
         let input = AdapterInput::from_boxed(input_kind, data, context_id);
 
-        // Step 1: Find matching adapters
-        let matching: Vec<&Arc<dyn Adapter>> = self
-            .adapters
-            .iter()
-            .filter(|a| a.input_kind() == input_kind)
-            .collect();
+        // Step 1: Find matching adapters — snapshot refs, release read lock
+        let matching: Vec<Arc<dyn Adapter>> = {
+            let adapters = self.adapters.read().expect("adapters lock poisoned");
+            adapters.iter()
+                .filter(|a| a.input_kind() == input_kind)
+                .cloned()
+                .collect()
+        };
 
         tracing::debug!(
             input_kind,
@@ -249,7 +260,7 @@ impl IngestPipeline {
             )));
         }
 
-        // Step 2: Process each adapter, collecting events
+        // Step 2: Process each adapter, collecting events (no lock held)
         let mut all_events: Vec<GraphEvent> = Vec::new();
         for adapter in &matching {
             let sink = EngineSink::for_engine(self.engine.clone(), ctx_id.clone())
@@ -263,12 +274,13 @@ impl IngestPipeline {
             all_events.extend(sink.drain_events());
         }
 
-        // Step 3: Enrichment loop runs once with combined events
-        if !self.enrichments.enrichments().is_empty() && !all_events.is_empty() {
+        // Step 3: Enrichment loop — snapshot registry, release lock before work
+        let enrichments = self.enrichment_registry();
+        if !enrichments.enrichments().is_empty() && !all_events.is_empty() {
             let enrichment_result = crate::adapter::enrichment::run_enrichment_loop(
                 &self.engine,
                 &ctx_id,
-                &self.enrichments,
+                &enrichments,
                 &all_events,
             )?;
             tracing::debug!(
@@ -279,7 +291,7 @@ impl IngestPipeline {
             all_events.extend(enrichment_result.result.events);
         }
 
-        // Step 4: Transform events through each matched adapter
+        // Step 4: Transform events through each matched adapter (no lock held)
         let snapshot = self
             .engine
             .get_context(&ctx_id)

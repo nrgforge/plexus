@@ -394,7 +394,7 @@ impl PlexusApi {
             let _ = run_enrichment_loop(
                 &self.engine,
                 &ctx_id,
-                registry,
+                &registry,
                 &events,
             );
         }
