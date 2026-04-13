@@ -71,6 +71,30 @@ impl IngestPipeline {
         *enrichment_lock = Arc::new(EnrichmentRegistry::new(all));
     }
 
+    /// Deregister an adapter by ID (ADR-037 §6 — unload_spec).
+    ///
+    /// Removes the first adapter with the matching `id()`. If no adapter
+    /// matches, this is a no-op.
+    pub fn deregister_adapter(&self, adapter_id: &str) {
+        let mut adapters = self.adapters.write().expect("adapters lock poisoned");
+        if let Some(pos) = adapters.iter().position(|a| a.id() == adapter_id) {
+            adapters.remove(pos);
+        }
+    }
+
+    /// Deregister an enrichment by ID (ADR-037 §6 — unload_spec).
+    ///
+    /// Rebuilds the enrichment registry without the matching enrichment.
+    /// If no enrichment matches, this is a no-op.
+    pub fn deregister_enrichment(&self, enrichment_id: &str) {
+        let mut enrichment_lock = self.enrichments.write().expect("enrichments lock poisoned");
+        let filtered: Vec<Arc<dyn Enrichment>> = enrichment_lock.enrichments().iter()
+            .filter(|e| e.id() != enrichment_id)
+            .cloned()
+            .collect();
+        *enrichment_lock = Arc::new(EnrichmentRegistry::new(filtered));
+    }
+
     /// Get the enrichment registry (for running enrichment loop outside ingest).
     pub fn enrichment_registry(&self) -> Arc<EnrichmentRegistry> {
         self.enrichments.read().expect("enrichments lock poisoned").clone()

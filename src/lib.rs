@@ -37,7 +37,7 @@ pub use graph::{
 };
 pub use query::{Direction, EvidenceTrailResult, FindQuery, PathQuery, PathResult, QueryFilter, QueryResult, RankBy, StepQuery, StepResult, TraversalResult, TraverseQuery, evidence_trail};
 pub use provenance::{ChainStatus, ChainView, MarkView, ProvenanceApi};
-pub use api::PlexusApi;
+pub use api::{PlexusApi, SpecLoadError, SpecLoadResult, SpecUnloadError};
 pub use storage::{GraphStore, OpenStore, PersistedSpec, SqliteStore, StorageError, StorageResult};
 
 /// Library version
