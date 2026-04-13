@@ -30,3 +30,5 @@ mod cursor;
 mod lens;
 #[path = "acceptance/filter.rs"]
 mod filter;
+#[path = "acceptance/spec.rs"]
+mod spec;

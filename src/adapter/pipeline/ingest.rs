@@ -124,12 +124,25 @@ impl IngestPipeline {
                 adapter
             };
 
+            // Extract enrichments and lens before wrapping the adapter in Arc
+            let mut spec_enrichments = match adapter.enrichments() {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "adapter-specs: failed to extract enrichments");
+                    continue;
+                }
+            };
+            if let Some(lens) = adapter.lens() {
+                spec_enrichments.push(lens);
+            }
+
             tracing::info!(
                 path = %path.display(),
                 input_kind = %adapter.input_kind(),
+                enrichment_count = spec_enrichments.len(),
                 "adapter-specs: registered spec"
             );
-            self.register_adapter(Arc::new(adapter));
+            self.register_integration(Arc::new(adapter), spec_enrichments);
             count += 1;
         }
 
