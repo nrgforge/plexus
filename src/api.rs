@@ -402,8 +402,11 @@ impl PlexusApi {
         self.pipeline.register_integration(Arc::new(adapter), enrichments);
 
         // Step 3: Persist to specs table (effect c)
+        // Key by stable UUID, not user-facing name — rename-safe persistence.
+        // Rehydration (PipelineBuilder::with_persisted_specs) iterates contexts
+        // by UUID, so the specs table must be keyed by UUID for lookup to work.
         let persisted = PersistedSpec {
-            context_id: context_id.to_string(),
+            context_id: ctx_id.as_str().to_string(),
             adapter_id: adapter_id.clone(),
             spec_yaml: spec_yaml.to_string(),
             loaded_at: chrono::Utc::now().to_rfc3339(),
@@ -474,15 +477,16 @@ impl PlexusApi {
         context_id: &str,
         adapter_id: &str,
     ) -> Result<(), SpecUnloadError> {
-        self.resolve(context_id)
+        let ctx_id = self.resolve(context_id)
             .map_err(|_| SpecUnloadError::ContextNotFound(context_id.to_string()))?;
+        let ctx_id_str = ctx_id.as_str();
 
         // Deregister adapter and lens from pipeline
         self.pipeline.deregister_adapter(adapter_id);
         // Lens ID follows the convention "lens:{consumer}" where consumer
         // is derived from the adapter spec. We look it up from the persisted
-        // spec to get the correct lens ID.
-        if let Ok(specs) = self.engine.query_specs_for_context(context_id) {
+        // spec to get the correct lens ID. Specs table is keyed by UUID.
+        if let Ok(specs) = self.engine.query_specs_for_context(ctx_id_str) {
             if let Some(spec) = specs.iter().find(|s| s.adapter_id == adapter_id) {
                 if let Ok(adapter) = DeclarativeAdapter::from_yaml(&spec.spec_yaml) {
                     if let Some(lens) = adapter.lens() {
@@ -498,8 +502,8 @@ impl PlexusApi {
             }
         }
 
-        // Delete from specs table
-        self.engine.delete_spec(context_id, adapter_id)
+        // Delete from specs table (keyed by UUID)
+        self.engine.delete_spec(ctx_id_str, adapter_id)
             .map_err(|e| SpecUnloadError::Persistence(e.to_string()))?;
 
         Ok(())

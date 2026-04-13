@@ -290,6 +290,7 @@ async fn load_spec_valid_spec_succeeds() {
     let engine = Arc::new(PlexusEngine::with_store(store.clone()));
 
     let ctx = Context::new("test");
+    let ctx_id = ctx.id.clone();
     engine.upsert_context(ctx).expect("upsert");
 
     let pipeline = Arc::new(
@@ -330,10 +331,11 @@ emit:
         kinds
     );
 
-    // Spec should be persisted
-    let specs = store.query_specs_for_context("test").unwrap();
+    // Spec should be persisted keyed by UUID (rename-safe, ADR-037 §2)
+    let specs = store.query_specs_for_context(ctx_id.as_str()).unwrap();
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0].adapter_id, "trellis-content");
+    assert_eq!(specs[0].context_id, ctx_id.as_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -620,3 +622,4 @@ emit:
         "find_nodes with lens:carrel prefix should return results"
     );
 }
+
