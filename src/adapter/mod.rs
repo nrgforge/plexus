@@ -29,7 +29,7 @@ pub use sink::{EngineSink, FrameworkContext, ProvenanceEntry};
 pub(crate) use enrichment::run_enrichment_loop;
 pub use enrichment::{Enrichment, EnrichmentRegistry};
 pub use crate::graph::events::GraphEvent;
-pub use pipeline::{classify_input, ClassifyError, IngestPipeline, PipelineBuilder};
+pub use pipeline::{classify_input, gather_persisted_specs, ClassifyError, IngestPipeline, PipelineBuilder};
 pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 pub use types::{

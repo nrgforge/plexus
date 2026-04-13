@@ -7,6 +7,6 @@ mod builder;
 mod ingest;
 mod router;
 
-pub use builder::PipelineBuilder;
+pub use builder::{gather_persisted_specs, PipelineBuilder};
 pub use ingest::IngestPipeline;
 pub use router::{classify_input, ClassifyError};

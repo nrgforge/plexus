@@ -623,3 +623,121 @@ emit:
     );
 }
 
+// ---------------------------------------------------------------------------
+// Feature: Startup Rehydration via Host + Builder (ADR-037 §2, WP-D)
+// ---------------------------------------------------------------------------
+
+/// Scenario: persisted specs re-register on startup, and lens fires after restart.
+///
+/// This is the canonical test for Invariant 62 effect (b): a persisted spec's
+/// lens enrichment transiently runs on behalf of the context when ANY library
+/// instance is constructed against that context, regardless of which consumer
+/// originally loaded the spec.
+///
+/// Process:
+///   1. Consumer 1 opens an on-disk SQLite store, constructs a pipeline,
+///      and loads a spec with a lens. Vocabulary edges are written.
+///   2. Consumer 1 drops the api, pipeline, and engine.
+///   3. Consumer 2 opens the same SQLite store (fresh process), constructs a
+///      default pipeline — which gathers persisted specs and rehydrates the
+///      lens enrichment at build time.
+///   4. Consumer 2 ingests new content via the default content adapter. The
+///      rehydrated lens fires during the enrichment loop, producing new
+///      vocabulary edges for the new content.
+#[tokio::test]
+async fn persisted_spec_rehydrates_across_restart() {
+    use plexus::adapter::{FragmentInput, PipelineBuilder};
+    use plexus::storage::{OpenStore, SqliteStore};
+    use plexus::{Context, PlexusApi, PlexusEngine};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("plexus.db");
+
+    // ── Consumer 1 lifetime: load spec, then drop everything ─────────────
+    {
+        let store = Arc::new(SqliteStore::open(&db_path).expect("sqlite open"));
+        let engine = Arc::new(PlexusEngine::with_store(store));
+
+        engine.upsert_context(Context::new("shared")).expect("upsert");
+
+        let pipeline = Arc::new(
+            PipelineBuilder::new(engine.clone())
+                .with_default_adapters()
+                .with_default_enrichments()
+                .build(),
+        );
+        let api = PlexusApi::new(engine.clone(), pipeline);
+
+        let trellis_spec = r#"
+adapter_id: trellis-content
+input_kind: trellis.fragment
+lens:
+  consumer: trellis
+  translations:
+    - from: [may_be_related]
+      to: thematic_connection
+emit:
+  - create_node:
+      id: "concept:{input.name}"
+      type: concept
+      dimension: semantic
+"#;
+        api.load_spec("shared", trellis_spec)
+            .await
+            .expect("load_spec should succeed on consumer 1");
+    }
+
+    // ── Consumer 2 lifetime: reopen store, rehydrate via default_pipeline,
+    //    ingest via a different adapter, assert lens fires ────────────────
+    let store = Arc::new(SqliteStore::open(&db_path).expect("sqlite reopen"));
+    let engine = Arc::new(PlexusEngine::with_store(store));
+    engine.load_all().expect("load_all");
+
+    // Host-level pipeline construction: default_pipeline gathers persisted
+    // specs and rehydrates their lens enrichments. This is what host code
+    // (run_mcp_server, CLI commands) is expected to invoke.
+    let pipeline = Arc::new(PipelineBuilder::default_pipeline(engine.clone(), None));
+    let api = PlexusApi::new(engine.clone(), pipeline);
+
+    // Resolve the stable UUID for ingest (api.ingest passes through to the
+    // pipeline which expects a ContextId, not a name — unlike load_spec
+    // which resolves by name).
+    let ctx_id = engine
+        .resolve_by_name("shared")
+        .expect("shared context should resolve post-restart");
+    let ctx_id_str = ctx_id.as_str().to_string();
+
+    // Ingest via the default content adapter (NOT the trellis adapter —
+    // consumer 2 is a different consumer that doesn't know about trellis).
+    // co_occurrence produces may_be_related; rehydrated trellis lens should
+    // translate those to lens:trellis:thematic_connection.
+    let input = FragmentInput::new(
+        "Graph structures and knowledge systems reinforce each other",
+        vec!["graphs".into(), "knowledge".into()],
+    );
+    api.ingest(&ctx_id_str, "content", Box::new(input))
+        .await
+        .expect("ingest on consumer 2");
+
+    // Assert: the persisted trellis lens fired on consumer 2's new content
+    let ctx_after = engine
+        .get_context(&ctx_id)
+        .expect("context should be loaded");
+    let trellis_edges: Vec<_> = ctx_after
+        .edges
+        .iter()
+        .filter(|e| e.relationship.starts_with("lens:trellis:thematic_connection"))
+        .collect();
+    assert!(
+        !trellis_edges.is_empty(),
+        "persisted trellis lens should have fired on consumer 2's new content — \
+         found edges: {:?}",
+        ctx_after
+            .edges
+            .iter()
+            .map(|e| e.relationship.as_str())
+            .collect::<Vec<_>>()
+    );
+}

@@ -710,7 +710,7 @@ flowchart TD
 | query (filter) → graph | `traverse::tests::traverse_with_query_filter` | Real TraverseQuery with QueryFilter filters edges by contributor_ids/prefix/corroboration |
 | api → adapter/pipeline (runtime registration, ADR-037) | `api::tests::load_spec_registers_adapter_enrichments_and_lens_atomically` | Real PlexusApi loads spec YAML; real IngestPipeline receives real adapter + enrichments + lens via interior-mutable registration; adapter available for ingest routing after the call |
 | api → graph → storage (spec persistence, ADR-037) | `api::tests::load_spec_persists_to_specs_table`, `unload_spec_deletes_from_specs_table` | Real PlexusApi writes to / deletes from real SqliteStore via real PlexusEngine |
-| adapter/pipeline → storage via host (rehydration at construction, ADR-037) | `acceptance::persisted_lens_fires_after_library_reconstruction` | Load spec via PlexusApi, drop pipeline, query specs table, construct new pipeline via `PipelineBuilder::with_persisted_specs`, ingest via different adapter, assert persisted lens enrichment fires |
+| adapter/pipeline → storage via host (rehydration at construction, ADR-037) | `acceptance::persisted_spec_rehydrates_across_restart` | Load spec via PlexusApi, drop pipeline, query specs table, construct new pipeline via `PipelineBuilder::with_persisted_specs`, ingest via different adapter, assert persisted lens enrichment fires |
 | api → query (evidence_trail filter, ADR-036 §5) | `api::tests::evidence_trail_accepts_filter` | Real PlexusApi::evidence_trail with QueryFilter parameter filters the provenance trail by contributor_ids |
 | mcp → api (each new tool) | `mcp::tests::{load_spec, find_nodes, traverse, find_path, changes_since, list_tags, shared_concepts}_delegates_to_api` | Each new MCP tool handler calls the corresponding PlexusApi method with flat parameters correctly mapped to structured types |
 | query (RankBy::NormalizedWeight → normalize) | `traverse::tests::rank_by_normalized_weight_uses_outgoing_divisive` | Real traversal ranks edges by normalized weight using an injected `OutgoingDivisive` strategy (closes ADR-034 Violation 1) |
@@ -739,7 +739,7 @@ flowchart TD
 | Inv 60 (spec validation upfront) | api: `PlexusApi::load_spec` | `api::tests::load_spec_invalid_yaml_leaves_no_mutations` — malformed YAML → error, no specs row, no adapter registered, no edges added |
 | Inv 61 (consumer owns spec) | api: static verification | Compile-time: no `update_spec`/`generate_spec`/`derive_spec` methods on PlexusApi — verified by inspection |
 | Inv 62 (effect a: durable vocabulary) | api: `PlexusApi::unload_spec` | `api::tests::unload_spec_preserves_lens_edges` — load, ingest, unload, assert `lens:*` edges still present and queryable |
-| Inv 62 (effect b: durable enrichment registration) | adapter/pipeline: `PipelineBuilder::with_persisted_specs` | `acceptance::persisted_lens_fires_after_library_reconstruction` — load spec, close, reopen store, reconstruct pipeline via builder, ingest via different adapter, assert lens fires |
+| Inv 62 (effect b: durable enrichment registration) | adapter/pipeline: `PipelineBuilder::with_persisted_specs` | `acceptance::persisted_spec_rehydrates_across_restart` — load spec, close, reopen store, reconstruct pipeline via builder, ingest via different adapter, assert lens fires |
 
 ### Test Layers
 

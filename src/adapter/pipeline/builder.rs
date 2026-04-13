@@ -191,21 +191,30 @@ impl PipelineBuilder {
     ///
     /// Equivalent to:
     /// ```ignore
+    /// let persisted = gather_persisted_specs(&engine);
     /// PipelineBuilder::new(engine)
     ///     .with_default_adapters()
     ///     .with_default_structural_modules()
     ///     .with_default_enrichments()
+    ///     .with_persisted_specs(persisted)
     ///     .with_adapter_specs(project_dir)
     ///     .build()
     /// ```
+    ///
+    /// Automatically gathers and rehydrates any persisted specs from the
+    /// context's specs table (ADR-037 §2, Invariant 62 effect b). The
+    /// specs table is the context's lens registry — any library instance
+    /// against a context transiently runs every lens registered on it.
     pub fn default_pipeline(
         engine: Arc<PlexusEngine>,
         project_dir: Option<&Path>,
     ) -> IngestPipeline {
+        let persisted = gather_persisted_specs(&engine);
         let mut builder = Self::new(engine)
             .with_default_adapters()
             .with_default_structural_modules()
-            .with_default_enrichments();
+            .with_default_enrichments()
+            .with_persisted_specs(persisted);
 
         if let Some(dir) = project_dir {
             builder = builder.with_adapter_specs(dir);
@@ -213,4 +222,33 @@ impl PipelineBuilder {
 
         builder.build()
     }
+}
+
+/// Gather all persisted specs across every context in the engine (ADR-037 §2).
+///
+/// Iterates `engine.list_contexts()` and accumulates the results of
+/// `engine.query_specs_for_context()` for each. This is the host-level
+/// "read specs table" step called out by ADR-037 §2 — library hosts that
+/// construct their own pipeline via `PipelineBuilder::new().with_...` should
+/// call this helper and pass the result to `with_persisted_specs`.
+///
+/// `default_pipeline()` calls this automatically; hosts using the default
+/// construction path get rehydration without needing to invoke this directly.
+///
+/// Errors from individual context queries are logged and skipped — consistent
+/// with the rehydration error policy (non-fatal "log and continue"). A
+/// transient storage failure on one context shouldn't prevent library startup.
+pub fn gather_persisted_specs(engine: &PlexusEngine) -> Vec<PersistedSpec> {
+    let mut specs = Vec::new();
+    for ctx_id in engine.list_contexts() {
+        match engine.query_specs_for_context(ctx_id.as_str()) {
+            Ok(mut ctx_specs) => specs.append(&mut ctx_specs),
+            Err(e) => tracing::warn!(
+                context_id = %ctx_id,
+                error = %e,
+                "gather_persisted_specs: failed to query specs for context, skipping"
+            ),
+        }
+    }
+    specs
 }
