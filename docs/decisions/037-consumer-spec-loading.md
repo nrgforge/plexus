@@ -1,6 +1,6 @@
 # ADR-037: Consumer Spec Loading
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

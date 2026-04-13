@@ -1,6 +1,6 @@
 # ADR-036: MCP Query Surface
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
