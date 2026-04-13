@@ -1,7 +1,7 @@
 # Active RDD Cycle: MCP Consumer Interaction Surface
 
 **Started:** 2026-04-01
-**Current phase:** BUILD (next)
+**Current phase:** BUILD (in progress — WP-A/B/C done, WP-D/E/F/G remaining)
 **Artifact base:** ./docs/
 **Scope:** Scoped cycle — MCP transport query surface + multi-consumer spec/lens interaction model
 
@@ -14,7 +14,15 @@
 | MODEL (amendment) | ✅ Complete | domain-model.md (amended 2026-04-02) | User confirmed amendments capture the right scope. Vocabulary layer named as concept. Three new invariants (60-62). |
 | DECIDE (complete) | ✅ Complete | ADR-037, ADR-036 update, scenarios 036-037, interaction-specs, audits | Audits passed, fixes applied. CRUD-on-spec mental model accepted; concrete operation framing kept in ADR. Update path uses retract_contributions + load_spec composition. |
 | ARCHITECT | ✅ Complete | system-design.md v1.2 (Amendment 5), roadmap.md regenerated, ORIENTATION.md regenerated | User corrected framing from server-mode to library-mode, which sharpened the startup rehydration decision: `PipelineBuilder::with_persisted_specs` at construction (Option C) with host reading specs table and passing data in (C2 sub-option, no new dependency edges). User framed the specs table as "the context's lens registry" — any library instance against that context transiently runs those lenses on behalf of the context. User chose six-WP granularity for reviewability and structure/behavior separation. User folded `RankBy::NormalizedWeight` into WP-G as G.2 with own commit/test cycle. User set the standing principle: ADRs are immutable unless genuinely superseded. |
-| BUILD | ▶ Next | src/mcp/, src/api.rs, src/adapter/, src/storage/, src/graph/ | — |
+| BUILD (WP-A) | ✅ Complete | `925d76a` fix: register_specs_from_dir wires enrichments and lens | — |
+| BUILD (WP-B) | ✅ Complete | `7a12874` feat: specs persistence foundation, interior mutability, builder rehydration | Interior mutability: `RwLock<Vec<...>>` chosen (Tier 1). `PersistedSpec` struct (not tuple). Builder rehydration enrichment-only. Non-fatal "log and continue" for malformed specs. |
+| BUILD (WP-C) | ✅ Complete | `22838b5` feat: load_spec and unload_spec on PlexusApi | Three-effect model working. Manual rollback on failure. Validation: YAML parse + DeclarativeAdapter::from_yaml + lens extraction. |
+| BUILD (WP-C fix) | ✅ Complete | `fbe7fb7` fix: store context UUID in specs table | Latent WP-C bug surfaced while writing WP-D test: specs table was keyed by caller-supplied string (effectively name) not stable UUID. Rename would orphan persisted specs. Fixed in load_spec and unload_spec by resolving name → UUID before all specs-table I/O. |
+| BUILD (WP-D) | ✅ Complete | `6661d2c` feat: startup spec rehydration via host + builder | `gather_persisted_specs(&engine)` helper iterates contexts and accumulates specs. `default_pipeline` auto-rehydrates. Acceptance test uses on-disk SQLite across two consumer lifetimes — real types, no mocks. |
+| BUILD (WP-E) | ☐ Pending | — | 6 MCP query tools. Unblocked (open choice). |
+| BUILD (WP-F) | ☐ Pending | — | MCP load_spec tool. Unblocked (hard dep C satisfied). |
+| BUILD (WP-G.1) | ☐ Pending | — | evidence_trail + QueryFilter. Unblocked (open choice). |
+| BUILD (WP-G.2) | ☐ Pending | — | RankBy::NormalizedWeight. Unblocked (open choice). |
 
 ## Feed-Forward Signals
 
@@ -83,4 +91,33 @@ ARCHITECT complete (2026-04-07): system-design.md v1.2 with Amendment 5, roadmap
 - **Six-WP decomposition**: A (bug fix) / B (foundation + interior mutability) / C (load_spec / unload_spec on api) / D (rehydration via host + builder) / E (6 MCP query tools) / F (MCP load_spec tool) / G (evidence_trail filter + RankBy::NormalizedWeight, two commits).
 - **Standing principle set**: ADRs are immutable unless genuinely superseded — never amended casually to match what shipped.
 
-BUILD is the next phase. Build order from roadmap: A (ship independently) → B (infrastructure) → C (spec API) → D (rehydration) → E, G.1, G.2 in parallel or any order → F last. Open decisions deferred to BUILD: interior mutability mechanism, load_spec rollback strategy, validation extent, rehydration error handling, RankBy::NormalizedWeight type-system fallout.
+### From BUILD (WP-A/B/C)
+43. WP-A shipped as a two-line fix plus regression test. `register_specs_from_dir` now calls `register_integration` (extracts enrichments + lens) instead of `register_adapter` alone.
+44. WP-B open decisions resolved: interior mutability uses `RwLock<Vec<Arc<dyn Adapter>>>` + `RwLock<EnrichmentRegistry>` (Tier 1, simple, registration-infrequent). `PersistedSpec` is a struct with `context_id`, `adapter_id`, `spec_yaml`, `loaded_at`. Rehydration error handling: non-fatal "log and continue" — a broken persisted spec doesn't prevent library startup. Builder method signature: `with_persisted_specs(specs: Vec<PersistedSpec>)`.
+45. WP-C open decisions resolved: manual rollback on failure (undo each successful step on error). Validation: YAML parses + `DeclarativeAdapter::from_yaml` succeeds + lens extraction succeeds. Three-effect model (persist spec row, register enrichments/lens on pipeline, run lens on existing content) working end-to-end.
+46. 476 tests total (410 lib + 66 acceptance), all passing as of WP-C completion.
+
+### From BUILD (WP-C fix + WP-D)
+47. WP-C latent bug surfaced by WP-D test writing: specs table was keyed by caller-supplied string, which is effectively the context NAME because `PlexusApi::resolve` only accepts names. This silently orphaned specs on rename and broke UUID-based rehydration iteration. Fixed in `fbe7fb7`: `load_spec` and `unload_spec` resolve name → UUID before all specs-table I/O. Table is now keyed by stable `ContextId`.
+48. WP-D design decision: put gather-specs logic in a `gather_persisted_specs(&engine)` pub free function in `adapter/pipeline/builder.rs`, and have `default_pipeline` call it automatically. Result: all hosts using `default_pipeline` (including `run_mcp_server`) rehydrate automatically without binary-level changes. Explicit hosts can still call `gather_persisted_specs` + `with_persisted_specs` manually. No new module dependency edges (builder already depended on engine).
+49. Acceptance test `persisted_spec_rehydrates_across_restart` is fully-integrated (real SqliteStore on disk across `drop` + reopen, real builder chain, real enrichment loop). Proves Invariant 62 effect (b) end-to-end in library-mode.
+50. **Follow-up concerns discovered but explicitly out of WP-D scope:**
+    - `PlexusApi::ingest` passes `context_id` straight to `pipeline.ingest` which treats it as a literal UUID, unlike `load_spec`/`find_nodes`/`evidence_trail` which resolve by name. All existing `api.ingest` callers use UUIDs. API contract inconsistency.
+    - **Probable latent MCP bug:** `set_context` stores a name; `ingest` tool passes that name to `api.ingest`, which would fail because pipeline expects UUID. No existing test exercises MCP ingest end-to-end, so the bug is dormant. Needs attention before WP-F ships.
+    - File-based + persisted spec interaction: if a consumer has both `{project_dir}/adapter-specs/` AND a persisted spec for the same `adapter_id`, the lens enrichment registers twice. Idempotency protects edge output but the enrichment loop may fire twice per event. Consider de-duplication or choice-of-source policy in a later cycle.
+51. 477 tests total (410 lib + 67 acceptance), all passing as of WP-D completion.
+
+## Context for Resumption
+
+The cycle started as "expose query tools via MCP" (decide+build). During decide, the user identified that the query surface is incomplete without the consumer configuration model. During model attempt, the user clarified that lenses encode persistent graph structure (not runtime configuration) and that new stakeholder jobs need product discovery before domain modeling. Product discovery was updated with the multi-consumer interaction model, spec loading as transport-independent API operation, fail-fast validation, and the e2e acceptance criterion. Domain model amended with invariants 60-62 and vocabulary layer concept. ADRs 036 and 037 accepted, scenarios written, interaction specs derived, audits passed.
+
+ARCHITECT complete (2026-04-07): system-design.md v1.2 with Amendment 5, roadmap.md regenerated with six work packages (A-G), ORIENTATION.md regenerated. Key design refinements from the architect phase:
+- **Library-mode framing confirmed** (user correction): Plexus is a library operating on SQLite, not a server. "Restart" = fresh process constructing the library against the same database. This framing shaped every startup-related decision.
+- **Startup rehydration via PipelineBuilder** (not via engine or an api-level reload method): `PipelineBuilder::with_persisted_specs(Vec<PersistedSpec>)` rehydrates persisted lens enrichments at construction time. Host reads specs table; builder takes data. No new dependency edges. Rehydration is enrichment-only (skip effect a, skip adapter wiring) because vocabulary edges already persist from the original `load_spec` call.
+- **The specs table is the context's lens registry** — any library instance against a context transiently runs those lenses on behalf of the context, not on behalf of the originally-loading consumer. This is how multi-consumer cross-pollination works.
+- **Six-WP decomposition**: A (bug fix) / B (foundation + interior mutability) / C (load_spec / unload_spec on api) / D (rehydration via host + builder) / E (6 MCP query tools) / F (MCP load_spec tool) / G (evidence_trail filter + RankBy::NormalizedWeight, two commits).
+- **Standing principle set**: ADRs are immutable unless genuinely superseded — never amended casually to match what shipped.
+
+BUILD in progress. WP-A/B/C/D complete and TS-4 reached: multi-session persistence works end-to-end, cross-pollination between consumer domains is automatic. Remaining: WP-E (6 MCP query tools), WP-F (MCP load_spec tool), WP-G.1 (evidence_trail filter), WP-G.2 (RankBy::NormalizedWeight). All unblocked. Remaining open decisions: RankBy::NormalizedWeight type-system fallout (WP-G.2).
+
+**Before WP-F ships:** resolve the latent MCP bug (signal 50). MCP's `set_context` stores a name but `ingest` passes names to the pipeline which expects UUIDs. WP-F adds an MCP `load_spec` tool — the same name-vs-UUID issue will manifest there unless the MCP name-resolution path is fixed first.
