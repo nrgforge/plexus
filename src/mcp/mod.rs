@@ -807,4 +807,22 @@ emit:
             body
         );
     }
+
+    #[tokio::test]
+    async fn load_spec_without_active_context_returns_error() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite"));
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        let server = PlexusMcpServer::new(engine);
+
+        let result = server
+            .load_spec(Parameters(LoadSpecParams {
+                spec_yaml: LOAD_SPEC_YAML.into(),
+            }))
+            .await;
+
+        assert!(
+            result.is_err(),
+            "load_spec without set_context should return an McpError"
+        );
+    }
 }
