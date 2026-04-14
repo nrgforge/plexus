@@ -44,7 +44,7 @@ A content-agnostic knowledge graph engine that derives structure from unstructur
 
 The query surface cycle (2026-03-26 — 2026-04-01) shipped event cursors, lens declaration, and composable query filters. 461 tests passing, 36 ADRs at that point.
 
-**Active cycle: MCP consumer interaction surface.** ARCHITECT complete (2026-04-07); BUILD pending. The cycle adds runtime spec loading (ADR-037) and exposes the full query surface via MCP (ADR-036). System design v1.2 captures the amendment; see [roadmap.md](roadmap.md) for the six work packages (A through G) with dependency classifications and transition states. The central new capability is that persisted lens enrichments rehydrate at library construction time via `PipelineBuilder::with_persisted_specs` — making vocabulary layers a durable property of the **context** rather than the **consumer process**, so cross-pollination between consumer domains happens automatically whenever any consumer holds the library against a shared context.
+**Active cycle: MCP consumer interaction surface.** BUILD in progress (WP-A through WP-F complete; WP-G.1 and WP-G.2 remaining). The cycle adds runtime spec loading (ADR-037) and exposes the full query surface via MCP (ADR-036). System design v1.2 captures the amendment; see [roadmap.md](roadmap.md) for the six work packages (A through G) with dependency classifications and transition states. The central new capability is that persisted lens enrichments rehydrate at library construction time via `PipelineBuilder::with_persisted_specs` — making vocabulary layers a durable property of the **context** rather than the **consumer process**, so cross-pollination between consumer domains happens automatically whenever any consumer holds the library against a shared context. TS-6 is reached: the end-to-end MCP consumer workflow (create context → `load_spec` → ingest → query through lens → load second spec → query across both vocabulary layers) is now achievable via the MCP transport.
 
 Cycle artifacts:
 - ADRs 036 (MCP query surface), 037 (consumer spec loading) — Accepted
@@ -53,4 +53,4 @@ Cycle artifacts:
 - Product discovery updated 2026-04-02 with multi-consumer interaction model and e2e acceptance criterion
 - Interaction specs for three stakeholders (consumer application developer, extractor author, engine developer)
 
-38 ADRs total. 461 tests as of WP-C completion; cycle will add more.
+38 ADRs total. MCP surface reaches 16 tools with WP-F (1 session + 1 ingest + 6 context + 7 graph read + 1 spec load). 489 tests passing as of WP-F completion (421 lib + 67 acceptance + 1 doc).

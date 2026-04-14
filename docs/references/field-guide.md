@@ -1,7 +1,7 @@
 # Field Guide: Plexus
 
-**Generated:** 2026-04-01
-**Derived from:** System Design v1.1, current implementation
+**Generated:** 2026-04-13
+**Derived from:** System Design v1.2, current implementation
 
 ## How to Use This Guide
 
@@ -343,12 +343,14 @@ Provenance reads are separated from writes. `ProvenanceApi` is read-only — all
 | Concept | Code Manifestation | Location |
 |---------|-------------------|----------|
 | PlexusMcpServer | `pub struct PlexusMcpServer` | `src/mcp/mod.rs` |
-| 9 MCP tools | `#[tool]` methods on `PlexusMcpServer` | `src/mcp/mod.rs` |
+| 16 MCP tools | `#[tool]` methods on `PlexusMcpServer` | `src/mcp/mod.rs` |
 | run_mcp_server | `pub fn run_mcp_server()` | `src/mcp/mod.rs` |
 
 ### Design Rationale
 
 MCP is a thin transport shell (Invariant 38). It delegates all logic to `PlexusApi`. The only non-delegation code is `set_context` (session state) and `classify_input` routing in `ingest`. Pipeline construction uses `PipelineBuilder::default_pipeline()` — extracted from inline construction to keep the transport thin.
+
+The 16-tool surface is organized as 1 session (`set_context`) + 1 data-write (`ingest`) + 6 context management + 7 graph read (`evidence_trail`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`) + 1 spec load (`load_spec`). `load_spec` is the only non-thin-wrapper — it routes through `PlexusApi::load_spec`, which enforces the three-effect model (ADR-037, Invariant 62) — but the MCP-layer handler itself is still 18 lines of delegation and JSON marshalling.
 
 ### Key Integration Points
 

@@ -5,7 +5,7 @@
 
 ## Current State
 
-**Active cycle:** MCP consumer interaction surface (DECIDE + ARCHITECT complete, BUILD pending).
+**Active cycle:** MCP consumer interaction surface (DECIDE + ARCHITECT complete, BUILD in progress — WP-A/B/C/D/E/F complete, WP-G.1/G.2 remaining).
 
 The cycle adds runtime spec loading (ADR-037) and exposes the full query surface via MCP (ADR-036). No new modules, no new dependency edges — all work flows through existing seams. The central new capability is that persisted lens enrichments rehydrate at library construction time, making vocabulary layers a durable property of the **context** rather than the **consumer process**. When any consumer holds the library against a context, it transiently runs every lens registered on that context — so cross-pollination between consumer domains happens automatically.
 
