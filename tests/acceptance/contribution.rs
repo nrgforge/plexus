@@ -17,7 +17,7 @@ async fn edges_carry_per_adapter_contribution_keys() {
     ]);
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -67,7 +67,7 @@ async fn retract_contributions_removes_adapter_edges() {
     ]);
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 

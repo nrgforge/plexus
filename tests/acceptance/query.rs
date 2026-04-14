@@ -22,7 +22,7 @@ async fn find_query_returns_nodes_matching_type() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -79,7 +79,7 @@ async fn traverse_query_follows_edges() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -148,7 +148,7 @@ async fn evidence_trail_returns_provenance() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 

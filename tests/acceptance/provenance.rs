@@ -19,7 +19,7 @@ async fn content_ingest_creates_provenance_chain() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -43,7 +43,7 @@ async fn content_ingest_creates_marks() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -86,7 +86,7 @@ async fn provenance_chain_is_queryable() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -134,7 +134,7 @@ async fn explicit_provenance_ingest_creates_queryable_chain_and_mark() {
     // Create chain via ProvenanceAdapter
     env.api
         .ingest(
-            env.ctx_id(),
+            env.ctx_name(),
             "provenance",
             Box::new(ProvenanceInput::CreateChain {
                 chain_id: chain_id.clone(),
@@ -149,7 +149,7 @@ async fn explicit_provenance_ingest_creates_queryable_chain_and_mark() {
     let mark_id = "mark:provenance:acceptance-test-1".to_string();
     env.api
         .ingest(
-            env.ctx_id(),
+            env.ctx_name(),
             "provenance",
             Box::new(ProvenanceInput::AddMark {
                 mark_id: mark_id.clone(),
@@ -199,7 +199,7 @@ async fn linked_marks_are_queryable_via_get_links() {
     // Create chain
     env.api
         .ingest(
-            env.ctx_id(),
+            env.ctx_name(),
             "provenance",
             Box::new(ProvenanceInput::CreateChain {
                 chain_id: chain_id.clone(),
@@ -214,7 +214,7 @@ async fn linked_marks_are_queryable_via_get_links() {
     let source_mark_id = "mark:provenance:acceptance-link-src".to_string();
     env.api
         .ingest(
-            env.ctx_id(),
+            env.ctx_name(),
             "provenance",
             Box::new(ProvenanceInput::AddMark {
                 mark_id: source_mark_id.clone(),
@@ -234,7 +234,7 @@ async fn linked_marks_are_queryable_via_get_links() {
     let target_mark_id = "mark:provenance:acceptance-link-tgt".to_string();
     env.api
         .ingest(
-            env.ctx_id(),
+            env.ctx_name(),
             "provenance",
             Box::new(ProvenanceInput::AddMark {
                 mark_id: target_mark_id.clone(),

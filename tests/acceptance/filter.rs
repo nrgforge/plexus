@@ -435,9 +435,7 @@ async fn lens_created_edges_appear_in_cursor_event_log() {
     let engine = Arc::new(PlexusEngine::with_store(store));
 
     let ctx_name = "cursor-lens";
-    let ctx = Context::new(ctx_name);
-    let ctx_id_str = ctx.id.as_str().to_string();
-    engine.upsert_context(ctx).expect("upsert");
+    engine.upsert_context(Context::new(ctx_name)).expect("upsert");
 
     let lens_spec = LensSpec {
         consumer: "trellis".into(),
@@ -464,7 +462,7 @@ async fn lens_created_edges_appear_in_cursor_event_log() {
         "Creative writing and research",
         vec!["writing".into(), "research".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input))
+    api.ingest(ctx_name, "content", Box::new(input))
         .await
         .expect("ingest");
 
@@ -507,10 +505,7 @@ async fn query_filter_on_lens_edges_discovered_via_cursor() {
     let engine = Arc::new(PlexusEngine::with_store(store));
 
     let ctx_name = "filter-lens";
-    let ctx = Context::new(ctx_name);
-    let ctx_id = ctx.id.clone();
-    let ctx_id_str = ctx_id.as_str().to_string();
-    engine.upsert_context(ctx).expect("upsert");
+    let ctx_id = engine.upsert_context(Context::new(ctx_name)).expect("upsert");
 
     let lens_spec = LensSpec {
         consumer: "trellis".into(),
@@ -536,7 +531,7 @@ async fn query_filter_on_lens_edges_discovered_via_cursor() {
         "Patterns in creative work",
         vec!["patterns".into(), "creative".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input))
+    api.ingest(ctx_name, "content", Box::new(input))
         .await
         .expect("ingest");
 
@@ -594,10 +589,7 @@ async fn full_pull_workflow_ingest_cursor_filtered_query() {
     let engine = Arc::new(PlexusEngine::with_store(store));
 
     let ctx_name = "pull-workflow";
-    let ctx = Context::new(ctx_name);
-    let ctx_id = ctx.id.clone();
-    let ctx_id_str = ctx_id.as_str().to_string();
-    engine.upsert_context(ctx).expect("upsert");
+    let ctx_id = engine.upsert_context(Context::new(ctx_name)).expect("upsert");
 
     let lens_spec = LensSpec {
         consumer: "trellis".into(),
@@ -624,7 +616,7 @@ async fn full_pull_workflow_ingest_cursor_filtered_query() {
         "Writing about nature and wilderness",
         vec!["nature".into(), "wilderness".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input1))
+    api.ingest(ctx_name, "content", Box::new(input1))
         .await
         .expect("trellis ingest");
 
@@ -633,7 +625,7 @@ async fn full_pull_workflow_ingest_cursor_filtered_query() {
         "Research on ecology and wilderness preservation",
         vec!["ecology".into(), "wilderness".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input2))
+    api.ingest(ctx_name, "content", Box::new(input2))
         .await
         .expect("carrel ingest");
 

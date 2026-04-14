@@ -17,7 +17,7 @@ async fn cooccurrence_creates_may_be_related_edges() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -71,7 +71,7 @@ async fn enrichment_loop_quiesces() {
     // will hang and the test will time out. A successful return is the assertion.
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        env.api.ingest(env.ctx_id(), "content", Box::new(input)),
+        env.api.ingest(env.ctx_name(), "content", Box::new(input)),
     )
     .await
     .expect("ingest should complete within 5 seconds — enrichment loop must quiesce");

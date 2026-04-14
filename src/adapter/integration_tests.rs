@@ -3854,7 +3854,7 @@ mod tests {
         let store = Arc::new(SqliteStore::open_in_memory().unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store.clone()));
         let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
-        let cid = ctx_id.as_str();
+        let cid = "research";
 
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
@@ -4371,8 +4371,8 @@ emit:
         use crate::api::PlexusApi;
 
         let engine = Arc::new(PlexusEngine::new());
-        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
-        let cid = ctx_id.as_str();
+        engine.upsert_context(Context::new("test")).unwrap();
+        let cid = "test";
 
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(Arc::new(ProvenanceAdapter::new()), vec![]);
@@ -4405,8 +4405,8 @@ emit:
         use crate::api::PlexusApi;
 
         let engine = Arc::new(PlexusEngine::new());
-        let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
-        let cid = ctx_id.as_str();
+        engine.upsert_context(Context::new("test")).unwrap();
+        let cid = "test";
 
         let mut pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));

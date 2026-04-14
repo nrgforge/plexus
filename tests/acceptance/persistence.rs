@@ -19,7 +19,7 @@ async fn nodes_and_edges_survive_engine_reload() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -85,7 +85,7 @@ async fn edge_weights_survive_reload() {
     );
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 

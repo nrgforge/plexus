@@ -361,7 +361,6 @@ async fn load_spec_lens_runs_on_existing_content() {
 
     let ctx = Context::new("test");
     let ctx_id = ctx.id.clone();
-    let ctx_id_str = ctx_id.as_str().to_string();
     engine.upsert_context(ctx).expect("upsert");
 
     let pipeline = Arc::new(
@@ -377,7 +376,7 @@ async fn load_spec_lens_runs_on_existing_content() {
         "Graph structures in knowledge systems",
         vec!["graphs".into(), "knowledge".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input)).await.expect("ingest");
+    api.ingest("test", "content", Box::new(input)).await.expect("ingest");
 
     // Verify may_be_related edges exist before lens
     let ctx_before = engine.get_context(&ctx_id).unwrap();
@@ -438,7 +437,6 @@ async fn unload_spec_preserves_vocabulary_edges() {
 
     let ctx = Context::new("test");
     let ctx_id = ctx.id.clone();
-    let ctx_id_str = ctx_id.as_str().to_string();
     engine.upsert_context(ctx).expect("upsert");
 
     let pipeline = Arc::new(
@@ -454,7 +452,7 @@ async fn unload_spec_preserves_vocabulary_edges() {
         "Graph structures in knowledge systems",
         vec!["graphs".into(), "knowledge".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input)).await.expect("ingest");
+    api.ingest("test", "content", Box::new(input)).await.expect("ingest");
 
     let spec_yaml = r#"
 adapter_id: trellis-content
@@ -525,7 +523,6 @@ async fn two_consumers_two_lenses_on_same_context() {
 
     let ctx = Context::new("shared");
     let ctx_id = ctx.id.clone();
-    let ctx_id_str = ctx_id.as_str().to_string();
     engine.upsert_context(ctx).expect("upsert");
 
     let pipeline = Arc::new(
@@ -575,7 +572,7 @@ emit:
         "Graph structures in knowledge systems",
         vec!["graphs".into(), "knowledge".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input)).await.expect("ingest");
+    api.ingest("shared", "content", Box::new(input)).await.expect("ingest");
 
     // Verify: both vocabulary layers exist in the graph
     let ctx = engine.get_context(&ctx_id).unwrap();
@@ -701,14 +698,6 @@ emit:
     let pipeline = Arc::new(PipelineBuilder::default_pipeline(engine.clone(), None));
     let api = PlexusApi::new(engine.clone(), pipeline);
 
-    // Resolve the stable UUID for ingest (api.ingest passes through to the
-    // pipeline which expects a ContextId, not a name — unlike load_spec
-    // which resolves by name).
-    let ctx_id = engine
-        .resolve_by_name("shared")
-        .expect("shared context should resolve post-restart");
-    let ctx_id_str = ctx_id.as_str().to_string();
-
     // Ingest via the default content adapter (NOT the trellis adapter —
     // consumer 2 is a different consumer that doesn't know about trellis).
     // co_occurrence produces may_be_related; rehydrated trellis lens should
@@ -717,11 +706,14 @@ emit:
         "Graph structures and knowledge systems reinforce each other",
         vec!["graphs".into(), "knowledge".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input))
+    api.ingest("shared", "content", Box::new(input))
         .await
         .expect("ingest on consumer 2");
 
     // Assert: the persisted trellis lens fired on consumer 2's new content
+    let ctx_id = engine
+        .resolve_by_name("shared")
+        .expect("shared context should resolve post-restart");
     let ctx_after = engine
         .get_context(&ctx_id)
         .expect("context should be loaded");

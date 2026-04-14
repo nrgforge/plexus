@@ -55,25 +55,41 @@ impl PlexusApi {
     // --- Write ---
 
     /// Ingest with an explicit adapter, skipping input_kind routing.
+    ///
+    /// Accepts a context name (consistent with all other PlexusApi methods —
+    /// `find_nodes`, `load_spec`, `evidence_trail`, etc.). Name is resolved
+    /// to the stable `ContextId` before dispatch.
     pub async fn ingest_with_adapter(
         &self,
-        context_id: &str,
+        context_name: &str,
         adapter: Arc<dyn crate::adapter::Adapter>,
         data: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<Vec<OutboundEvent>, AdapterError> {
+        let ctx_id = self
+            .engine
+            .resolve_by_name(context_name)
+            .ok_or_else(|| AdapterError::ContextNotFound(context_name.to_string()))?;
         self.pipeline
-            .ingest_with_adapter(context_id, adapter, data)
+            .ingest_with_adapter(ctx_id.as_str(), adapter, data)
             .await
     }
 
     /// The single write endpoint (ADR-012).
+    ///
+    /// Accepts a context name (consistent with all other PlexusApi methods).
+    /// Name is resolved to the stable `ContextId` before dispatch to the
+    /// pipeline, which works on `ContextId` directly.
     pub async fn ingest(
         &self,
-        context_id: &str,
+        context_name: &str,
         input_kind: &str,
         data: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<Vec<OutboundEvent>, AdapterError> {
-        self.pipeline.ingest(context_id, input_kind, data).await
+        let ctx_id = self
+            .engine
+            .resolve_by_name(context_name)
+            .ok_or_else(|| AdapterError::ContextNotFound(context_name.to_string()))?;
+        self.pipeline.ingest(ctx_id.as_str(), input_kind, data).await
     }
 
     // --- Provenance reads ---
@@ -955,6 +971,35 @@ mod tests {
 
     use crate::adapter::{ContentAdapter, FragmentInput, ProvenanceAdapter, normalize_chain_name};
 
+    // === Regression: api.ingest accepts context name, not UUID ===
+    // Ensures consistency with all other PlexusApi methods (find_nodes,
+    // load_spec, evidence_trail, etc.) which resolve by name. Prior to this
+    // regression test, api.ingest was the only PlexusApi method that
+    // silently required a UUID — which broke every MCP ingest call because
+    // MCP's set_context stores names.
+    #[tokio::test]
+    async fn ingest_accepts_context_name_like_other_api_methods() {
+        let engine = Arc::new(PlexusEngine::new());
+        let mut pipeline = IngestPipeline::new(engine.clone());
+        pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
+        let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
+        engine.upsert_context(Context::new("named-context")).unwrap();
+
+        let result = api
+            .ingest(
+                "named-context",
+                "content",
+                Box::new(FragmentInput::new("some text", vec!["tag".into()])),
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "api.ingest must accept a context name, got: {:?}",
+            result.err()
+        );
+    }
+
     fn setup_with_provenance() -> (Arc<PlexusEngine>, PlexusApi) {
         let engine = Arc::new(PlexusEngine::new());
         let mut pipeline = IngestPipeline::new(engine.clone());
@@ -969,7 +1014,7 @@ mod tests {
     async fn ingest_creates_fragment_chain_and_mark() {
         let (engine, api) = setup_with_provenance();
         let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
-        let cid = ctx_id.as_str();
+        let cid = "research";
 
         // Step 1: Ingest fragment (semantic content)
         let fragment_input = FragmentInput::new("interesting pattern", vec!["refactor".into()])
@@ -1038,8 +1083,8 @@ mod tests {
     #[tokio::test]
     async fn ingest_reuses_existing_chain() {
         let (engine, api) = setup_with_provenance();
-        let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
-        let cid = ctx_id.as_str();
+        engine.upsert_context(Context::new("research")).unwrap();
+        let cid = "research";
 
         let chain_id = normalize_chain_name("field notes");
 
@@ -1130,7 +1175,7 @@ mod tests {
     async fn content_ingest_triggers_enrichment() {
         let engine = Arc::new(PlexusEngine::new());
         let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
-        let cid = ctx_id.as_str();
+        let cid = "research";
 
         // Set up pipeline with adapters and enrichments
         let mut pipeline = IngestPipeline::new(engine.clone());
@@ -1168,8 +1213,8 @@ mod tests {
     #[tokio::test]
     async fn ingest_steps_produce_outbound_events() {
         let (engine, api) = setup_with_provenance();
-        let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
-        let cid = ctx_id.as_str();
+        engine.upsert_context(Context::new("research")).unwrap();
+        let cid = "research";
 
         let frag_events = api
             .ingest(cid, "content", Box::new(FragmentInput::new("note", vec![])))

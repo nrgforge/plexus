@@ -44,7 +44,7 @@ async fn phase1_creates_file_node_with_mime_type_and_size() {
     };
 
     env.api
-        .ingest(env.ctx_id(), "extract-file", Box::new(input))
+        .ingest(env.ctx_name(), "extract-file", Box::new(input))
         .await
         .expect("file extraction should succeed");
 
@@ -76,7 +76,7 @@ async fn phase1_creates_extraction_status_node() {
     };
 
     env.api
-        .ingest(env.ctx_id(), "extract-file", Box::new(input))
+        .ingest(env.ctx_name(), "extract-file", Box::new(input))
         .await
         .expect("file extraction should succeed");
 
@@ -103,7 +103,7 @@ async fn phase1_extracts_frontmatter_tags() {
     };
 
     env.api
-        .ingest(env.ctx_id(), "extract-file", Box::new(input))
+        .ingest(env.ctx_name(), "extract-file", Box::new(input))
         .await
         .expect("file extraction should succeed");
 

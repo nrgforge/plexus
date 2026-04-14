@@ -19,7 +19,7 @@ async fn ingest_text_content_produces_concept_nodes() {
     ]);
 
     let events = env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -45,7 +45,7 @@ async fn ingest_with_explicit_input_kind_routes_to_adapter() {
 
     // Using explicit "content" input_kind
     let result = env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await;
 
     assert!(result.is_ok(), "explicit input_kind 'content' should route to ContentAdapter");
@@ -61,7 +61,7 @@ async fn ingest_frontmatter_markdown_produces_tagged_edges() {
     let input = FragmentInput::new(&content, tags);
 
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -84,7 +84,7 @@ async fn ingest_returns_outbound_events() {
     let input = FragmentInput::new("event test content", vec!["events".into()]);
 
     let events = env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -101,7 +101,7 @@ async fn ingest_unknown_input_kind_returns_error() {
     let data: Box<dyn std::any::Any + Send + Sync> = Box::new("bogus data".to_string());
 
     let result = env.api
-        .ingest(env.ctx_id(), "nonexistent-kind", data)
+        .ingest(env.ctx_name(), "nonexistent-kind", data)
         .await;
 
     assert!(result.is_err(), "unknown input_kind should produce an error");

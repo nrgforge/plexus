@@ -28,7 +28,7 @@ async fn lens_creates_translated_edges_from_matching_source_relationships() {
         vec!["graphs".into(), "structures".into()],
     );
     env.api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 
@@ -515,7 +515,6 @@ async fn lens_in_real_pipeline_enrichment_loop() {
     // Create context
     let ctx = Context::new("integration-lens");
     let ctx_id = ctx.id.clone();
-    let ctx_id_str = ctx_id.as_str().to_string();
     engine.upsert_context(ctx).expect("upsert");
 
     // Build pipeline with default adapters + co-occurrence + lens
@@ -544,7 +543,7 @@ async fn lens_in_real_pipeline_enrichment_loop() {
         "Graph structures in knowledge systems",
         vec!["graphs".into(), "knowledge".into()],
     );
-    api.ingest(&ctx_id_str, "content", Box::new(input))
+    api.ingest("integration-lens", "content", Box::new(input))
         .await
         .expect("ingest should succeed");
 

@@ -24,7 +24,7 @@ async fn file_extraction_succeeds_without_llm_orc() {
 
     // Extraction must not error even though llm-orc is unavailable.
     env.api
-        .ingest(env.ctx_id(), "extract-file", Box::new(input))
+        .ingest(env.ctx_name(), "extract-file", Box::new(input))
         .await
         .expect("file extraction should succeed without llm-orc");
 
@@ -52,7 +52,7 @@ async fn text_ingest_succeeds_without_llm_orc() {
     // Ingest must not error.
     let result = env
         .api
-        .ingest(env.ctx_id(), "content", Box::new(input))
+        .ingest(env.ctx_name(), "content", Box::new(input))
         .await;
 
     assert!(

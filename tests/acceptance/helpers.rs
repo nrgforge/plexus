@@ -71,8 +71,20 @@ impl TestEnv {
             .unwrap_or_else(|e| panic!("failed to read fixture '{}': {}", name, e))
     }
 
-    /// The context ID as a string (for API calls).
+    /// The context ID (stable UUID) as a string.
+    ///
+    /// Use this when constructing low-level graph types like `GraphEvent`
+    /// that carry the `ContextId` directly. For `api.ingest` and other
+    /// PlexusApi methods, use `ctx_name()` instead.
     pub fn ctx_id(&self) -> &str {
         self.context_id.as_str()
+    }
+
+    /// The context name (user-facing identifier) as a string.
+    ///
+    /// This is what PlexusApi methods expect. The API resolves name → UUID
+    /// internally.
+    pub fn ctx_name(&self) -> &str {
+        &self.context_name
     }
 }

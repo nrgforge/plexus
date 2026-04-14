@@ -19,7 +19,7 @@ async fn events_persisted_with_sequence_numbers_after_emission() {
     let env = TestEnv::new();
 
     env.api
-        .ingest(env.ctx_id(), "content", fragment("Test fragment", vec!["travel", "avignon"]))
+        .ingest(env.ctx_name(), "content", fragment("Test fragment", vec!["travel", "avignon"]))
         .await
         .unwrap();
 
@@ -51,7 +51,7 @@ async fn changes_since_returns_events_after_cursor() {
 
     // First ingest
     env.api
-        .ingest(env.ctx_id(), "content", fragment("first", vec!["alpha"]))
+        .ingest(env.ctx_name(), "content", fragment("first", vec!["alpha"]))
         .await
         .unwrap();
 
@@ -61,7 +61,7 @@ async fn changes_since_returns_events_after_cursor() {
 
     // Second ingest
     env.api
-        .ingest(env.ctx_id(), "content", fragment("second", vec!["beta"]))
+        .ingest(env.ctx_name(), "content", fragment("second", vec!["beta"]))
         .await
         .unwrap();
 
@@ -80,7 +80,7 @@ async fn changes_since_cursor_zero_returns_all() {
     let env = TestEnv::new();
 
     env.api
-        .ingest(env.ctx_id(), "content", fragment("fragment", vec!["gamma"]))
+        .ingest(env.ctx_name(), "content", fragment("fragment", vec!["gamma"]))
         .await
         .unwrap();
 
@@ -95,7 +95,7 @@ async fn cursor_filter_scopes_by_event_type() {
     let env = TestEnv::new();
 
     env.api
-        .ingest(env.ctx_id(), "content", fragment("fragment", vec!["delta", "epsilon"]))
+        .ingest(env.ctx_name(), "content", fragment("fragment", vec!["delta", "epsilon"]))
         .await
         .unwrap();
 
@@ -122,7 +122,7 @@ async fn cursor_filter_scopes_by_adapter_id() {
     let env = TestEnv::new();
 
     env.api
-        .ingest(env.ctx_id(), "content", fragment("fragment", vec!["zeta", "eta"]))
+        .ingest(env.ctx_name(), "content", fragment("fragment", vec!["zeta", "eta"]))
         .await
         .unwrap();
 
@@ -142,7 +142,7 @@ async fn changes_since_no_new_events_returns_empty() {
     let env = TestEnv::new();
 
     env.api
-        .ingest(env.ctx_id(), "content", fragment("fragment", vec!["theta"]))
+        .ingest(env.ctx_name(), "content", fragment("fragment", vec!["theta"]))
         .await
         .unwrap();
 
@@ -167,13 +167,10 @@ async fn event_log_survives_round_trip() {
     let context_name = "roundtrip-test";
 
     // Phase 1: Write events
-    let ctx_id_str;
     {
         let store = Arc::new(SqliteStore::open(&db_path).unwrap());
         let engine = Arc::new(PlexusEngine::with_store(store));
-        let ctx = Context::new(context_name);
-        ctx_id_str = ctx.id.as_str().to_string();
-        engine.upsert_context(ctx).unwrap();
+        engine.upsert_context(Context::new(context_name)).unwrap();
 
         let pipeline = Arc::new(
             PipelineBuilder::new(engine.clone())
@@ -183,7 +180,7 @@ async fn event_log_survives_round_trip() {
         );
         let api = PlexusApi::new(engine.clone(), pipeline);
 
-        api.ingest(&ctx_id_str, "content", fragment("fragment", vec!["iota"]))
+        api.ingest(context_name, "content", fragment("fragment", vec!["iota"]))
             .await
             .unwrap();
 
