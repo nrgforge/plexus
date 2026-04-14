@@ -1,12 +1,14 @@
 //! MCP server for Plexus — knowledge graph engine via the Model Context Protocol.
 //!
-//! Tools: 15 total (1 session + 1 write + 6 context + 7 graph read).
-//! (WP-F will add `load_spec` as the 16th.)
+//! Tools: 16 total (1 session + 1 ingest + 6 context + 7 graph read + 1 spec load).
 //!
-//! The single write path is `ingest` (ADR-028), which routes to adapters by
-//! input_kind (explicit or auto-classified from JSON shape). All writes go
-//! through the full pipeline enforcing Invariant 7: all knowledge carries
-//! both semantic content and provenance.
+//! The single graph-data write path is `ingest` (ADR-028), which routes to
+//! adapters by input_kind (explicit or auto-classified from JSON shape).
+//! All ingests go through the full pipeline enforcing Invariant 7: all
+//! knowledge carries both semantic content and provenance. `load_spec`
+//! (ADR-037) is a separate surface — it installs a consumer's adapter +
+//! lens onto the active context, which is a configuration write rather
+//! than a graph-data write.
 
 pub mod params;
 
@@ -382,6 +384,27 @@ impl PlexusMcpServer {
             Err(e) => err_text(e.to_string()),
         }
     }
+
+    // ── Spec loading (ADR-036 §1, ADR-037) ─────────────────────────────
+
+    #[tool(description = "Load a declarative adapter spec (adapter + optional lens + optional enrichments) onto the active context (ADR-037). The spec_yaml argument is the full YAML content sent inline. Validation is upfront: malformed specs fail before any graph work (Invariant 60). On success, returns the adapter ID, lens namespace (if present), and the count of vocabulary edges created by the initial lens sweep over existing content.")]
+    async fn load_spec(
+        &self,
+        Parameters(p): Parameters<LoadSpecParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let ctx = self.context()?;
+        match self.api.load_spec(&ctx, &p.spec_yaml).await {
+            Ok(result) => ok_text(
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "adapter_id": result.adapter_id,
+                    "lens_namespace": result.lens_namespace,
+                    "vocabulary_edges_created": result.vocabulary_edges_created,
+                }))
+                .unwrap(),
+            ),
+            Err(e) => err_text(e.to_string()),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -723,6 +746,65 @@ mod tests {
             nodes.iter().any(|n| n == "concept:shared"),
             "expected shared concept in intersection, got: {:?}",
             nodes
+        );
+    }
+
+    // ── WP-F: load_spec tool (ADR-036 §1, ADR-037) ──────────────────────
+
+    const LOAD_SPEC_YAML: &str = r#"
+adapter_id: trellis-content
+input_kind: trellis.fragment
+lens:
+  consumer: trellis
+  translations:
+    - from: [may_be_related]
+      to: thematic_connection
+emit:
+  - create_node:
+      id: "concept:{input.name}"
+      type: concept
+      dimension: semantic
+"#;
+
+    #[tokio::test]
+    async fn load_spec_wires_adapter_onto_active_context() {
+        let server = server_with_context("t");
+
+        let result = server
+            .load_spec(Parameters(LoadSpecParams {
+                spec_yaml: LOAD_SPEC_YAML.into(),
+            }))
+            .await
+            .expect("load_spec");
+
+        let body = text_of(&result);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).expect("json parse");
+        assert_eq!(parsed["adapter_id"], "trellis-content");
+        assert_eq!(parsed["lens_namespace"], "lens:trellis");
+        assert!(
+            parsed.get("vocabulary_edges_created").is_some(),
+            "result carries vocabulary_edges_created"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_spec_returns_error_for_malformed_yaml() {
+        let server = server_with_context("t");
+
+        let result = server
+            .load_spec(Parameters(LoadSpecParams {
+                spec_yaml: "this is not valid yaml: [[[".into(),
+            }))
+            .await
+            .expect("load_spec returns ok with error content");
+
+        assert_eq!(result.is_error, Some(true));
+        let body = text_of(&result);
+        assert!(
+            body.contains("validation"),
+            "error body should mention validation failure, got: {}",
+            body
         );
     }
 }

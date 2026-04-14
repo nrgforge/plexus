@@ -128,3 +128,11 @@ pub struct SharedConceptsParams {
     #[schemars(description = "Name of the second context")]
     pub context_b: String,
 }
+
+// ── Spec loading (ADR-036 §2, ADR-037) — inline spec content ──────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LoadSpecParams {
+    #[schemars(description = "Full YAML content of the declarative adapter spec, sent inline (not a file path). The spec declares adapter + optional lens + optional enrichments. Validation is upfront (Invariant 60): malformed specs fail before any graph work.")]
+    pub spec_yaml: String,
+}
