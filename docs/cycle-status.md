@@ -1,7 +1,7 @@
 # Active RDD Cycle: MCP Consumer Interaction Surface
 
 **Started:** 2026-04-01
-**Current phase:** BUILD (in progress — WP-A/B/C done, WP-D/E/F/G remaining)
+**Current phase:** BUILD (in progress — WP-A/B/C/D/E done + pre-WP-F MCP ingest fix, WP-F/G remaining)
 **Artifact base:** ./docs/
 **Scope:** Scoped cycle — MCP transport query surface + multi-consumer spec/lens interaction model
 
@@ -19,8 +19,9 @@
 | BUILD (WP-C) | ✅ Complete | `22838b5` feat: load_spec and unload_spec on PlexusApi | Three-effect model working. Manual rollback on failure. Validation: YAML parse + DeclarativeAdapter::from_yaml + lens extraction. |
 | BUILD (WP-C fix) | ✅ Complete | `fbe7fb7` fix: store context UUID in specs table | Latent WP-C bug surfaced while writing WP-D test: specs table was keyed by caller-supplied string (effectively name) not stable UUID. Rename would orphan persisted specs. Fixed in load_spec and unload_spec by resolving name → UUID before all specs-table I/O. |
 | BUILD (WP-D) | ✅ Complete | `6661d2c` feat: startup spec rehydration via host + builder | `gather_persisted_specs(&engine)` helper iterates contexts and accumulates specs. `default_pipeline` auto-rehydrates. Acceptance test uses on-disk SQLite across two consumer lifetimes — real types, no mocks. |
-| BUILD (WP-E) | ☐ Pending | — | 6 MCP query tools. Unblocked (open choice). |
-| BUILD (WP-F) | ☐ Pending | — | MCP load_spec tool. Unblocked (hard dep C satisfied). |
+| BUILD (pre-WP-F fix) | ✅ Complete | `0b9d9d3` fix: api.ingest accepts context name, not UUID | Closed latent MCP ingest bug. api.ingest and api.ingest_with_adapter now resolve names internally, consistent with load_spec/find_nodes/evidence_trail/etc. TestEnv gained ctx_name() helper; call sites throughout updated from env.ctx_id() to env.ctx_name() for ingest (UUID convention preserved where it belongs: GraphEvent construction). |
+| BUILD (WP-E) | ✅ Complete | `38612bd` feat: 6 MCP query tools | Thin wrappers over PlexusApi: find_nodes, traverse, find_path, changes_since, list_tags, shared_concepts. Flat optional parameters (ADR-036 §2). Query result types gained serde::Serialize. 8 boundary integration tests (one per tool + no-active-context error path) using real SqliteStore + real pipeline (no mocks). Tool count 9 → 15. |
+| BUILD (WP-F) | ☐ Pending | — | MCP load_spec tool. Unblocked (hard dep C satisfied, MCP name-resolution fix unblocks the e2e acceptance path). |
 | BUILD (WP-G.1) | ☐ Pending | — | evidence_trail + QueryFilter. Unblocked (open choice). |
 | BUILD (WP-G.2) | ☐ Pending | — | RankBy::NormalizedWeight. Unblocked (open choice). |
 
@@ -107,6 +108,13 @@ ARCHITECT complete (2026-04-07): system-design.md v1.2 with Amendment 5, roadmap
     - File-based + persisted spec interaction: if a consumer has both `{project_dir}/adapter-specs/` AND a persisted spec for the same `adapter_id`, the lens enrichment registers twice. Idempotency protects edge output but the enrichment loop may fire twice per event. Consider de-duplication or choice-of-source policy in a later cycle.
 51. 477 tests total (410 lib + 67 acceptance), all passing as of WP-D completion.
 
+### From BUILD (pre-WP-F fix + WP-E)
+52. MCP name-vs-UUID latent bug closed (`0b9d9d3`). Same class as the WP-C specs-table fix: `context_id: &str` was semantically ambiguous and different endpoints had different expectations. `api.ingest` and `api.ingest_with_adapter` now resolve names internally, consistent with every other PlexusApi method. `MCP::set_context` stores names → passes to `api.ingest` → which now resolves → works. This fix is the pre-WP-F blocker — without it, WP-F's e2e acceptance criterion cannot pass.
+53. WP-E shipped 6 MCP query tools as thin wrappers (Invariant 38). Key design choices: flat optional parameters (ADR-036 §2), direction/rank_by parsed from strings with explicit "invalid X" error messages, composable filter elided when no filter fields set. Query result types (`QueryResult`, `TraversalResult`, `PathResult`, `ChangeSet`) gained `serde::Serialize` — minor extension consistent with inner types (Node, Edge, NodeId already Serialize).
+54. Boundary integration tests: 8 total (one per tool + one no-active-context shared path). All use real SqliteStore + real pipeline — no mocks at any layer. Scenario coverage intentionally partial per N+M+1: wiring verification doesn't need to duplicate across every tool when one tool already proves the wiring.
+55. Tool count: 9 → 15. WP-F adds the 16th.
+56. 487 tests total (419 lib + 67 acceptance + 1 doc), all passing as of WP-E completion.
+
 ## Context for Resumption
 
 The cycle started as "expose query tools via MCP" (decide+build). During decide, the user identified that the query surface is incomplete without the consumer configuration model. During model attempt, the user clarified that lenses encode persistent graph structure (not runtime configuration) and that new stakeholder jobs need product discovery before domain modeling. Product discovery was updated with the multi-consumer interaction model, spec loading as transport-independent API operation, fail-fast validation, and the e2e acceptance criterion. Domain model amended with invariants 60-62 and vocabulary layer concept. ADRs 036 and 037 accepted, scenarios written, interaction specs derived, audits passed.
@@ -118,6 +126,6 @@ ARCHITECT complete (2026-04-07): system-design.md v1.2 with Amendment 5, roadmap
 - **Six-WP decomposition**: A (bug fix) / B (foundation + interior mutability) / C (load_spec / unload_spec on api) / D (rehydration via host + builder) / E (6 MCP query tools) / F (MCP load_spec tool) / G (evidence_trail filter + RankBy::NormalizedWeight, two commits).
 - **Standing principle set**: ADRs are immutable unless genuinely superseded — never amended casually to match what shipped.
 
-BUILD in progress. WP-A/B/C/D complete and TS-4 reached: multi-session persistence works end-to-end, cross-pollination between consumer domains is automatic. Remaining: WP-E (6 MCP query tools), WP-F (MCP load_spec tool), WP-G.1 (evidence_trail filter), WP-G.2 (RankBy::NormalizedWeight). All unblocked. Remaining open decisions: RankBy::NormalizedWeight type-system fallout (WP-G.2).
+BUILD in progress. WP-A/B/C/D/E complete + pre-WP-F MCP name-resolution fix. TS-5 reached: LLM consumers can exercise the pull paradigm (`changes_since`) and composable filters via MCP. Remaining: WP-F (MCP load_spec tool), WP-G.1 (evidence_trail filter), WP-G.2 (RankBy::NormalizedWeight). All unblocked. Remaining open decisions: RankBy::NormalizedWeight type-system fallout (WP-G.2).
 
-**Before WP-F ships:** resolve the latent MCP bug (signal 50). MCP's `set_context` stores a name but `ingest` passes names to the pipeline which expects UUIDs. WP-F adds an MCP `load_spec` tool — the same name-vs-UUID issue will manifest there unless the MCP name-resolution path is fixed first.
+WP-F is now genuinely unblocked — the MCP name-vs-UUID bug (signal 50) was closed in `0b9d9d3`. The first-real-MCP-consumer-workflow acceptance criterion can now pass end-to-end.
