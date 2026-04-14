@@ -312,8 +312,9 @@ impl PlexusMcpServer {
         match self.api.traverse(&ctx, query) {
             Ok(mut result) => {
                 if let Some(rank) = rank_by {
-                    let edges = result.edges.clone();
-                    result.rank_by(rank, &edges);
+                    if let Err(e) = self.api.rank_traversal(&ctx, &mut result, rank) {
+                        return err_text(e.to_string());
+                    }
                 }
                 ok_text(serde_json::to_string_pretty(&result).unwrap())
             }

@@ -35,7 +35,7 @@ use crate::graph::events::GraphEvent;
 use crate::provenance::{ChainView, MarkView, ProvenanceApi};
 use crate::query::{
     self, EvidenceTrailResult, FindQuery, PathQuery, PathResult, QueryFilter, QueryResult,
-    TraversalResult, TraverseQuery,
+    RankBy, TraversalResult, TraverseQuery,
 };
 use crate::storage::PersistedSpec;
 
@@ -179,6 +179,29 @@ impl PlexusApi {
     ) -> PlexusResult<TraversalResult> {
         let ctx_id = self.resolve(context_id)?;
         self.engine.traverse(&ctx_id, query)
+    }
+
+    /// Rank the nodes in a traversal result by a ranking dimension (ADR-034).
+    ///
+    /// `RankBy::RawWeight` and `RankBy::Corroboration` rank purely from edge
+    /// properties already present in the result. `RankBy::NormalizedWeight`
+    /// additionally needs the context to compute per-node normalization over
+    /// the full neighborhood — this helper resolves the context internally
+    /// so transports don't need graph-storage access.
+    pub fn rank_traversal(
+        &self,
+        context_id: &str,
+        result: &mut TraversalResult,
+        rank: RankBy,
+    ) -> PlexusResult<()> {
+        let ctx_id = self.resolve(context_id)?;
+        let context = self
+            .engine
+            .get_context(&ctx_id)
+            .ok_or_else(|| PlexusError::ContextNotFound(ctx_id))?;
+        let edges = result.edges.clone();
+        result.rank_by(rank, &edges, &context);
+        Ok(())
     }
 
     /// Find a path between two nodes.

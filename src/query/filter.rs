@@ -49,12 +49,34 @@ impl QueryFilter {
 }
 
 /// Ranking dimension for query results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The `NormalizedWeight` variant carries a pluggable normalization strategy
+/// (ADR-034). Trait objects do not auto-derive `Clone`, `Copy`, `PartialEq`,
+/// or `Debug`; this enum drops the first three (unused in the current code
+/// paths) and implements `Debug` manually to avoid pushing `Debug` into the
+/// `NormalizationStrategy` trait bound.
 pub enum RankBy {
     /// Raw weight (sum of contributions after scale normalization).
     RawWeight,
     /// Number of distinct contributors to the edge.
     Corroboration,
+    /// Normalized weight, computed at query time via the injected strategy
+    /// (ADR-034). The strategy computes per-node normalization: an edge's
+    /// score becomes its share of its source node's total outgoing weight.
+    /// This surfaces relative strength — an edge that is 100% of its
+    /// source's neighborhood outranks a raw-heavier edge that is only 30%
+    /// of its source's neighborhood.
+    NormalizedWeight(Box<dyn crate::query::normalize::NormalizationStrategy>),
+}
+
+impl std::fmt::Debug for RankBy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RawWeight => f.write_str("RawWeight"),
+            Self::Corroboration => f.write_str("Corroboration"),
+            Self::NormalizedWeight(_) => f.write_str("NormalizedWeight(<strategy>)"),
+        }
+    }
 }
 
 #[cfg(test)]

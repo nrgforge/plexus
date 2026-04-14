@@ -350,7 +350,7 @@ fn rank_by_corroboration_orders_by_evidence_diversity() {
         .execute(&ctx);
 
     let edges = result.edges.clone();
-    result.rank_by(RankBy::Corroboration, &edges);
+    result.rank_by(RankBy::Corroboration, &edges, &ctx);
 
     // Level 1 (depth 1) should be ordered: C (4), D (2), B (1) — descending corroboration
     let level1 = &result.levels[1];
