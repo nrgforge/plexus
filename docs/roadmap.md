@@ -5,7 +5,7 @@
 
 ## Current State
 
-**Active cycle:** MCP consumer interaction surface — ✅ BUILD complete (all six work packages shipped). Optional follow-up phases: `/rdd-play` (post-build experiential discovery), `/rdd-synthesize` (essay outline), or `/rdd-graduate` (fold into native docs + archive scoped-cycle artifacts).
+**Active cycle:** MCP consumer interaction surface — BUILD in progress. WP-A through WP-G.2 complete (see Completed Work Log for commit trail). **WP-H pending** — the cycle's e2e acceptance criterion (first real MCP consumer workflow) requires live MCP transport verification, which was not delivered by WP-A through WP-G.2. WP-H also folds in a scope-reductive design correction: remove file-based spec auto-loading in favor of intentional `load_spec` only.
 
 The cycle adds runtime spec loading (ADR-037) and exposes the full query surface via MCP (ADR-036). No new modules, no new dependency edges — all work flows through existing seams. The central new capability is that persisted lens enrichments rehydrate at library construction time, making vocabulary layers a durable property of the **context** rather than the **consumer process**. When any consumer holds the library against a context, it transiently runs every lens registered on that context — so cross-pollination between consumer domains happens automatically.
 
@@ -160,25 +160,133 @@ The cycle adds runtime spec loading (ADR-037) and exposes the full query surface
 
 ---
 
+### WP-H: E2E verification + intentional-only spec loading
+
+**Objective:** Satisfy the cycle's own acceptance criterion at the MCP transport layer. Product discovery (2026-04-02) named "first real MCP consumer workflow" as the end-to-end acceptance definition; WP-A through WP-G.2 built the components but did not verify them through live MCP framing. WP-H delivers that verification via a subprocess-driven acceptance test exercising the two-consumer happy path. In the same WP, a scope-reductive design correction lands: file-based spec auto-loading is removed so the e2e semantics are unambiguous (state comes from `load_spec` only, never from directory scanning at construction time).
+
+This is the last WP in the cycle — it closes BUILD.
+
+---
+
+**Sub-package H.1: Remove file-based spec auto-loading (design correction)**
+
+**Trigger:** Standing principle check during WP-G.2 reflection surfaced that file-based auto-discovery (`register_specs_from_dir`, `with_adapter_specs`) violates consumer-intent (Invariant 61) and creates latent double-registration with persisted specs. Loading a spec should be intentional.
+
+**ADR-037 supersession:**
+- Add a dated supersession note at the head of ADR-037 citing the removal and rationale
+- Strike or mark-as-superseded §4 ("Fix `register_specs_from_dir` to wire complete specs") and related lines in §2 (startup path) and the Consequences section
+- The standing principle (ADR-037 ARCHITECT phase) applies: this IS a genuine supersession — the decision has changed, not the implementation
+
+**Code removals:**
+- `src/adapter/pipeline/ingest.rs`: delete `register_specs_from_dir` method (~60 lines)
+- `src/adapter/pipeline/builder.rs`: delete `with_adapter_specs` builder method; remove its call from `default_pipeline` (~10 lines)
+- `src/adapter/integration_tests.rs:4350`: delete the test that exercises `register_specs_from_dir`
+- `tests/acceptance/spec.rs`: delete `register_specs_from_dir_wires_enrichments_and_lens` (tests removed code)
+
+**Doc updates:**
+- `docs/product-discovery.md` — remove "file on disk (auto-discovery at startup)" from spec ownership paragraph (line 11); remove/update the "File-based auto-discovery is one delivery path" assumption-inversion row (~line 161)
+- `docs/domain-model.md` — audit the "load spec" action description; if it lists file-based as a delivery mechanism, update
+- `docs/references/field-guide.md` — remove references to `with_adapter_specs` / `register_specs_from_dir` from the adapter/pipeline entry
+- `docs/system-design.md` — check if the MCP cycle's Amendment 5 lists file-based loading; update if so
+
+**Tests:**
+- Verify `PipelineBuilder::with_persisted_specs` rehydration still works (orthogonal path — unaffected by removal, but worth an explicit test-pass confirmation)
+- Verify `tests/acceptance/spec.rs::persisted_spec_rehydrates_across_restart` still passes — this is the canonical rehydration test
+- Verify `two_consumers_two_lenses_on_same_context` still passes at API level
+
+**Commit:** `refactor:` — scope reduction, no new behavior. ADR update included in same commit (the ADR lines the code implemented are removed together).
+
+**Dependencies:** None. Can ship independently of H.2.
+
+**Risk:** low. Code removal is localized. Main failure mode: a downstream crate/deployment relying on auto-discovery silently breaks. Plexus is pre-1.0 and the only known consumers are this workspace's own binary — no external breakage vector today.
+
+---
+
+**Sub-package H.2: Live MCP e2e harness (acceptance verification)**
+
+**Trigger:** The cycle's product-discovery-defined acceptance criterion ("first real MCP consumer workflow") requires transport-level verification, not just API-level. Boundary tests at the MCP handler layer verify JSON delegation; they do not verify that the handler is reachable through actual MCP protocol framing (initialize handshake, JSON-RPC over stdio, tool dispatch by the rmcp framework).
+
+**Objective:** One acceptance test that drives the compiled `plexus mcp` binary as a subprocess, speaks MCP to it over stdin/stdout, and verifies the two-consumer vocabulary-layer cross-pollination story end-to-end.
+
+**Test architecture:**
+- `tests/acceptance/mcp_e2e.rs` — new file
+- Helper harness module (`tests/acceptance/mcp_harness.rs` or inlined) providing:
+  - `McpHarness::spawn(db_path)` — spawn subprocess via `Command::new(env!("CARGO_BIN_EXE_plexus")).args(["mcp", "--db", ...])` with stdin/stdout piped, stderr captured for failure diagnostics
+  - `send_initialize()` — MCP handshake (protocol version negotiation)
+  - `call_tool(name, arguments) -> JsonValue` — serialize JSON-RPC request, write with newline, read response
+  - `shutdown()` — close stdin, wait for exit with timeout (e.g., 5s), kill if timeout
+- Client approach: **raw JSON-RPC** over stdin/stdout, not rmcp client types. Rationale: raw JSON-RPC is a stable wire protocol that the test exercises directly — it won't drift with rmcp crate version changes. A ~100 LoC helper is a cheaper long-term maintenance burden than an rmcp client dependency dance. If future needs grow, revisit.
+
+**Hello-world scenario (the two-consumer cross-pollination story):**
+
+1. **Setup:** Create temp dir, spawn binary pointing at temp SQLite path. Verify startup by calling MCP `initialize`.
+
+2. **First consumer arrives:**
+   - `set_context "test"` (auto-create)
+   - `load_spec` with Consumer-1 YAML (adapter id `consumer-1-content`, input kind `consumer-1.fragment`, lens namespace `lens:consumer-1` with translation `may_be_related → thematic_connection`)
+   - Assert: response JSON carries `adapter_id: "consumer-1-content"`, `lens_namespace: "lens:consumer-1"`, `vocabulary_edges_created: 0` (empty context)
+
+3. **First consumer ingests:**
+   - `ingest` with content containing two tags that co-occur (triggers `CoOccurrenceEnrichment`, emits `may_be_related` edges, Consumer-1's lens translates to `lens:consumer-1:thematic_connection`)
+   - Assert: response JSON indicates event count > 0
+   - `find_nodes` with `relationship_prefix: "lens:consumer-1:"` — assert non-empty result, concepts present
+
+4. **Second consumer arrives on same context:**
+   - `load_spec` with Consumer-2 YAML (distinct adapter id, input kind, lens namespace `lens:consumer-2`)
+   - Assert: response JSON carries `lens_namespace: "lens:consumer-2"`, `vocabulary_edges_created > 0` (Consumer-2's lens sweeps existing edges from step 3)
+
+5. **Second consumer ingests:**
+   - `ingest` with its own content
+   - Assert: response JSON indicates event count > 0
+
+6. **Cross-pollination verification (THE cycle's point):**
+   - `find_nodes` with `relationship_prefix: "lens:consumer-1:"` — assert edges exist from content ingested by BOTH consumers (Consumer-1's lens is still registered and fired on Consumer-2's ingest)
+   - `find_nodes` with `relationship_prefix: "lens:consumer-2:"` — same assertion, mirrored
+   - `find_nodes` with `relationship_prefix: "lens:"` — assert both namespaces appear
+
+7. **Shutdown:** close stdin, wait for exit.
+
+**Adapter choice for ingest:** use the built-in content adapter (tag-based `FragmentInput`). Rationale: deterministic, Rust-only (no llm-orc dependency), test-friendly. Semantic extraction via llm-orc is out of scope for this test — verifying transport, not extraction.
+
+**Commit:** `test:` — test-only addition (after H.1's `refactor:` commit). No production code changes.
+
+**Dependencies:** Hard on H.1 (needs unambiguous "state comes from `load_spec` only" semantics). Hard on all prior WPs (test exercises the full surface).
+
+**Risk:** moderate — harness code has multiple failure modes.
+- Subprocess startup timing: binary may need compile + cold start. Mitigation: use debug-profile binary (fast compile), `initialize` handshake serves as readiness check.
+- Stdout framing: MCP responses are line-delimited JSON. Need a `BufReader` reading lines, with timeout per-read.
+- Log output on stderr: tracing logs go to stderr. Capture but don't parse; surface on failure for diagnostics.
+- Test flakiness risk: subprocess tests are historically flakier than in-process. Mitigation: use tokio timeout wrappers; ensure deterministic Consumer-1/Consumer-2 content; assert on SETS of node/edge IDs, not ordered lists.
+- CI cost: test compiles the binary. Acceptable for one test; if the harness grows to many tests, move to a dedicated binary target.
+
+---
+
+## Open questions raised during WP-H planning
+
+These are decisions or investigations that WP-H implementation will need to resolve:
+
+**OQ-H1 — rmcp protocol version negotiation.** What protocol version does the current `rmcp` crate use by default, and what should the harness send in `initialize`? First step of WP-H.2 is to read the rmcp crate or run the binary manually and observe its initialize behavior.
+
+**OQ-H2 — default_pipeline semantics after H.1.** After removing `with_adapter_specs` from `default_pipeline`, the remaining pipeline construction is: default adapters + default enrichments + persisted-spec rehydration (from `with_persisted_specs`). Is there any gap where a consumer expected file-based specs but now gets nothing? The WP-D acceptance test establishes the answer: persisted specs still rehydrate at construction. But anything that dropped a YAML file into `adapter-specs/` and expected it to "just work" will silently do nothing after H.1. Document this in the ADR-037 supersession note as a deliberate behavior change.
+
+**OQ-H3 — cross-pollination visibility in the harness.** The canonical cross-pollination test requires Consumer-1's lens to fire on Consumer-2's ingest. Confirm that the `changes_since` event cursor (or `find_nodes` with `relationship_prefix`) reveals lens-created edges from the OTHER consumer's adapter. If the enrichment loop isn't persisting correctly to the event log after WP-C's fix (signal 46 in cycle status), this test could fail for reasons unrelated to WP-H. Include a quick check at the start of WP-H.2: `changes_since` from cursor 0 must return lens edges produced by the second ingest.
+
+**OQ-H4 — test timing budget.** What's a reasonable timeout for each MCP tool call? Handshake is fast (<100ms expected). `load_spec` with lens sweep over empty context is fast. Ingest with content adapter is fast. `find_nodes` is fast. Tentative: 5s per call, 30s for the whole test. Revisit if flaky.
+
+**OQ-H5 — integration_tests.rs impact.** `src/adapter/integration_tests.rs:4350` uses `register_specs_from_dir` in what appears to be an integration test path. Before deleting it, determine whether the test's intent is still covered elsewhere. If not, translate its intent to a `load_spec`-based test before removing the old one.
+
+---
+
 ## Dependency Graph
 
 ```
-WP-A (register_specs_from_dir fix) ────[independent]──────┐
+WP-A through WP-G.2 ──[complete — see Completed Work Log]──┐
                                                            │
-WP-B (specs foundation + interior mut + builder)           │
-  │  ┌──────────────────────┐                              │
-  │  │                      │                              │
-  ▼  │                      ▼                              │
-WP-C ┤               WP-E (6 query tools) ─[open choice]───┤
-  │  │                                                     │
-  │ (hard)                                                 │
-  ▼  │                                                     │
-WP-D │  (hard on B and C)                                  │
-  │  │                                                     │
-  │  └──▶ WP-F (MCP load_spec tool, hard on C)             │
+WP-H.1 (remove file-based auto-load) ─[open choice]────────┤
   │                                                        │
-WP-G.1 (evidence_trail filter) ──────[open choice]─────────┤
-WP-G.2 (RankBy::NormalizedWeight) ───[open choice]─────────┘
+  │ (hard)                                                 │
+  ▼                                                        │
+WP-H.2 (live MCP e2e harness) ─[hard on H.1 + A–G]─────────┘
 ```
 
 **Classification key:**
@@ -186,22 +294,17 @@ WP-G.2 (RankBy::NormalizedWeight) ───[open choice]────────
 - **Implied logic:** simpler to build A first, but not required
 - **Open choice:** genuinely independent — build any first
 
-**Hard dependencies in this cycle:**
-- WP-C hard on WP-B (load_spec needs specs table + interior mutability + engine spec methods)
-- WP-D hard on WP-B (needs `with_persisted_specs`) and hard on WP-C (needs something to write the specs table so rehydration can be exercised end-to-end)
-- WP-F hard on WP-C (MCP load_spec wraps PlexusApi::load_spec)
+**Hard dependencies in this cycle (as-built):**
+- WP-C hard on WP-B, WP-D hard on WP-B + WP-C, WP-F hard on WP-C — all resolved
+- **WP-H.2 hard on WP-H.1** (harness needs unambiguous state-from-load_spec semantics)
+- **WP-H.2 hard on WP-A through WP-G.2** (harness exercises full surface)
 
-**Open choices (genuinely independent starting points):**
-- WP-A (bug fix — independent of everything)
-- WP-B (infrastructure — nothing depends on it yet at this point)
-- WP-E (6 thin wrappers over existing API)
-- WP-G.1 and WP-G.2 (independent conformance debt)
+**Open choices remaining:**
+- **WP-H.1** (scope-reductive design correction — can ship independently)
 
-**Implied logic observations:**
-- WP-E's acceptance tests become more meaningful after WP-D (persisted specs exist for query tools to filter over via `relationship_prefix`)
-- WP-G.1's `evidence_trail` tests become more meaningful after WP-C (specs loaded means provenance trails have real structure to filter)
+**Recommended build order for WP-H:** H.1 first (small refactor + ADR supersession), then H.2 (harness + acceptance test). No parallelism in WP-H — H.2 depends on H.1's semantic clarification.
 
-**Recommended build order:** A (ship the bug fix first and independently) → B (foundation) → C (spec API) → D (rehydration) → E and G.1 and G.2 in parallel or any order → F last (depends on C). But the graph permits other orderings — the recommended sequence follows the natural dependency flow plus "ship low-risk wins first."
+**As-shipped order for WP-A through WP-G.2:** A → B → C → WP-C UUID fix → D → pre-WP-F MCP ingest fix → E → F → F no-context test follow-up → G.1 → G.2. See Completed Work Log for commits.
 
 ---
 
@@ -241,11 +344,19 @@ LLM consumers can exercise the pull paradigm (`changes_since`) and composable fi
 
 **Capabilities:** Full MCP read surface. Pull paradigm via MCP. Composable filters via MCP. This is the point where LLM agents can start doing meaningful query work against a Plexus context they didn't set up.
 
-### TS-6: First real MCP consumer workflow (after TS-5 + WP-F)
+### TS-6: First real MCP consumer workflow — capability-level (after TS-5 + WP-F)
 
-The full acceptance criterion from product discovery: create context → `load_spec` via MCP → ingest via the newly-loaded adapter → query through the lens → `load_spec` a second spec for a second consumer → query across both vocabulary layers. Everything works through the MCP transport. The cycle is complete.
+The full acceptance criterion from product discovery is **achievable in principle** via the MCP transport: create context → `load_spec` via MCP → ingest via the newly-loaded adapter → query through the lens → `load_spec` a second spec for a second consumer → query across both vocabulary layers. Each constituent tool is MCP-reachable and individually verified by boundary tests.
 
-**Capabilities:** End-to-end MCP consumer workflow. Invariant 62 holds across process boundaries. Cross-pollination between consumer domains happens automatically. The MCP tool count reaches 16 and the query surface reaches parity with `PlexusApi` for reads.
+**Capabilities:** End-to-end MCP consumer workflow is reachable. Invariant 62 holds across process boundaries. The MCP tool count reaches 16 and the query surface reaches parity with `PlexusApi` for reads.
+
+**Unverified at TS-6:** no live MCP round-trip has exercised the full workflow in a single subprocess — boundary tests verify handler logic and JSON marshalling but not the rmcp protocol framing layer under real consumer conditions. TS-7 closes that gap.
+
+### TS-7: End-to-end MCP workflow verified + intentional-only spec loading (after WP-H.1 + WP-H.2)
+
+The cycle's product-discovery-defined acceptance criterion is verified by a live MCP subprocess acceptance test exercising the two-consumer vocabulary-layer cross-pollination story in a single run. Spec loading is intentional-only (`load_spec`) — file-based auto-discovery is removed. ADR-037 carries a dated supersession note documenting the behavior change.
+
+**Capabilities:** All TS-6 capabilities, verified end-to-end under real MCP protocol framing. Spec loading semantics are unambiguous (one path, intentional). The harness is available as a foundation for real integration experiments beyond the test context. The cycle is complete.
 
 ---
 
@@ -277,7 +388,9 @@ These are decisions the architect phase deliberately deferred to BUILD, or princ
 
 ## Completed Work Log
 
-### Cycle: MCP Consumer Interaction Surface (2026-04-01 — 2026-04-13)
+### Cycle: MCP Consumer Interaction Surface — Part 1 (2026-04-01 — 2026-04-13)
+
+*Cycle in progress. WP-H (e2e harness + intentional-only spec loading) is the remaining work. Part 1 below records WP-A through WP-G.2 as shipped; WP-H will be appended to the Completed Work Log when it lands.*
 
 **Derived from:** System Design v1.2, ADR-036, ADR-037, Invariants 60–62, Reflection 003, product-discovery.md (2026-04-02)
 
