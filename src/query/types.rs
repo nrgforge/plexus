@@ -16,7 +16,7 @@ pub enum Direction {
 }
 
 /// Result of a find query
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct QueryResult {
     /// Nodes matching the query
     pub nodes: Vec<Node>,
@@ -39,7 +39,7 @@ impl QueryResult {
 }
 
 /// Result of a traversal query
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TraversalResult {
     /// Starting node
     pub origin: NodeId,
@@ -109,7 +109,7 @@ impl TraversalResult {
 }
 
 /// Result of a path query
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PathResult {
     /// Whether a path was found
     pub found: bool,

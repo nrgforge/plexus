@@ -40,7 +40,7 @@ pub struct CursorFilter {
 }
 
 /// Result of a cursor query: events plus the latest sequence number.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChangeSet {
     /// Events matching the query, ordered by sequence
     pub events: Vec<PersistedEvent>,
