@@ -5,7 +5,7 @@
 
 ## Current State
 
-**Active cycle:** MCP consumer interaction surface (DECIDE + ARCHITECT complete, BUILD in progress — WP-A/B/C/D/E/F/G.1 complete, WP-G.2 remaining).
+**Active cycle:** MCP consumer interaction surface — ✅ BUILD complete (all six work packages shipped). Optional follow-up phases: `/rdd-play` (post-build experiential discovery), `/rdd-synthesize` (essay outline), or `/rdd-graduate` (fold into native docs + archive scoped-cycle artifacts).
 
 The cycle adds runtime spec loading (ADR-037) and exposes the full query surface via MCP (ADR-036). No new modules, no new dependency edges — all work flows through existing seams. The central new capability is that persisted lens enrichments rehydrate at library construction time, making vocabulary layers a durable property of the **context** rather than the **consumer process**. When any consumer holds the library against a context, it transiently runs every lens registered on that context — so cross-pollination between consumer domains happens automatically.
 
@@ -276,6 +276,54 @@ These are decisions the architect phase deliberately deferred to BUILD, or princ
 ---
 
 ## Completed Work Log
+
+### Cycle: MCP Consumer Interaction Surface (2026-04-01 — 2026-04-13)
+
+**Derived from:** System Design v1.2, ADR-036, ADR-037, Invariants 60–62, Reflection 003, product-discovery.md (2026-04-02)
+
+| WP | Title | Commits | Status |
+|----|-------|---------|--------|
+| WP-A | Fix `register_specs_from_dir` | `925d76a` | Done |
+| WP-B | Specs persistence foundation + interior mutability + builder rehydration | `7a12874` | Done |
+| WP-C | `load_spec` / `unload_spec` on PlexusApi | `22838b5`, `fbe7fb7` (UUID fix) | Done |
+| WP-D | Startup spec re-instantiation via host + builder | `6661d2c` | Done |
+| pre-WP-F | `api.ingest` accepts context name, not UUID | `0b9d9d3` | Done |
+| WP-E | MCP query tools (6 thin wrappers) | `38612bd` | Done |
+| WP-F | MCP `load_spec` tool | `11d686c`, `8be7722` (no-context test) | Done |
+| WP-G.1 | `evidence_trail` + QueryFilter | `98343bb` | Done |
+| WP-G.2 | `RankBy::NormalizedWeight` variant | `22e24a2` | Done |
+
+**Summary:**
+- Three-effect model for `load_spec` (durable graph data + durable enrichment registration + transient adapter wiring) working end-to-end
+- `PipelineBuilder::with_persisted_specs` rehydrates persisted lens enrichments at library construction time — vocabulary layers are a property of the **context**, not the **consumer process**
+- MCP transport grew from 9 to 16 tools: 1 session, 1 ingest, 6 context, 7 graph read, 1 spec load
+- `evidence_trail` now composable with `QueryFilter` — Invariant 59 holds for every query primitive
+- `RankBy::NormalizedWeight` variant available at the Rust API level (not exposed via MCP in this cycle)
+- Standing principle established mid-cycle: **ADRs are immutable unless genuinely superseded** — update them when necessary, never casually to match what shipped
+- Final state: 426 lib tests + 67 acceptance tests + 1 doc test (494 total)
+
+**Dependency graph (as-built):** A, B, E, G.1, G.2 open-choice starting points. C hard on B. D hard on B+C. F hard on C. Pre-WP-F bug fix blocked F's e2e acceptance criterion. As-shipped order: A → B → C → WP-C fix → D → pre-WP-F fix → E → F → F follow-up test → G.1 → G.2.
+
+**Conformance debt carried forward:** None. All three items from the Query Surface cycle (register_specs_from_dir, evidence_trail QueryFilter, RankBy::NormalizedWeight) closed in WP-A, WP-G.1, WP-G.2 respectively.
+
+**Key decisions surfaced during BUILD:**
+- Interior mutability Tier 1 (`RwLock<Vec<Arc<dyn Adapter>>>` + `RwLock<EnrichmentRegistry>`) sufficient; Tier 2 restructuring never needed
+- Manual rollback on `load_spec` failure; validation (YAML parse + `DeclarativeAdapter::from_yaml` + lens extraction) gates the state-mutating steps
+- `PersistedSpec` as a named struct (not tuple) — enables non-breaking schema evolution
+- Non-fatal "log and continue" for malformed persisted specs on startup
+- Specs table keyed by stable `ContextId` UUID, not user-facing name — rename-safe
+- `register_specs_from_dir` (file-based) and `load_spec` (API-based) coexist; idempotency protects edge output but the enrichment loop may fire twice per event — deferred de-duplication to a later cycle
+- MCP wire format decoupled from API types (inline `serde_json::json!` for `SpecLoadResult` instead of deriving `Serialize`) — transport owns the JSON shape independently of in-process Rust types
+- `RankBy` lost `Clone/Copy/PartialEq/Eq` derives (zero usage in codebase); `Box<dyn NormalizationStrategy>` over Arc (no Clone needed); manual `Debug` impl avoids cascading `+ Debug` bound into the trait
+- `NormalizedWeight` deliberately NOT exposed via MCP — ADR-036 §1 specified only "raw_weight" and "corroboration"; feature creep avoided
+
+**Deferred concerns logged for later cycles:**
+- File-based + persisted spec interaction: enrichment loop may fire twice if both sources register the same `adapter_id`
+- Spec YAML grammar versioning: additive-only until `spec_version` field is introduced; breaking change requires pause-and-escalate
+- Concurrent-process spec cache staleness: latent in library mode (one-process-at-a-time assumption); surfaces with concurrent embedded consumers or server mode
+- Cross-cutting enrichment event persistence concern (from query surface cycle): `load_spec` and `unload_spec` added another pair of commit paths; consolidating persistence-per-emission to a central place remains future work
+
+---
 
 ### Cycle: Query Surface (2026-03-26 — 2026-04-01)
 

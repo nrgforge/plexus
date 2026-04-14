@@ -1,6 +1,6 @@
 # Field Guide: Plexus
 
-**Generated:** 2026-04-13
+**Generated:** 2026-04-13 (post MCP cycle BUILD)
 **Derived from:** System Design v1.2, current implementation
 
 ## How to Use This Guide

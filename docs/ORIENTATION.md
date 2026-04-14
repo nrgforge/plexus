@@ -44,7 +44,7 @@ A content-agnostic knowledge graph engine that derives structure from unstructur
 
 The query surface cycle (2026-03-26 — 2026-04-01) shipped event cursors, lens declaration, and composable query filters. 461 tests passing, 36 ADRs at that point.
 
-**Active cycle: MCP consumer interaction surface.** BUILD in progress (WP-A through WP-G.1 complete; WP-G.2 remaining). The cycle adds runtime spec loading (ADR-037) and exposes the full query surface via MCP (ADR-036), including provenance-scoped filtering (Invariant 59) on `evidence_trail`. System design v1.2 captures the amendment; see [roadmap.md](roadmap.md) for the six work packages (A through G) with dependency classifications and transition states. The central new capability is that persisted lens enrichments rehydrate at library construction time via `PipelineBuilder::with_persisted_specs` — making vocabulary layers a durable property of the **context** rather than the **consumer process**, so cross-pollination between consumer domains happens automatically whenever any consumer holds the library against a shared context. TS-6 is reached: the end-to-end MCP consumer workflow (create context → `load_spec` → ingest → query through lens → load second spec → query across both vocabulary layers) is now achievable via the MCP transport.
+**Most recent cycle: MCP consumer interaction surface — BUILD complete (2026-04-13).** All six work packages shipped. The cycle added runtime spec loading (ADR-037) and exposed the full query surface via MCP (ADR-036), including provenance-scoped filtering (Invariant 59) on `evidence_trail` and the `RankBy::NormalizedWeight` variant at the Rust API level. System design v1.2 captures the amendment; see [roadmap.md](roadmap.md) for the completed work log. The central new capability is that persisted lens enrichments rehydrate at library construction time via `PipelineBuilder::with_persisted_specs` — making vocabulary layers a durable property of the **context** rather than the **consumer process**, so cross-pollination between consumer domains happens automatically whenever any consumer holds the library against a shared context. TS-6 achieved: the end-to-end MCP consumer workflow (create context → `load_spec` → ingest → query through lens → load second spec → query across both vocabulary layers) works via the MCP transport.
 
 Cycle artifacts:
 - ADRs 036 (MCP query surface), 037 (consumer spec loading) — Accepted
@@ -53,4 +53,9 @@ Cycle artifacts:
 - Product discovery updated 2026-04-02 with multi-consumer interaction model and e2e acceptance criterion
 - Interaction specs for three stakeholders (consumer application developer, extractor author, engine developer)
 
-38 ADRs total. MCP surface reaches 16 tools (1 session + 1 ingest + 6 context + 7 graph read + 1 spec load). 492 tests passing as of WP-G.1 completion (424 lib + 67 acceptance + 1 doc).
+38 ADRs total. MCP surface at 16 tools (1 session + 1 ingest + 6 context + 7 graph read + 1 spec load). 494 tests passing as of MCP cycle BUILD completion (426 lib + 67 acceptance + 1 doc). No conformance debt carried forward.
+
+**Next optional phases for the MCP cycle:**
+- `/rdd-play` — post-build experiential discovery (inhabit stakeholder roles, discover what specs missed)
+- `/rdd-synthesize` — mine the artifact trail for a publishable essay outline
+- `/rdd-graduate` — fold cycle knowledge into native docs and archive the scoped-cycle artifacts

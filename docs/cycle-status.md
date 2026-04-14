@@ -1,7 +1,7 @@
 # Active RDD Cycle: MCP Consumer Interaction Surface
 
 **Started:** 2026-04-01
-**Current phase:** BUILD (in progress — WP-A/B/C/D/E/F/G.1 done + pre-WP-F MCP ingest fix + load_spec no-context test, WP-G.2 remaining)
+**Current phase:** BUILD (✅ complete — all work packages shipped)
 **Artifact base:** ./docs/
 **Scope:** Scoped cycle — MCP transport query surface + multi-consumer spec/lens interaction model
 
@@ -24,7 +24,7 @@
 | BUILD (WP-F) | ✅ Complete | feat: MCP load_spec tool | 16th MCP tool. Inline spec_yaml parameter per ADR-036 §2. Handler delegates to `PlexusApi::load_spec`, marshalls `SpecLoadResult` via inline `serde_json::json!` (keeps MCP wire format decoupled from the API type), marshalls `SpecLoadError` via existing `err_text` pattern. 2 boundary tests: valid spec → JSON carries adapter_id + lens_namespace + vocabulary_edges_created; malformed YAML → `is_error: true` with "validation" substring. No-active-context error path is covered by WP-E's shared test (N+M+1 pruning). TS-6 reached: end-to-end MCP consumer workflow (create context → load_spec → ingest → query through lens) is now achievable. |
 | BUILD (WP-F follow-up) | ✅ Complete | test: load_spec returns error without active context | Dedicated boundary test for load_spec's `self.context()?` branch. Redundant with WP-E's shared-path test on paper but catches a specific regression mode (future change to load_spec's no-context handling that diverges from query tools). 8 lines, strictly additive coverage. |
 | BUILD (WP-G.1) | ✅ Complete | `98343bb` feat: evidence_trail accepts optional QueryFilter | Closes Invariant 59 for evidence_trail. `contributor_ids` and `min_corroboration` compose meaningfully with evidence-dimension edges; `relationship_prefix` included for API consistency (typically empty results — docstring and tool description note this). Breaking change to `PlexusApi::evidence_trail` and `query::evidence_trail` signatures: both gain required `Option<QueryFilter>` parameter. Threading applied to both StepQuery branches (references+contains branch 1, tagged_with branch 2). 2 new tests: unit-level filter-threading test + MCP-level boundary test using nonexistent-contributor filter to prove filter is actually applied. |
-| BUILD (WP-G.2) | ☐ Pending | — | RankBy::NormalizedWeight. Unblocked (open choice). Only remaining work package. |
+| BUILD (WP-G.2) | ✅ Complete | `22e24a2` feat: RankBy::NormalizedWeight variant | Closes ADR-034 conformance debt. `Box<dyn NormalizationStrategy>` variant; Clone/Copy/PartialEq/Eq derives dropped (zero usage in codebase); manual `Debug` impl. Signature change: `TraversalResult::rank_by` gains `&Context` parameter. New `PlexusApi::rank_traversal()` helper resolves the context internally so MCP remains thin-shell. NormalizedWeight NOT exposed via MCP — ADR-036 §1 specifies only "raw_weight" and "corroboration". Wart did not cascade — roadmap's worst-case (revert G.2) didn't materialize. 2 unit tests in `query::types::tests`. |
 
 ## Feed-Forward Signals
 
@@ -127,7 +127,20 @@ ARCHITECT complete (2026-04-07): system-design.md v1.2 with Amendment 5, roadmap
 - **Six-WP decomposition**: A (bug fix) / B (foundation + interior mutability) / C (load_spec / unload_spec on api) / D (rehydration via host + builder) / E (6 MCP query tools) / F (MCP load_spec tool) / G (evidence_trail filter + RankBy::NormalizedWeight, two commits).
 - **Standing principle set**: ADRs are immutable unless genuinely superseded — never amended casually to match what shipped.
 
-BUILD in progress. WP-A/B/C/D/E/F/G.1 complete + pre-WP-F MCP name-resolution fix + load_spec no-context test. TS-6 reached: end-to-end MCP consumer workflow achievable (create context → load_spec → ingest → query through lens → load second spec → query across both vocabulary layers). Remaining: WP-G.2 (RankBy::NormalizedWeight). Unblocked, open-choice. Remaining open decisions: RankBy::NormalizedWeight type-system fallout (WP-G.2).
+BUILD ✅ complete. All work packages shipped:
+- **WP-A** (`925d76a`): `register_specs_from_dir` wires enrichments and lens
+- **WP-B** (`7a12874`): specs persistence foundation, interior mutability, builder rehydration
+- **WP-C** (`22838b5`) + WP-C fix (`fbe7fb7`): load_spec and unload_spec on PlexusApi
+- **WP-D** (`6661d2c`): startup spec rehydration via host + builder
+- **Pre-WP-F** (`0b9d9d3`): api.ingest accepts context name, not UUID
+- **WP-E** (`38612bd`): 6 MCP query tools
+- **WP-F** (`11d686c`): MCP load_spec tool + housekeeping (`f54c030`); follow-up test (`8be7722`)
+- **WP-G.1** (`98343bb`): evidence_trail accepts optional QueryFilter + housekeeping (`9c1d6e4`)
+- **WP-G.2** (`22e24a2`): RankBy::NormalizedWeight variant
+
+TS-6 reached: end-to-end MCP consumer workflow achievable (create context → load_spec → ingest → query through lens → load second spec → query across both vocabulary layers). All open decisions resolved. No deferred conformance debt. Final test count: 494 (426 lib + 67 acceptance + 1 doc).
+
+**Next available phases:** `/rdd-play` (optional, post-build experiential discovery) or `/rdd-synthesize` (optional, essay outline). Or `/rdd-graduate` to fold the cycle's durable knowledge into native docs and archive the scoped-cycle artifacts.
 
 ### From BUILD (WP-F)
 57. WP-F shipped as a single thin-wrapper handler plus one `LoadSpecParams` struct — 18 lines of delegation + JSON marshalling + 2 boundary integration tests. No changes to `PlexusApi::load_spec` or any downstream code. All cycle work for ADR-036 §1 is now complete.
@@ -141,3 +154,11 @@ BUILD in progress. WP-A/B/C/D/E/F/G.1 complete + pre-WP-F MCP name-resolution fi
 63. `relationship_prefix` included for API consistency but typically yields empty results for evidence trails because evidence-dimension edges (`references`, `contains`, `tagged_with`) do not use `lens:` prefixes. Tool description and docstrings document this — explicit upfront rather than a surprise for LLM consumers.
 64. Boundary test design pattern for filter-threading verification: use a filter that SHOULD yield empty results if applied (e.g., nonexistent contributor ID), then assert the empty outcome. This proves the filter is actually threaded, not silently ignored.
 65. 492 tests total (424 lib + 67 acceptance + 1 doc), all passing as of WP-G.1 completion. No new module-level dependency edges; the `composable_filter()` helper from WP-E was reused verbatim — WP-E's pattern held up without modification.
+
+### From BUILD (WP-G.2)
+66. WP-G.2 closes ADR-034 conformance debt (`RankBy::NormalizedWeight` variant specified but never implemented). Type-system wart flagged in the roadmap did not cascade: `Clone/Copy/PartialEq/Eq` were unused on `RankBy` (grep-verified), so dropping them was free. Manual `Debug` impl was 8 lines.
+67. Container choice: `Box<dyn NormalizationStrategy>` (not `Arc`). Rationale: Arc's payoff is cheap-Clone; nothing in the codebase clones `RankBy`. Box is simpler and smaller today. If a future consumer needs Clone, revisit.
+68. `TraversalResult::rank_by` signature grew a `&Context` parameter — needed for NormalizedWeight's per-node-neighborhood computation; uniformly accepted for RawWeight and Corroboration. To preserve the thin-shell transport principle (Invariant 38), MCP never fetches Context directly; `PlexusApi::rank_traversal` helper does it internally.
+69. NormalizedWeight NOT exposed via MCP — ADR-036 §1 specifies only "raw_weight" and "corroboration". Adding it to `parse_rank_by` would be feature creep. If LLM consumers need normalized ranking later, amend ADR-036 formally rather than sneaking it in.
+70. Test design for rank dispatch: construct two source nodes with different neighborhood densities so normalized and raw orderings diverge. A silent-broken branch returning raw weights instead of normalized would fail the assertion — not a passable-by-accident test.
+71. 494 tests total (426 lib + 67 acceptance + 1 doc), all passing as of WP-G.2 completion. No new module-level dependency edges. Cycle BUILD phase is complete.
