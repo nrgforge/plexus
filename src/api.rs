@@ -34,7 +34,7 @@ use crate::graph::{
 use crate::graph::events::GraphEvent;
 use crate::provenance::{ChainView, MarkView, ProvenanceApi};
 use crate::query::{
-    self, EvidenceTrailResult, FindQuery, PathQuery, PathResult, QueryResult,
+    self, EvidenceTrailResult, FindQuery, PathQuery, PathResult, QueryFilter, QueryResult,
     TraversalResult, TraverseQuery,
 };
 use crate::storage::PersistedSpec;
@@ -141,17 +141,24 @@ impl PlexusApi {
     // --- Graph reads ---
 
     /// Query the evidence trail for a concept (ADR-013).
+    ///
+    /// The optional `filter` (ADR-036 §5, Invariant 59) scopes the trail to
+    /// edges passing the filter predicates. `contributor_ids` and
+    /// `min_corroboration` compose meaningfully with evidence-trail edges;
+    /// `relationship_prefix` typically returns empty results because
+    /// evidence-dimension edges do not use lens prefixes.
     pub fn evidence_trail(
         &self,
         context_id: &str,
         node_id: &str,
+        filter: Option<QueryFilter>,
     ) -> PlexusResult<EvidenceTrailResult> {
         let ctx_id = self.resolve(context_id)?;
         let context = self
             .engine
             .get_context(&ctx_id)
             .ok_or_else(|| PlexusError::ContextNotFound(ctx_id))?;
-        Ok(query::evidence_trail(node_id, &context))
+        Ok(query::evidence_trail(node_id, &context, filter))
     }
 
     /// Find nodes matching a query.

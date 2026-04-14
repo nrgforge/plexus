@@ -166,19 +166,37 @@ pub struct EvidenceTrailResult {
 /// Composes two StepQuery branches:
 /// - Branch 1: concept ← references ← contains (marks → chains)
 /// - Branch 2: concept ← tagged_with (fragments)
-pub fn evidence_trail(concept_id: impl Into<NodeId>, context: &Context) -> EvidenceTrailResult {
+///
+/// The optional `filter` is applied to every edge traversed across both
+/// branches (ADR-036 §5, Invariant 59). Filter semantics are defined by
+/// `QueryFilter::edge_passes`: `contributor_ids` and `min_corroboration`
+/// compose meaningfully with the provenance-dimension edges that evidence
+/// trails traverse. `relationship_prefix` typically returns empty results
+/// because evidence-dimension edges (`references`, `contains`, `tagged_with`)
+/// do not use a `lens:` prefix.
+pub fn evidence_trail(
+    concept_id: impl Into<NodeId>,
+    context: &Context,
+    filter: Option<QueryFilter>,
+) -> EvidenceTrailResult {
     let concept = concept_id.into();
 
     // Branch 1: marks referencing the concept, then chains containing those marks
-    let branch1 = StepQuery::from(concept.clone())
+    let mut branch1 = StepQuery::from(concept.clone())
         .step(Direction::Incoming, "references")
-        .step(Direction::Incoming, "contains")
-        .execute(context);
+        .step(Direction::Incoming, "contains");
+    if let Some(ref f) = filter {
+        branch1 = branch1.with_filter(f.clone());
+    }
+    let branch1 = branch1.execute(context);
 
     // Branch 2: fragments tagged with the concept
-    let branch2 = StepQuery::from(concept.clone())
-        .step(Direction::Incoming, "tagged_with")
-        .execute(context);
+    let mut branch2 = StepQuery::from(concept.clone())
+        .step(Direction::Incoming, "tagged_with");
+    if let Some(f) = filter {
+        branch2 = branch2.with_filter(f);
+    }
+    let branch2 = branch2.execute(context);
 
     let marks = branch1.at_step(0).to_vec();
     let chains = branch1.at_step(1).to_vec();
@@ -430,7 +448,7 @@ mod tests {
     fn evidence_trail_returns_all_evidence() {
         let ctx = evidence_context();
 
-        let result = evidence_trail("concept:travel", &ctx);
+        let result = evidence_trail("concept:travel", &ctx, None);
 
         assert_eq!(result.marks.len(), 1);
         assert_eq!(result.marks[0].id.to_string(), "mark:1");
@@ -448,7 +466,7 @@ mod tests {
         let mut ctx = Context::new("test");
         add(&mut ctx, node("concept:obscure", "concept", dimension::SEMANTIC));
 
-        let result = evidence_trail("concept:obscure", &ctx);
+        let result = evidence_trail("concept:obscure", &ctx, None);
 
         assert_eq!(result.marks.len(), 0);
         assert_eq!(result.fragments.len(), 0);
@@ -461,7 +479,7 @@ mod tests {
     fn evidence_trail_composes_two_branches() {
         let ctx = evidence_context();
 
-        let result = evidence_trail("concept:travel", &ctx);
+        let result = evidence_trail("concept:travel", &ctx, None);
 
         // Branch 1 found marks and chains; branch 2 found fragments.
         // If these were a single query, fragments would need to be at step 0
@@ -470,5 +488,90 @@ mod tests {
         assert!(!result.marks.is_empty(), "branch 1 step 0: marks");
         assert!(!result.chains.is_empty(), "branch 1 step 1: chains");
         assert!(!result.fragments.is_empty(), "branch 2 step 0: fragments");
+    }
+
+    // === Scenario 10 (WP-G.1): Evidence trail accepts optional QueryFilter ===
+    //
+    // Covers scenarios/036 § Evidence Trail Filter Conformance:
+    // "Given a context with a concept node referenced by marks from adapters
+    // 'adapter-a' and 'adapter-b', When evidence_trail is called with
+    // contributor_ids: ['adapter-a'], Then only marks and chains from
+    // 'adapter-a' appear in the trail."
+    #[test]
+    fn evidence_trail_with_filter_scopes_to_contributor() {
+        let mut ctx = Context::new("test");
+
+        add(&mut ctx, node("concept:travel", "concept", dimension::SEMANTIC));
+        add(&mut ctx, node("mark:a", "mark", dimension::PROVENANCE));
+        add(&mut ctx, node("mark:b", "mark", dimension::PROVENANCE));
+        add(&mut ctx, node("chain:a", "chain", dimension::PROVENANCE));
+        add(&mut ctx, node("chain:b", "chain", dimension::PROVENANCE));
+
+        // mark:a → concept, contributed by adapter-a
+        let mut ref_a = Edge::new_cross_dimensional(
+            NodeId::from("mark:a"), dimension::PROVENANCE,
+            NodeId::from("concept:travel"), dimension::SEMANTIC,
+            "references",
+        );
+        ref_a.contributions.insert("adapter-a".into(), 1.0);
+        ctx.edges.push(ref_a);
+
+        // mark:b → concept, contributed by adapter-b
+        let mut ref_b = Edge::new_cross_dimensional(
+            NodeId::from("mark:b"), dimension::PROVENANCE,
+            NodeId::from("concept:travel"), dimension::SEMANTIC,
+            "references",
+        );
+        ref_b.contributions.insert("adapter-b".into(), 1.0);
+        ctx.edges.push(ref_b);
+
+        // chain:a contains mark:a, contributed by adapter-a
+        let mut contains_a = Edge::new(
+            NodeId::from("chain:a"),
+            NodeId::from("mark:a"),
+            "contains",
+        );
+        contains_a.contributions.insert("adapter-a".into(), 1.0);
+        ctx.edges.push(contains_a);
+
+        // chain:b contains mark:b, contributed by adapter-b
+        let mut contains_b = Edge::new(
+            NodeId::from("chain:b"),
+            NodeId::from("mark:b"),
+            "contains",
+        );
+        contains_b.contributions.insert("adapter-b".into(), 1.0);
+        ctx.edges.push(contains_b);
+
+        let filter = QueryFilter {
+            contributor_ids: Some(vec!["adapter-a".into()]),
+            ..Default::default()
+        };
+
+        let result = evidence_trail("concept:travel", &ctx, Some(filter));
+
+        let mark_ids: Vec<String> = result.marks.iter().map(|m| m.id.to_string()).collect();
+        let chain_ids: Vec<String> = result.chains.iter().map(|c| c.id.to_string()).collect();
+
+        assert!(
+            mark_ids.contains(&"mark:a".to_string()),
+            "adapter-a's mark should be in trail, got: {:?}",
+            mark_ids
+        );
+        assert!(
+            !mark_ids.contains(&"mark:b".to_string()),
+            "adapter-b's mark should be filtered out, got: {:?}",
+            mark_ids
+        );
+        assert!(
+            chain_ids.contains(&"chain:a".to_string()),
+            "adapter-a's chain should be in trail, got: {:?}",
+            chain_ids
+        );
+        assert!(
+            !chain_ids.contains(&"chain:b".to_string()),
+            "adapter-b's chain should be filtered out, got: {:?}",
+            chain_ids
+        );
     }
 }

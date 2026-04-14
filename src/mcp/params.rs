@@ -51,6 +51,12 @@ pub struct ContextSourceParams {
 pub struct EvidenceTrailParams {
     #[schemars(description = "The node ID to query evidence for (e.g. a concept ID)")]
     pub node_id: String,
+    #[schemars(description = "Only include edges contributed by at least one of these adapter/enrichment IDs. Use this to scope the evidence trail to a specific adapter's contributions.")]
+    pub contributor_ids: Option<Vec<String>>,
+    #[schemars(description = "Only include edges whose relationship starts with this prefix. Included for API consistency; typically returns empty results for evidence_trail because evidence-dimension edges do not use lens prefixes.")]
+    pub relationship_prefix: Option<String>,
+    #[schemars(description = "Only include edges having at least this many distinct contributors (evidence diversity threshold).")]
+    pub min_corroboration: Option<usize>,
 }
 
 // ── Query tools (ADR-036 §1) — flat parameter surface (§2) ─────────────

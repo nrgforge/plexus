@@ -238,12 +238,18 @@ impl PlexusMcpServer {
 
     // ── Graph reads ────────────────────────────────────────────────────
 
-    #[tool(description = "Query the evidence trail for a concept: marks, fragments, and chains (ADR-013)")]
+    #[tool(description = "Query the evidence trail for a concept: marks, fragments, and chains (ADR-013). Optional filter fields scope the trail: contributor_ids limits to edges contributed by specified adapters; min_corroboration requires edges to have at least N distinct contributors. relationship_prefix is included for API consistency but typically returns empty results for evidence trails, since evidence-dimension edges (references, contains, tagged_with) do not use lens prefixes.")]
     fn evidence_trail(
         &self,
         Parameters(p): Parameters<EvidenceTrailParams>,
     ) -> Result<CallToolResult, McpError> {
-        match self.api.evidence_trail(&self.context()?, &p.node_id) {
+        let ctx = self.context()?;
+        let filter = composable_filter(
+            p.contributor_ids,
+            p.relationship_prefix,
+            p.min_corroboration,
+        );
+        match self.api.evidence_trail(&ctx, &p.node_id, filter) {
             Ok(result) => ok_text(serde_json::to_string_pretty(&result).unwrap()),
             Err(e) => err_text(e.to_string()),
         }
@@ -805,6 +811,45 @@ emit:
             body.contains("validation"),
             "error body should mention validation failure, got: {}",
             body
+        );
+    }
+
+    #[tokio::test]
+    async fn evidence_trail_accepts_filter_params() {
+        // WP-G.1: verifies that optional filter fields on EvidenceTrailParams
+        // flow through the MCP layer into PlexusApi::evidence_trail. Filter
+        // semantics are tested at the query layer in query::step::tests; this
+        // test only verifies MCP-to-API parameter threading.
+        let server = server_with_context("t");
+        seed_fragment(&server, "t", "Filter wiring test", vec!["wiring"]).await;
+
+        let result = server
+            .evidence_trail(Parameters(EvidenceTrailParams {
+                node_id: "concept:wiring".into(),
+                contributor_ids: Some(vec!["nonexistent-adapter".into()]),
+                relationship_prefix: None,
+                min_corroboration: None,
+            }))
+            .expect("evidence_trail with filter");
+
+        // With a filter for a contributor that doesn't exist, the trail
+        // should be empty — proving the filter was actually applied.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text_of(&result)).expect("json parse");
+        let marks = parsed.get("marks").and_then(|v| v.as_array()).expect("marks array");
+        let fragments = parsed
+            .get("fragments")
+            .and_then(|v| v.as_array())
+            .expect("fragments array");
+        assert!(
+            marks.is_empty(),
+            "filter for nonexistent adapter should yield no marks, got: {:?}",
+            marks
+        );
+        assert!(
+            fragments.is_empty(),
+            "filter for nonexistent adapter should yield no fragments, got: {:?}",
+            fragments
         );
     }
 

@@ -160,8 +160,8 @@ async fn evidence_trail_returns_provenance() {
         "concept:systems-design must exist before calling evidence_trail"
     );
 
-    // evidence_trail(concept_id, &context) — concept first, context second
-    let trail = evidence_trail(concept_id.clone(), &ctx);
+    // evidence_trail(concept_id, &context, filter)
+    let trail = evidence_trail(concept_id.clone(), &ctx, None);
 
     assert_eq!(
         trail.concept, concept_id,
