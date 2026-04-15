@@ -1,6 +1,20 @@
 # ADR-037: Consumer Spec Loading
 
-**Status:** Accepted
+**Status:** Accepted (§4 superseded 2026-04-14)
+
+## Supersession note (2026-04-14, MCP cycle WP-H.1)
+
+§4 ("Fix `register_specs_from_dir` to wire complete specs") is superseded. File-based spec auto-discovery is removed entirely from the pipeline: `IngestPipeline::register_specs_from_dir`, `PipelineBuilder::with_adapter_specs`, and the `adapter-specs/` directory call in `default_pipeline` no longer exist. The decision to fix the file-based wiring gap (the motivating driver for §4) is replaced by the decision to remove the file-based path altogether.
+
+Rationale: loading a spec must be intentional per Invariant 61 (consumer owns spec). File-based auto-discovery loads specs on the consumer's behalf based on directory-scan side effects, not on an explicit `load_spec` call — a behavior the consumer did not request. It also created latent double-registration: a spec present both in `adapter-specs/` and in the persisted `specs` table would be registered twice during `default_pipeline` construction. The programmatic `load_spec` path (§1) is the single, intentional delivery mechanism after this change.
+
+**Behavior change consequences:**
+- A consumer that previously dropped YAML files into `{project_dir}/adapter-specs/` will now silently do nothing on startup. No warning is emitted. This is deliberate: the `adapter-specs/` convention is no longer a supported surface.
+- `PlexusMcpServer::with_project_dir` is also removed — its sole purpose was to thread `project_dir` into `with_adapter_specs`. Hosts call `PlexusMcpServer::new(engine)` directly.
+- §2's "first-time `register_specs_from_dir` on a new deployment" and "startup re-registration ... from file-based auto-discovery after a restart" paths no longer apply. The only initial-load path is `load_spec`; the only startup-rehydration path is the `specs` table via `PipelineBuilder::with_persisted_specs` (ADR-037 §2, unchanged).
+- §Consequences line "File-based auto-discovery and programmatic loading converge on the same wiring logic" is moot — there is one path, not two converged paths.
+
+The original §4 text is preserved below as historical record. Do not implement it.
 
 ## Context
 

@@ -15,7 +15,6 @@ use crate::graph::events::GraphEvent;
 use crate::adapter::traits::{Adapter, AdapterInput};
 use crate::adapter::types::OutboundEvent;
 use crate::graph::{ContextId, PlexusEngine};
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 /// The unified ingest pipeline.
@@ -104,81 +103,6 @@ impl IngestPipeline {
     pub fn registered_input_kinds(&self) -> Vec<String> {
         self.adapters.read().expect("adapters lock poisoned")
             .iter().map(|a| a.input_kind().to_string()).collect()
-    }
-
-    /// Load adapter specs from a directory and register each (ADR-028).
-    ///
-    /// Scans `dir` for `*.yaml` files, parses each as a `DeclarativeSpec`,
-    /// validates it, optionally attaches the llm-orc client, and registers
-    /// the resulting adapter. Returns the count of successfully loaded specs.
-    /// Invalid specs are logged to stderr and skipped.
-    pub fn register_specs_from_dir(
-        &self,
-        dir: &Path,
-        llm_client: Option<Arc<dyn crate::llm_orc::LlmOrcClient>>,
-    ) -> usize {
-        use crate::adapter::declarative::DeclarativeAdapter;
-
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::warn!(dir = %dir.display(), error = %e, "adapter-specs: cannot read directory");
-                return 0;
-            }
-        };
-
-        let mut count = 0;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
-                continue;
-            }
-
-            let yaml = match std::fs::read_to_string(&path) {
-                Ok(y) => y,
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "adapter-specs: cannot read file");
-                    continue;
-                }
-            };
-
-            let adapter = match DeclarativeAdapter::from_yaml(&yaml) {
-                Ok(a) => a,
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "adapter-specs: invalid spec");
-                    continue;
-                }
-            };
-
-            let adapter = if let Some(ref client) = llm_client {
-                adapter.with_llm_client(client.clone())
-            } else {
-                adapter
-            };
-
-            // Extract enrichments and lens before wrapping the adapter in Arc
-            let mut spec_enrichments = match adapter.enrichments() {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "adapter-specs: failed to extract enrichments");
-                    continue;
-                }
-            };
-            if let Some(lens) = adapter.lens() {
-                spec_enrichments.push(lens);
-            }
-
-            tracing::info!(
-                path = %path.display(),
-                input_kind = %adapter.input_kind(),
-                enrichment_count = spec_enrichments.len(),
-                "adapter-specs: registered spec"
-            );
-            self.register_integration(Arc::new(adapter), spec_enrichments);
-            count += 1;
-        }
-
-        count
     }
 
     /// Ingest with an explicit adapter, skipping input_kind routing.

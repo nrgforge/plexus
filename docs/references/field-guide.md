@@ -401,4 +401,4 @@ External LLM orchestration runs as a subprocess (ADR-024). The trait abstraction
 | Understand evidence trail | `query/step.rs` (`evidence_trail()`), ADR-013 |
 | Understand contribution tracking | `graph/edge.rs` (contributions), `adapter/sink/engine_sink.rs` (emit phase 2), ADR-003 |
 | Construct a pipeline | `adapter/pipeline/builder.rs` (`PipelineBuilder`) |
-| Add a declarative adapter spec | Create YAML in `{project_dir}/adapter-specs/`, see ADR-028 |
+| Add a declarative adapter spec | Call `PlexusApi::load_spec(context, yaml)` — the only intentional delivery path (ADR-037; file-based auto-discovery removed 2026-04-14, ADR-037 §4 supersession) |

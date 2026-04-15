@@ -4321,44 +4321,6 @@ emit:
         assert!(result.is_err(), "spec should be validated (dual obligation) at registration time");
     }
 
-    // === Scenario: Specs loaded from directory ===
-    #[tokio::test]
-    async fn specs_loaded_from_directory() {
-        use crate::adapter::IngestPipeline;
-        use crate::llm_orc::MockClient;
-
-        let engine = Arc::new(PlexusEngine::new());
-
-        // Write a valid spec to a temp directory
-        let tmp_dir = std::env::temp_dir().join("plexus_spec_test");
-        std::fs::create_dir_all(&tmp_dir).unwrap();
-        let spec_file = tmp_dir.join("test-domain.yaml");
-        std::fs::write(&spec_file, r#"
-adapter_id: test-domain-adapter
-input_kind: test-domain
-emit:
-  - create_node:
-      id: "concept:{input.tag | lowercase}"
-      type: concept
-      dimension: semantic
-"#).unwrap();
-
-        let client: Arc<dyn crate::llm_orc::LlmOrcClient> =
-            Arc::new(MockClient::available());
-
-        let mut pipeline = IngestPipeline::new(engine.clone());
-        let count = pipeline.register_specs_from_dir(&tmp_dir, Some(client));
-
-        assert_eq!(count, 1, "should load 1 spec from directory");
-        assert!(
-            pipeline.registered_input_kinds().iter().any(|k| k == "test-domain"),
-            "loaded spec's input_kind should be in pipeline"
-        );
-
-        // Cleanup
-        std::fs::remove_dir_all(&tmp_dir).ok();
-    }
-
     // ================================================================
     // Feature: Provenance Input Validation
     // ================================================================

@@ -16,7 +16,6 @@ use crate::adapter::enrichments::discovery_gap::DiscoveryGapEnrichment;
 use crate::adapter::enrichments::temporal_proximity::TemporalProximityEnrichment;
 use crate::graph::PlexusEngine;
 use crate::storage::PersistedSpec;
-use std::path::Path;
 use std::sync::Arc;
 
 /// Builder for `IngestPipeline` with standard adapter/enrichment registration.
@@ -111,26 +110,6 @@ impl PipelineBuilder {
         self
     }
 
-    /// Load declarative adapter specs from a directory (ADR-028).
-    ///
-    /// Scans `project_dir/adapter-specs/` for `*.yaml` files and registers
-    /// each as a `DeclarativeAdapter`. Creates an llm-orc subprocess client
-    /// scoped to the project directory.
-    pub fn with_adapter_specs(mut self, project_dir: &Path) -> Self {
-        let specs_dir = project_dir.join("adapter-specs");
-        if specs_dir.is_dir() {
-            let client: Arc<dyn crate::llm_orc::LlmOrcClient> = Arc::new(
-                crate::llm_orc::SubprocessClient::new()
-                    .with_project_dir(project_dir.to_string_lossy().to_string()),
-            );
-            let n = self.pipeline.register_specs_from_dir(&specs_dir, Some(client));
-            if n > 0 {
-                tracing::info!(count = n, "adapter-specs: loaded spec(s)");
-            }
-        }
-        self
-    }
-
     /// Rehydrate persisted lens enrichments at construction time (ADR-037 §2).
     ///
     /// For each persisted spec: parse the YAML, extract the lens enrichment
@@ -197,7 +176,6 @@ impl PipelineBuilder {
     ///     .with_default_structural_modules()
     ///     .with_default_enrichments()
     ///     .with_persisted_specs(persisted)
-    ///     .with_adapter_specs(project_dir)
     ///     .build()
     /// ```
     ///
@@ -205,22 +183,14 @@ impl PipelineBuilder {
     /// context's specs table (ADR-037 §2, Invariant 62 effect b). The
     /// specs table is the context's lens registry — any library instance
     /// against a context transiently runs every lens registered on it.
-    pub fn default_pipeline(
-        engine: Arc<PlexusEngine>,
-        project_dir: Option<&Path>,
-    ) -> IngestPipeline {
+    pub fn default_pipeline(engine: Arc<PlexusEngine>) -> IngestPipeline {
         let persisted = gather_persisted_specs(&engine);
-        let mut builder = Self::new(engine)
+        Self::new(engine)
             .with_default_adapters()
             .with_default_structural_modules()
             .with_default_enrichments()
-            .with_persisted_specs(persisted);
-
-        if let Some(dir) = project_dir {
-            builder = builder.with_adapter_specs(dir);
-        }
-
-        builder.build()
+            .with_persisted_specs(persisted)
+            .build()
     }
 }
 

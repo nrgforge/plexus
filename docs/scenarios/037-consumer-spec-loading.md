@@ -53,12 +53,7 @@
 **And** the co_occurrence enrichment is registered in the enrichment registry
 **And** the lens enrichment is registered in the enrichment registry
 
-### Scenario: register_specs_from_dir wires enrichments and lens
-**Given** a directory containing a valid spec YAML file with adapter ID "trellis", enrichments, and a lens section
-**When** `register_specs_from_dir` is called with that directory
-**Then** the adapter is registered for ingest routing
-**And** the spec's declared enrichments are registered in the enrichment registry
-**And** the lens enrichment is registered in the enrichment registry
+> **Note (2026-04-14):** A "register_specs_from_dir wires enrichments and lens" scenario was previously recorded here. It was removed when file-based spec auto-discovery was deleted from the pipeline (MCP cycle WP-H.1, ADR-037 §4 supersession). The remaining wiring scenario — `load_spec wires adapter, enrichments, and lens from a valid spec` — covers the intentional path.
 
 ---
 

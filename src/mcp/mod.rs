@@ -52,14 +52,7 @@ pub struct PlexusMcpServer {
 #[tool_router]
 impl PlexusMcpServer {
     pub fn new(engine: Arc<PlexusEngine>) -> Self {
-        Self::with_project_dir(engine, None)
-    }
-
-    pub fn with_project_dir(
-        engine: Arc<PlexusEngine>,
-        project_dir: Option<&std::path::Path>,
-    ) -> Self {
-        let pipeline = PipelineBuilder::default_pipeline(engine.clone(), project_dir);
+        let pipeline = PipelineBuilder::default_pipeline(engine.clone());
 
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
@@ -500,11 +493,7 @@ pub fn run_mcp_server(db_path: PathBuf) -> i32 {
             eng
         };
 
-        let project_dir = db_path.parent().unwrap_or(std::path::Path::new("."));
-        let server = PlexusMcpServer::with_project_dir(
-            Arc::new(engine),
-            Some(project_dir),
-        );
+        let server = PlexusMcpServer::new(Arc::new(engine));
 
         tracing::info!("plexus mcp server starting on stdio...");
 
