@@ -32,3 +32,5 @@ mod lens;
 mod filter;
 #[path = "acceptance/spec.rs"]
 mod spec;
+#[path = "acceptance/mcp_e2e.rs"]
+mod mcp_e2e;
