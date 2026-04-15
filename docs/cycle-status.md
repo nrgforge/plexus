@@ -1,7 +1,7 @@
 # Active RDD Cycle: MCP Consumer Interaction Surface
 
 **Started:** 2026-04-01
-**Current phase:** BUILD (in progress — WP-A through WP-G.2 shipped; **WP-H pending** for e2e harness + intentional-only spec loading)
+**Current phase:** BUILD (in progress — WP-A through WP-H.1 shipped; **WP-H.2 pending** for live MCP subprocess acceptance test)
 **Artifact base:** ./docs/
 **Scope:** Scoped cycle — MCP transport query surface + multi-consumer spec/lens interaction model
 
@@ -25,8 +25,8 @@
 | BUILD (WP-F follow-up) | ✅ Complete | test: load_spec returns error without active context | Dedicated boundary test for load_spec's `self.context()?` branch. Redundant with WP-E's shared-path test on paper but catches a specific regression mode (future change to load_spec's no-context handling that diverges from query tools). 8 lines, strictly additive coverage. |
 | BUILD (WP-G.1) | ✅ Complete | `98343bb` feat: evidence_trail accepts optional QueryFilter | Closes Invariant 59 for evidence_trail. `contributor_ids` and `min_corroboration` compose meaningfully with evidence-dimension edges; `relationship_prefix` included for API consistency (typically empty results — docstring and tool description note this). Breaking change to `PlexusApi::evidence_trail` and `query::evidence_trail` signatures: both gain required `Option<QueryFilter>` parameter. Threading applied to both StepQuery branches (references+contains branch 1, tagged_with branch 2). 2 new tests: unit-level filter-threading test + MCP-level boundary test using nonexistent-contributor filter to prove filter is actually applied. |
 | BUILD (WP-G.2) | ✅ Complete | `22e24a2` feat: RankBy::NormalizedWeight variant | Closes ADR-034 conformance debt. `Box<dyn NormalizationStrategy>` variant; Clone/Copy/PartialEq/Eq derives dropped (zero usage in codebase); manual `Debug` impl. Signature change: `TraversalResult::rank_by` gains `&Context` parameter. New `PlexusApi::rank_traversal()` helper resolves the context internally so MCP remains thin-shell. NormalizedWeight NOT exposed via MCP — ADR-036 §1 specifies only "raw_weight" and "corroboration". Wart did not cascade — roadmap's worst-case (revert G.2) didn't materialize. 2 unit tests in `query::types::tests`. |
-| BUILD (WP-H.1) | ☐ Pending | — | Remove file-based spec auto-loading (`register_specs_from_dir`, `with_adapter_specs`). ADR-037 supersession note. Design correction surfaced at WP-G.2 reflection: loading a spec must be intentional (Invariant 61); file-based path creates latent double-registration with persisted specs. Scope-reductive `refactor:` commit. |
-| BUILD (WP-H.2) | ☐ Pending | — | Live MCP subprocess acceptance test covering the two-consumer vocabulary-layer cross-pollination story end-to-end. Satisfies the product-discovery acceptance criterion at the transport layer. Raw JSON-RPC over stdin/stdout (no rmcp client dependency). **Hard dep on H.1** (unambiguous load_spec semantics) and on all prior WPs (full surface exercised). |
+| BUILD (WP-H.1) | ✅ Complete | `81ce6ef` refactor: remove file-based spec auto-discovery | Scope-reductive removal delivered in a single commit. Net −224 lines across 11 files. ADR-037 §4 superseded with dated note; domain-model Invariant 61 narrowed (Amendment 8); system-design Amendment 6 records the removal. Also removed `PlexusMcpServer::with_project_dir` (sole caller of `with_adapter_specs`) and the `project_dir` parameter on `default_pipeline` and `run_mcp_server` — scope broader than roadmap line-item list but follows mechanically from `with_adapter_specs` removal. 494 → 492 tests. Orthogonal rehydration path (`with_persisted_specs` → `specs` table) verified unaffected. |
+| BUILD (WP-H.2) | ☐ Pending | — | Live MCP subprocess acceptance test covering the two-consumer vocabulary-layer cross-pollination story end-to-end. Satisfies the product-discovery acceptance criterion at the transport layer. Raw JSON-RPC over stdin/stdout (no rmcp client dependency). Hard dep on H.1 (now unblocked). |
 
 ## Feed-Forward Signals
 
@@ -158,7 +158,16 @@ BUILD in progress. WP-A through WP-G.2 shipped (see Phase Status table above for
 70. Test design for rank dispatch: construct two source nodes with different neighborhood densities so normalized and raw orderings diverge. A silent-broken branch returning raw weights instead of normalized would fail the assertion — not a passable-by-accident test.
 71. 494 tests total (426 lib + 67 acceptance + 1 doc), all passing as of WP-G.2 completion. No new module-level dependency edges.
 
-### For BUILD (WP-H) — upcoming
+### From BUILD (WP-H.1)
+79. WP-H.1 shipped as `81ce6ef`. Net −224 lines across 11 files — scope-reductive refactor. One commit containing code + ADR supersession + domain-model amendment + system-design amendment + product-discovery revision + scenarios removal.
+80. Scope broader than the roadmap's WP-H.1 line-item list: `PlexusMcpServer::with_project_dir` and the `project_dir` parameter on `default_pipeline`/`run_mcp_server` also removed. Rationale: these existed solely to thread the project directory into `with_adapter_specs`; once the latter is gone, the plumbing is dead. Removing it keeps the API surface honest — callers that want to pass a project dir into the MCP server would now have no reason to.
+81. OQ-H5 resolved cleanly: `integration_tests.rs:4324-4360` test ("Specs loaded from directory") was exclusively exercising `register_specs_from_dir`. No orthogonal intent — deleted without translation.
+82. OQ-H2 resolved as deliberate behavior change: dropping YAML into `{project_dir}/adapter-specs/` now silently does nothing. Documented in ADR-037 supersession note.
+83. Invariant 61 amendment trail: the invariant's core assertion ("consumer owns the spec") is unchanged. The trailing clause "Whether the spec arrives as a file on disk or programmatically through the API, the operation is the same" was factually wrong post-H.1 and is struck. Recorded as domain-model Amendment 8. System-design Amendment 6 is the architectural record of the same change. ADR-037 §4 supersession note cites both.
+84. Orthogonal rehydration verified unaffected: `persisted_spec_rehydrates_across_restart`, `two_consumers_two_lenses_on_same_context`, and `builder_with_persisted_specs_{rehydrates_lens_only,skips_malformed}` all pass. The `specs` table → `with_persisted_specs` path is now the unique startup rehydration mechanism.
+85. 492 tests total (425 lib + 66 acceptance + 1 doc), all passing as of WP-H.1 completion. No new module-level dependency edges.
+
+### For BUILD (WP-H.2) — upcoming
 72. **Cycle acceptance criterion under-verified:** product-discovery (2026-04-02) named "first real MCP consumer workflow" as the e2e acceptance definition. WP-A through WP-G.2 built the components and verified each at the boundary test layer, but no single test exercises the full workflow through live MCP protocol framing. WP-H closes that gap via subprocess-driven acceptance test.
 73. **Design correction identified at WP-G.2 reflection:** file-based spec auto-loading (`register_specs_from_dir`) violates consumer-intent (Invariant 61) and creates latent double-registration with persisted specs. Removing it converges to one intentional path: `load_spec`. The original ADR-037 framing ("file-based auto-discovery is one delivery path; programmatic loading is the general case") is superseded — not casually, per the standing principle, but as a genuine decision change where the new rationale supersedes the old.
 74. **WP-H structure:** two sub-packages in one WP.
@@ -176,11 +185,11 @@ BUILD in progress. WP-A through WP-G.2 shipped (see Phase Status table above for
 
 ## Resumption Instructions for Fresh Session
 
-When resuming WP-H in a new session:
+When resuming WP-H.2 in a new session:
 
 1. Invoke `/rdd-build` — the skill will re-orient from cycle-status.md and roadmap.md.
-2. Read `docs/roadmap.md` § **WP-H** (the full sub-package plan including Code removals, Doc updates, Tests, Dependencies, Risk sections).
-3. Read `docs/roadmap.md` § **Open questions raised during WP-H planning** (OQ-H1 through OQ-H5).
-4. Start with **WP-H.1** (scope-reductive, low-risk warmup) before WP-H.2.
-5. For WP-H.2, the binary invocation shape is: `Command::new(env!("CARGO_BIN_EXE_plexus")).args(["mcp", "--db", &temp_db_path])`. The clap binary at `src/bin/plexus.rs` accepts `mcp --db <path>` as verified during WP-H planning.
+2. Read `docs/roadmap.md` § **WP-H.2** (live MCP e2e harness sub-package: test architecture, hello-world scenario, subprocess invocation, adapter choice, risk section).
+3. Read `docs/roadmap.md` § **Open questions raised during WP-H planning** — OQ-H1 (protocol version handshake), OQ-H3 (cross-pollination visibility via `find_nodes`), OQ-H4 (test timing budget) still open; OQ-H2 and OQ-H5 resolved by WP-H.1.
+4. The binary invocation shape is: `Command::new(env!("CARGO_BIN_EXE_plexus")).args(["mcp", "--db", &temp_db_path])`. The clap binary at `src/bin/plexus.rs` accepts `mcp --db <path>` as verified during WP-H planning.
+5. Test scope: ONE subprocess acceptance test exercising the two-consumer happy path. Use raw JSON-RPC over stdin/stdout (no rmcp client dependency). Verify spec loading is intentional-only after WP-H.1 removed the file-based path — dropping a YAML into any directory will not affect the test.
 6. At WP-H.2 completion, the cycle reaches TS-7 and BUILD is genuinely complete. Optional follow-up phases (play, synthesize, graduate) become available.
