@@ -32,6 +32,8 @@ mod lens;
 mod filter;
 #[path = "acceptance/spec.rs"]
 mod spec;
+#[path = "acceptance/mcp_harness.rs"]
+mod mcp_harness;
 #[path = "acceptance/mcp_e2e.rs"]
 mod mcp_e2e;
 #[path = "acceptance/llm_orc_wiring.rs"]
