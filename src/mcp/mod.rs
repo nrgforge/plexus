@@ -405,6 +405,21 @@ impl PlexusMcpServer {
             Err(e) => err_text(e.to_string()),
         }
     }
+
+    #[tool(description = "Unload a declarative adapter spec from the active context (ADR-037 §6). Deregisters the adapter from ingest routing and the lens enrichment from the pipeline; deletes the specs table row. Vocabulary edges previously written by the lens remain in the graph as durable data (Invariant 62) and stay queryable — unload stops new translations but does not retroactively remove prior ones.")]
+    fn unload_spec(
+        &self,
+        Parameters(p): Parameters<UnloadSpecParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let ctx = self.context()?;
+        match self.api.unload_spec(&ctx, &p.adapter_id) {
+            Ok(()) => ok_text(format!(
+                "unloaded spec '{}' from context '{}'",
+                p.adapter_id, ctx
+            )),
+            Err(e) => err_text(e.to_string()),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

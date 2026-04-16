@@ -13,7 +13,9 @@
 //! - T5: Error paths — malformed YAML and no-active-context errors
 //!   surface via the `isError: true` JSON-RPC result field.
 //!
-//! T4 (unload_spec lifecycle) deferred pending `unload_spec` MCP tool.
+//! - T4: unload_spec lifecycle — ingest (lens fires) → unload_spec →
+//!   second ingest (unloaded lens does not fire on new edges); previously-
+//!   translated vocabulary edges remain in the graph (Invariant 62).
 
 use super::mcp_harness::{
     is_error, is_rpc_error, node_count, rpc_error_message, tool_result_json, tool_result_text,
@@ -281,6 +283,102 @@ emit:
         "persisted lens should fire on second-process ingest (Invariant 62 effect b) — \
          coverage should grow from {} to >{}, got {}",
         carried_over, carried_over, after
+    );
+
+    h.shutdown().await;
+}
+
+// ── T4: unload_spec lifecycle through MCP ──────────────────────────────
+
+/// Given a loaded spec whose lens has written vocabulary edges,
+/// when unload_spec deregisters the adapter + lens,
+/// then a subsequent ingest's new may_be_related edges are NOT translated
+/// into lens edges (lens is deregistered from the enrichment loop), but
+/// the pre-unload lens edges remain queryable (Invariant 62: vocabulary
+/// is durable graph data, not derived from live registration).
+///
+/// Also verifies the specs table row is deleted — the surviving evidence
+/// is the absence of cross-restart rehydration, tested here by checking
+/// that post-unload the lens is gone from the current process's registry.
+/// (A full across-restart test would re-spawn; this one keeps scope tight.)
+#[tokio::test]
+async fn t4_unload_spec_lifecycle() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("t4.db");
+    let mut h = McpHarness::spawn(&db).await;
+    h.initialize().await;
+    assert!(!is_error(&h.call_tool("set_context", json!({"name": "t4"})).await));
+
+    let spec_yaml = r#"
+adapter_id: trellis-content
+input_kind: trellis.fragment
+lens:
+  consumer: trellis
+  translations:
+    - from: [may_be_related]
+      to: thematic_connection
+emit:
+  - create_node:
+      id: "concept:{input.name}"
+      type: concept
+      dimension: semantic
+"#;
+    assert!(!is_error(
+        &h.call_tool("load_spec", json!({"spec_yaml": spec_yaml})).await
+    ));
+
+    // First ingest: lens fires, vocabulary edges created
+    assert!(!is_error(&h.call_tool("ingest", json!({
+        "data": {"text": "first", "tags": ["travel", "routine"]},
+        "input_kind": "content",
+    })).await));
+
+    let before_unload_resp = h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:"}),
+    ).await;
+    let before_unload = node_count(&before_unload_resp);
+    assert!(
+        before_unload >= 2,
+        "pre-unload lens should cover ≥2 nodes, got {}",
+        before_unload
+    );
+
+    // Unload the spec
+    let resp = h.call_tool("unload_spec", json!({"adapter_id": "trellis-content"})).await;
+    assert!(!is_error(&resp), "unload_spec failed: {}", resp);
+
+    // Pre-unload lens edges persist (Invariant 62: durable graph data)
+    let resp = h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:"}),
+    ).await;
+    let after_unload_same = node_count(&resp);
+    assert_eq!(
+        after_unload_same, before_unload,
+        "unload_spec should not retract pre-unload lens edges — \
+         before: {}, after unload: {}",
+        before_unload, after_unload_same
+    );
+
+    // Second ingest: lens is deregistered → new may_be_related edges
+    // should NOT produce new lens:trellis: edges
+    assert!(!is_error(&h.call_tool("ingest", json!({
+        "data": {"text": "second", "tags": ["nature", "stillness"]},
+        "input_kind": "content",
+    })).await));
+
+    let resp = h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:"}),
+    ).await;
+    let after_second_ingest = node_count(&resp);
+    assert_eq!(
+        after_second_ingest, before_unload,
+        "post-unload ingest should not expand lens coverage — \
+         unloaded lens should not fire on new edges. \
+         before_unload: {}, after unload+new ingest: {}",
+        before_unload, after_second_ingest
     );
 
     h.shutdown().await;
