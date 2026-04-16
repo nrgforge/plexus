@@ -59,10 +59,11 @@ pub struct ExtractionCoordinator {
     semantic_adapter: Option<Arc<dyn Adapter>>,
     /// Shared context for creating background phase sinks (test path, no persistence)
     shared_context: Option<Arc<std::sync::Mutex<Context>>>,
-    /// Engine for creating background phase sinks (production path, persist-per-emission)
+    /// Engine for creating background phase sinks (production path,
+    /// persist-per-emission). The ContextId for each background sink is
+    /// derived from the per-ingest input context — one coordinator serves
+    /// all contexts the engine owns (library mode).
     engine: Option<Arc<crate::graph::PlexusEngine>>,
-    /// Context ID for engine-backed background sinks
-    engine_context_id: Option<crate::graph::ContextId>,
     /// Concurrency semaphore for structural analysis tasks
     analysis_semaphore: Arc<tokio::sync::Semaphore>,
     /// Concurrency semaphore for semantic extraction tasks
@@ -78,7 +79,6 @@ impl ExtractionCoordinator {
             semantic_adapter: None,
             shared_context: None,
             engine: None,
-            engine_context_id: None,
             analysis_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
             semantic_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
             background_tasks: Arc::new(TokioMutex::new(Vec::new())),
@@ -95,13 +95,13 @@ impl ExtractionCoordinator {
     ///
     /// Background phases use `EngineSink::for_engine()` which persists each emission
     /// through PlexusEngine (Invariant 30). Preferred over `with_context()`.
-    pub fn with_engine(
-        mut self,
-        engine: Arc<crate::graph::PlexusEngine>,
-        context_id: crate::graph::ContextId,
-    ) -> Self {
+    ///
+    /// The coordinator serves all contexts the engine owns (library mode).
+    /// Each background task derives its `ContextId` from the per-ingest
+    /// input context — one coordinator instance is shared across all
+    /// contexts.
+    pub fn with_engine(mut self, engine: Arc<crate::graph::PlexusEngine>) -> Self {
         self.engine = Some(engine);
-        self.engine_context_id = Some(context_id);
         self
     }
 
@@ -474,7 +474,11 @@ impl Adapter for ExtractionCoordinator {
 
         if has_work {
             let bg_engine = self.engine.clone();
-            let bg_context_id = self.engine_context_id.clone();
+            // Derive ContextId from the per-ingest input context — the
+            // coordinator serves all contexts the engine owns (library mode).
+            let bg_context_id: Option<crate::graph::ContextId> = bg_engine
+                .as_ref()
+                .map(|_| crate::graph::ContextId::from_string(&context_id));
             let bg_mutex = self.shared_context.clone();
 
             let has_backend = bg_engine.is_some() || bg_mutex.is_some();
@@ -1389,7 +1393,7 @@ mod tests {
         engine.upsert_context(ctx).unwrap();
 
         let mut coordinator = ExtractionCoordinator::new()
-            .with_engine(engine.clone(), context_id.clone());
+            .with_engine(engine.clone());
 
         let module: Arc<dyn StructuralModule> = Arc::new(EmittingModule {
             id: "extract-analysis-text-headings",
@@ -1441,7 +1445,7 @@ mod tests {
         engine.upsert_context(ctx).unwrap();
 
         let mut coordinator = ExtractionCoordinator::new()
-            .with_engine(engine.clone(), context_id.clone());
+            .with_engine(engine.clone());
 
         // Structural module (needed to trigger background task)
         let module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
@@ -1588,7 +1592,7 @@ mod tests {
         engine.upsert_context(ctx).unwrap();
 
         let mut coordinator = ExtractionCoordinator::new()
-            .with_engine(engine.clone(), context_id.clone());
+            .with_engine(engine.clone());
 
         // Passthrough structural module so semantic extraction chains
         let module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {

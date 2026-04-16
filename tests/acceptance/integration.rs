@@ -31,14 +31,11 @@ fn integration_enabled() -> bool {
 }
 
 /// Build a real coordinator wired with SubprocessClient + MarkdownStructureModule.
-fn build_real_coordinator(
-    engine: Arc<PlexusEngine>,
-    context_id: ContextId,
-) -> ExtractionCoordinator {
+fn build_real_coordinator(engine: Arc<PlexusEngine>) -> ExtractionCoordinator {
     let client: Arc<dyn plexus::llm_orc::LlmOrcClient> = Arc::new(SubprocessClient::new());
     let semantic = Arc::new(SemanticAdapter::new(client, "extract-semantic"));
     let mut coordinator = ExtractionCoordinator::new()
-        .with_engine(engine, context_id);
+        .with_engine(engine);
     coordinator.register_structural_module(Arc::new(MarkdownStructureModule::new()));
     coordinator.register_semantic_extraction(semantic);
     coordinator
@@ -74,7 +71,7 @@ async fn extraction_produces_concept_nodes_from_markdown() {
     }
 
     let (engine, context_id) = setup_engine();
-    let coordinator = build_real_coordinator(engine.clone(), context_id.clone());
+    let coordinator = build_real_coordinator(engine.clone());
     let sink = extraction_sink(engine.clone(), context_id.clone());
 
     let fixture_path = TestEnv::fixture("frontmatter.md");
@@ -115,7 +112,7 @@ async fn extraction_produces_relationships_between_concepts() {
     }
 
     let (engine, context_id) = setup_engine();
-    let coordinator = build_real_coordinator(engine.clone(), context_id.clone());
+    let coordinator = build_real_coordinator(engine.clone());
     let sink = extraction_sink(engine.clone(), context_id.clone());
 
     let fixture_path = TestEnv::fixture("simple.md");
@@ -152,7 +149,7 @@ async fn structural_analysis_feeds_vocabulary_to_semantic() {
     }
 
     let (engine, context_id) = setup_engine();
-    let coordinator = build_real_coordinator(engine.clone(), context_id.clone());
+    let coordinator = build_real_coordinator(engine.clone());
     let sink = extraction_sink(engine.clone(), context_id.clone());
 
     // Use simple.md — has headings that structural analysis will extract
@@ -197,7 +194,7 @@ async fn enrichments_fire_on_extraction_output() {
     }
 
     let (engine, context_id) = setup_engine();
-    let coordinator = build_real_coordinator(engine.clone(), context_id.clone());
+    let coordinator = build_real_coordinator(engine.clone());
     let sink = extraction_sink(engine.clone(), context_id.clone());
 
     let fixture_path = TestEnv::fixture("frontmatter.md");
@@ -255,7 +252,7 @@ async fn non_markdown_file_gets_no_structural_analysis() {
     }
 
     let (engine, context_id) = setup_engine();
-    let coordinator = build_real_coordinator(engine.clone(), context_id.clone());
+    let coordinator = build_real_coordinator(engine.clone());
     let sink = extraction_sink(engine.clone(), context_id.clone());
 
     // Use a .rs file — MarkdownStructureModule should NOT match

@@ -172,7 +172,7 @@ async fn semantic_extraction_with_mock_ensemble_produces_concepts() {
     // Wire coordinator with structural passthrough + semantic extraction
     let semantic = Arc::new(SemanticAdapter::new(mock_client, "extract-semantic"));
     let mut coordinator = ExtractionCoordinator::new()
-        .with_engine(engine.clone(), context_id.clone());
+        .with_engine(engine.clone());
     coordinator.register_structural_module(Arc::new(PassthroughModule));
     coordinator.register_semantic_extraction(semantic);
 
