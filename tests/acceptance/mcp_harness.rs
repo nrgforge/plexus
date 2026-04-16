@@ -107,11 +107,36 @@ impl McpHarness {
 
 // ── Tool-result helpers ────────────────────────────────────────────────
 
+/// Did the tool return a success response with `isError: true`?
+///
+/// This is the MCP tool-level error channel: the handler ran, returned
+/// Ok(CallToolResult) via the `err_text(...)` helper, and the JSON-RPC
+/// response shape is `{result: {content: [...], isError: true}}`.
 pub fn is_error(response: &Value) -> bool {
     response
         .pointer("/result/isError")
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
+}
+
+/// Did the JSON-RPC layer itself return an error?
+///
+/// This is the protocol-level error channel: the handler returned
+/// Err(McpError), so the response has no `result` field and instead
+/// carries `error: {code, message}`. Used for pre-dispatch failures
+/// like "no active context" (the handler short-circuits before calling
+/// into the API) and unknown tools.
+pub fn is_rpc_error(response: &Value) -> bool {
+    response.get("error").is_some()
+}
+
+/// Extract the RPC error message (from `response.error.message`).
+pub fn rpc_error_message(response: &Value) -> String {
+    response
+        .pointer("/error/message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 pub fn tool_result_text(response: &Value) -> String {
