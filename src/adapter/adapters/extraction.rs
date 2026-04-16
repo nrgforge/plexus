@@ -1,10 +1,10 @@
 //! Extraction coordinator — phased file extraction (ADR-019, ADR-030, ADR-031)
 //!
-//! Handles `extract-file` input kind. Runs Phase 1 (registration)
-//! synchronously, then spawns structural analysis + semantic extraction
-//! as background tokio tasks.
+//! Handles `extract-file` input kind. Runs registration synchronously,
+//! then spawns structural analysis + semantic extraction as background
+//! tokio tasks.
 //!
-//! Phase 1 — Registration (instant, blocking):
+//! Registration (instant, blocking):
 //!   File node (MIME type, size, path) + concept nodes from YAML frontmatter
 //!
 //! Structural analysis (moderate, background):
@@ -56,7 +56,7 @@ pub struct ExtractionCoordinator {
     /// Fan-out: all matching modules run for each file (Invariant 51).
     structural_modules: Vec<Arc<dyn StructuralModule>>,
     /// Semantic extraction adapter — runs after structural analysis
-    phase3_adapter: Option<Arc<dyn Adapter>>,
+    semantic_adapter: Option<Arc<dyn Adapter>>,
     /// Shared context for creating background phase sinks (test path, no persistence)
     shared_context: Option<Arc<std::sync::Mutex<Context>>>,
     /// Engine for creating background phase sinks (production path, persist-per-emission)
@@ -75,7 +75,7 @@ impl ExtractionCoordinator {
     pub fn new() -> Self {
         Self {
             structural_modules: Vec::new(),
-            phase3_adapter: None,
+            semantic_adapter: None,
             shared_context: None,
             engine: None,
             engine_context_id: None,
@@ -125,8 +125,8 @@ impl ExtractionCoordinator {
     /// Runs sequentially after structural analysis completes, within the same
     /// background task. Receives vocabulary + sections from structural analysis
     /// via `SemanticInput::with_structural_context()` (ADR-031).
-    pub fn register_phase3(&mut self, adapter: Arc<dyn Adapter>) {
-        self.phase3_adapter = Some(adapter);
+    pub fn register_semantic_extraction(&mut self, adapter: Arc<dyn Adapter>) {
+        self.semantic_adapter = Some(adapter);
     }
 
     /// Find all structural modules matching a MIME type (fan-out, Invariant 51).
@@ -272,14 +272,14 @@ fn extract_tags_from_frontmatter(frontmatter: &Value) -> Vec<String> {
     tags
 }
 
-/// Run Phase 1: file registration + metadata extraction.
+/// Run registration: file registration + metadata extraction.
 ///
 /// Creates:
 /// - File node in structure dimension (MIME type, size, path)
 /// - Concept nodes from YAML frontmatter tags in semantic dimension
 /// - tagged_with edges from file node to concepts
 /// - Extraction status node
-fn run_phase1(
+fn run_registration(
     file_path: &str,
     _adapter_id: &str,
 ) -> Result<(Emission, String, Option<String>), AdapterError> {
@@ -352,20 +352,20 @@ fn run_phase1(
         PropertyValue::String(file_path.to_string()),
     );
     status_node.properties.insert(
-        "phase1".to_string(),
+        "registration".to_string(),
         PropertyValue::String("complete".to_string()),
     );
     status_node.properties.insert(
-        "phase2".to_string(),
+        "structural_analysis".to_string(),
         PropertyValue::String("pending".to_string()),
     );
     status_node.properties.insert(
-        "phase3".to_string(),
+        "semantic_extraction".to_string(),
         PropertyValue::String("pending".to_string()),
     );
     if let Some(ref warning) = metadata_warning {
         status_node.properties.insert(
-            "phase1_warning".to_string(),
+            "registration_warning".to_string(),
             PropertyValue::String(warning.clone()),
         );
     }
@@ -412,7 +412,7 @@ fn update_extraction_status_via_engine(
 
 /// Create an EngineSink from either the engine path or the mutex path.
 ///
-/// Used by Phase 2 and Phase 3 to avoid duplicating sink construction.
+/// Used by structural analysis and semantic extraction to avoid duplicating sink construction.
 fn create_sink(
     engine: &Option<Arc<crate::graph::PlexusEngine>>,
     context_id: &Option<crate::graph::ContextId>,
@@ -461,16 +461,16 @@ impl Adapter for ExtractionCoordinator {
         let file_path = file_input.file_path.clone();
         let context_id = input.context_id.clone();
 
-        // Phase 1: synchronous registration
+        // Registration: synchronous
         let (emission, mime_type, _metadata_warning) =
-            run_phase1(&file_path, self.id())?;
+            run_registration(&file_path, self.id())?;
 
         sink.emit(emission).await?;
 
         // Structural analysis + semantic extraction: spawn background task
-        // if we have a backend and there's work to do (modules or Phase 3).
+        // if we have a backend and there's work to do (modules or semantic extraction).
         let matching = self.matching_modules(&mime_type);
-        let has_work = !matching.is_empty() || self.phase3_adapter.is_some();
+        let has_work = !matching.is_empty() || self.semantic_adapter.is_some();
 
         if has_work {
             let bg_engine = self.engine.clone();
@@ -491,7 +491,7 @@ impl Adapter for ExtractionCoordinator {
                 let tasks = self.background_tasks.clone();
                 let file_path_bg = file_path.clone();
                 let context_id_bg = context_id.clone();
-                let phase3_opt = self.phase3_adapter.clone();
+                let semantic_opt = self.semantic_adapter.clone();
 
                 let handle = tokio::spawn(async move {
                     // Structural analysis: acquire analysis semaphore
@@ -544,28 +544,28 @@ impl Adapter for ExtractionCoordinator {
                     // Update structural analysis status
                     let analysis_status = "complete".to_string();
                     if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
-                        update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "phase2", &analysis_status);
+                        update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "structural_analysis", &analysis_status);
                     } else if let Some(ref ctx) = bg_mutex {
-                        update_extraction_status(ctx, &file_path_bg, "phase2", &analysis_status);
+                        update_extraction_status(ctx, &file_path_bg, "structural_analysis", &analysis_status);
                     }
 
                     // Release analysis permit before semantic extraction
                     drop(_permit);
 
                     // Chain semantic extraction with structural context (ADR-031)
-                    if let Some(phase3) = phase3_opt {
-                        let _permit3 = sem_semantic.acquire().await.map_err(|e| {
+                    if let Some(semantic) = semantic_opt {
+                        let _semantic_permit = sem_semantic.acquire().await.map_err(|e| {
                             AdapterError::Internal(format!("semaphore closed: {}", e))
                         })?;
 
-                        let sink3 = create_sink(
+                        let semantic_sink = create_sink(
                             &bg_engine, &bg_context_id, &bg_mutex,
-                            phase3.id(), &context_id_bg,
+                            semantic.id(), &context_id_bg,
                         );
 
                         // Hand off vocabulary + sections from structural analysis
-                        let phase3_input = AdapterInput::new(
-                            phase3.input_kind(),
+                        let semantic_input_wrapped = AdapterInput::new(
+                            semantic.input_kind(),
                             SemanticInput::with_structural_context(
                                 file_path_bg.clone(),
                                 structural_output.sections,
@@ -574,9 +574,9 @@ impl Adapter for ExtractionCoordinator {
                             &context_id_bg,
                         );
 
-                        let result3 = phase3.process(&phase3_input, &sink3).await;
+                        let semantic_result = semantic.process(&semantic_input_wrapped, &semantic_sink).await;
 
-                        let status3_str = match &result3 {
+                        let semantic_status_str = match &semantic_result {
                             Ok(()) => "complete".to_string(),
                             Err(AdapterError::Skipped(ref reason)) => {
                                 format!("skipped: {}", reason)
@@ -584,13 +584,13 @@ impl Adapter for ExtractionCoordinator {
                             Err(ref e) => format!("failed: {}", e),
                         };
                         if let (Some(ref engine), Some(ref ctx_id)) = (&bg_engine, &bg_context_id) {
-                            update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "phase3", &status3_str);
+                            update_extraction_status_via_engine(engine, ctx_id, &file_path_bg, "semantic_extraction", &semantic_status_str);
                         } else if let Some(ref ctx) = bg_mutex {
-                            update_extraction_status(ctx, &file_path_bg, "phase3", &status3_str);
+                            update_extraction_status(ctx, &file_path_bg, "semantic_extraction", &semantic_status_str);
                         }
 
                         // Skipped is not a failure — return Ok
-                        return match result3 {
+                        return match semantic_result {
                             Err(AdapterError::Skipped(_)) => Ok(()),
                             other => other,
                         };
@@ -702,10 +702,10 @@ mod tests {
         }
     }
 
-    // --- Scenario: Extraction coordinator runs Phase 1 synchronously ---
+    // --- Scenario: Extraction coordinator runs registration synchronously ---
 
     #[tokio::test]
-    async fn phase1_runs_synchronously() {
+    async fn registration_runs_synchronously() {
         let coordinator = ExtractionCoordinator::new();
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
@@ -761,19 +761,19 @@ mod tests {
             .get_node(&status_id)
             .expect("extraction status should exist");
         assert_eq!(
-            status.properties.get("phase1"),
+            status.properties.get("registration"),
             Some(&PropertyValue::String("complete".to_string()))
         );
         assert_eq!(
-            status.properties.get("phase2"),
+            status.properties.get("structural_analysis"),
             Some(&PropertyValue::String("pending".to_string()))
         );
     }
 
-    // --- Scenario: Phase 1 metadata failure does not prevent file registration ---
+    // --- Scenario: registration metadata failure does not prevent file registration ---
 
     #[tokio::test]
-    async fn phase1_metadata_failure_still_registers_file() {
+    async fn registration_metadata_failure_still_registers_file() {
         let coordinator = ExtractionCoordinator::new();
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
@@ -812,11 +812,11 @@ mod tests {
         let status_id = NodeId::from_string(format!("extraction-status:{}", file_path_str));
         let status = snapshot.get_node(&status_id).expect("status should exist");
         assert_eq!(
-            status.properties.get("phase1"),
+            status.properties.get("registration"),
             Some(&PropertyValue::String("complete".to_string()))
         );
         assert!(
-            status.properties.get("phase1_warning").is_some(),
+            status.properties.get("registration_warning").is_some(),
             "should have metadata warning"
         );
     }
@@ -889,15 +889,15 @@ mod tests {
         let status = snapshot.get_node(&status_id).expect("status should exist");
 
         assert_eq!(
-            status.properties.get("phase1"),
+            status.properties.get("registration"),
             Some(&PropertyValue::String("complete".to_string()))
         );
         assert_eq!(
-            status.properties.get("phase2"),
+            status.properties.get("structural_analysis"),
             Some(&PropertyValue::String("pending".to_string()))
         );
         assert_eq!(
-            status.properties.get("phase3"),
+            status.properties.get("semantic_extraction"),
             Some(&PropertyValue::String("pending".to_string()))
         );
     }
@@ -964,16 +964,16 @@ mod tests {
             "test",
         );
 
-        // process() returns after Phase 1 — structural analysis runs in background
+        // process() returns after registration — structural analysis runs in background
         coordinator.process(&input, &sink).await.unwrap();
 
-        // Phase 1 results should be in context immediately
+        // registration results should be in context immediately
         {
             let snapshot = ctx.lock().unwrap();
             let file_id = NodeId::from_string(format!("file:{}", file_path_str));
             assert!(
                 snapshot.get_node(&file_id).is_some(),
-                "Phase 1 file node should exist"
+                "registration file node should exist"
             );
         }
 
@@ -998,7 +998,7 @@ mod tests {
             NodeId::from_string(format!("extraction-status:{}", file_path_str));
         let status = snapshot.get_node(&status_id).expect("status should exist");
         assert_eq!(
-            status.properties.get("phase2"),
+            status.properties.get("structural_analysis"),
             Some(&PropertyValue::String("complete".to_string()))
         );
     }
@@ -1027,7 +1027,7 @@ mod tests {
         });
         coordinator.register_structural_module(vocab_module);
 
-        // Phase 3 that verifies it receives vocabulary + sections
+        // semantic extraction that verifies it receives vocabulary + sections
         let vocab_received = Arc::new(Mutex::new(Vec::new()));
         let sections_received = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let vr = vocab_received.clone();
@@ -1058,7 +1058,7 @@ mod tests {
             }
         }
 
-        coordinator.register_phase3(Arc::new(VocabVerifier {
+        coordinator.register_semantic_extraction(Arc::new(VocabVerifier {
             vocab: vr,
             section_count: sr,
         }));
@@ -1096,16 +1096,16 @@ mod tests {
 
         let mut coordinator = ExtractionCoordinator::new().with_context(ctx.clone());
 
-        // No structural modules registered, but Phase 3 is registered
+        // No structural modules registered, but semantic extraction is registered
         let received = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = received.clone();
 
-        struct Phase3Marker {
+        struct SemanticMarker {
             ran: Arc<std::sync::atomic::AtomicBool>,
         }
 
         #[async_trait]
-        impl Adapter for Phase3Marker {
+        impl Adapter for SemanticMarker {
             fn id(&self) -> &str { "extract-semantic" }
             fn input_kind(&self) -> &str { "extract-semantic" }
             async fn process(
@@ -1118,7 +1118,7 @@ mod tests {
             }
         }
 
-        coordinator.register_phase3(Arc::new(Phase3Marker { ran: flag }));
+        coordinator.register_semantic_extraction(Arc::new(SemanticMarker { ran: flag }));
 
         let dir = create_temp_file("passthrough.md", "# Passthrough\n\nContent.");
         let file_path = dir.path().join("passthrough.md");
@@ -1134,7 +1134,7 @@ mod tests {
 
         assert!(
             received.load(std::sync::atomic::Ordering::SeqCst),
-            "Phase 3 should run even with no structural modules (empty passthrough)"
+            "semantic extraction should run even with no structural modules (empty passthrough)"
         );
     }
 
@@ -1155,10 +1155,10 @@ mod tests {
         });
         coordinator.register_structural_module(emitting);
 
-        // Phase 3: fails (llm-orc unavailable)
-        struct FailingPhase3;
+        // semantic extraction: fails (llm-orc unavailable)
+        struct FailingSemantic;
         #[async_trait]
-        impl Adapter for FailingPhase3 {
+        impl Adapter for FailingSemantic {
             fn id(&self) -> &str { "extract-semantic" }
             fn input_kind(&self) -> &str { "extract-semantic" }
             async fn process(
@@ -1167,7 +1167,7 @@ mod tests {
                 Err(AdapterError::Internal("llm-orc unavailable".to_string()))
             }
         }
-        coordinator.register_phase3(Arc::new(FailingPhase3));
+        coordinator.register_semantic_extraction(Arc::new(FailingSemantic));
 
         let dir = create_temp_file(
             "fail-test.md",
@@ -1189,41 +1189,41 @@ mod tests {
         let results = coordinator.wait_for_background().await;
         assert!(
             results.iter().any(|r| r.is_err()),
-            "Phase 3 should have failed"
+            "semantic extraction should have failed"
         );
 
-        // Phase 1 results remain
+        // registration results remain
         let snapshot = ctx.lock().unwrap();
         let file_id = NodeId::from_string(format!("file:{}", file_path_str));
-        assert!(snapshot.get_node(&file_id).is_some(), "Phase 1 file node persists");
+        assert!(snapshot.get_node(&file_id).is_some(), "registration file node persists");
         assert!(
             snapshot.get_node(&NodeId::from_string("concept:resilience")).is_some(),
-            "Phase 1 frontmatter concept persists"
+            "registration frontmatter concept persists"
         );
 
         // Structural analysis results remain
         assert!(
             snapshot.get_node(&NodeId::from_string("concept:structural-discovery")).is_some(),
-            "Structural module output persists despite Phase 3 failure"
+            "Structural module output persists despite semantic extraction failure"
         );
 
-        // Phase 3 status shows failure
+        // semantic extraction status shows failure
         let status_id = NodeId::from_string(format!("extraction-status:{}", file_path_str));
         let status = snapshot.get_node(&status_id).expect("status should exist");
         assert_eq!(
-            status.properties.get("phase2"),
+            status.properties.get("structural_analysis"),
             Some(&PropertyValue::String("complete".to_string()))
         );
-        let phase3_status = status.properties.get("phase3")
+        let semantic_status = status.properties.get("semantic_extraction")
             .and_then(|pv| match pv { PropertyValue::String(s) => Some(s.as_str()), _ => None })
             .unwrap();
-        assert!(phase3_status.starts_with("failed:"), "Phase 3 status: {}", phase3_status);
+        assert!(semantic_status.starts_with("failed:"), "semantic extraction status: {}", semantic_status);
     }
 
-    // --- Scenario: Phase 3 graceful degradation (ADR-021) ---
+    // --- Scenario: semantic extraction graceful degradation (ADR-021) ---
 
     #[tokio::test]
-    async fn phase3_graceful_degradation_when_unavailable() {
+    async fn semantic_extraction_graceful_degradation_when_unavailable() {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
 
@@ -1236,10 +1236,10 @@ mod tests {
         });
         coordinator.register_structural_module(module);
 
-        // Phase 3: skipped (llm-orc not running)
-        struct SkippingPhase3;
+        // semantic extraction: skipped (llm-orc not running)
+        struct SkippingSemantic;
         #[async_trait]
-        impl Adapter for SkippingPhase3 {
+        impl Adapter for SkippingSemantic {
             fn id(&self) -> &str { "extract-semantic" }
             fn input_kind(&self) -> &str { "extract-semantic" }
             async fn process(
@@ -1248,7 +1248,7 @@ mod tests {
                 Err(AdapterError::Skipped("llm-orc not running".to_string()))
             }
         }
-        coordinator.register_phase3(Arc::new(SkippingPhase3));
+        coordinator.register_semantic_extraction(Arc::new(SkippingSemantic));
 
         let dir = create_temp_file(
             "graceful.md",
@@ -1274,13 +1274,13 @@ mod tests {
         let status_id = NodeId::from_string(format!("extraction-status:{}", file_path_str));
         let status = snapshot.get_node(&status_id).expect("status should exist");
         assert_eq!(
-            status.properties.get("phase2"),
+            status.properties.get("structural_analysis"),
             Some(&PropertyValue::String("complete".to_string()))
         );
-        let phase3_status = status.properties.get("phase3")
+        let semantic_status = status.properties.get("semantic_extraction")
             .and_then(|pv| match pv { PropertyValue::String(s) => Some(s.as_str()), _ => None })
             .unwrap();
-        assert!(phase3_status.starts_with("skipped:"), "Phase 3: {}", phase3_status);
+        assert!(semantic_status.starts_with("skipped:"), "semantic extraction: {}", semantic_status);
     }
 
     // --- Scenario: Multiple modules fan-out and merge (Invariant 53) ---
@@ -1449,10 +1449,10 @@ mod tests {
         });
         coordinator.register_structural_module(module);
 
-        // Phase 3 emits a concept
-        struct EmittingPhase3;
+        // semantic extraction emits a concept
+        struct EmittingSemantic;
         #[async_trait]
-        impl Adapter for EmittingPhase3 {
+        impl Adapter for EmittingSemantic {
             fn id(&self) -> &str { "extract-semantic" }
             fn input_kind(&self) -> &str { "extract-semantic" }
             async fn process(&self, _: &AdapterInput, sink: &dyn AdapterSink) -> Result<(), AdapterError> {
@@ -1463,7 +1463,7 @@ mod tests {
                 Ok(())
             }
         }
-        coordinator.register_phase3(Arc::new(EmittingPhase3));
+        coordinator.register_semantic_extraction(Arc::new(EmittingSemantic));
 
         let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
             .with_framework_context(FrameworkContext {
@@ -1472,7 +1472,7 @@ mod tests {
                 input_summary: None,
             });
 
-        let dir = create_temp_file("engine-p3.md", "# Phase 3 engine test\n\nContent.");
+        let dir = create_temp_file("engine-p3.md", "# semantic extraction engine test\n\nContent.");
         let file_path = dir.path().join("engine-p3.md");
 
         let input = AdapterInput::new(
@@ -1492,11 +1492,11 @@ mod tests {
     }
 
     // ================================================================
-    // Coordinator-to-Phase 3 Type Alignment
+    // Coordinator-to-semantic extraction Type Alignment
     // ================================================================
 
     #[tokio::test]
-    async fn coordinator_sends_semantic_input_to_phase3() {
+    async fn coordinator_sends_semantic_input_to_semantic_extraction() {
         let ctx = Arc::new(Mutex::new(Context::new("test")));
         let sink = test_sink(ctx.clone(), "extract-coordinator");
 
@@ -1529,7 +1529,7 @@ mod tests {
             }
         }
 
-        coordinator.register_phase3(Arc::new(SemanticInputVerifier { received: received.clone() }));
+        coordinator.register_semantic_extraction(Arc::new(SemanticInputVerifier { received: received.clone() }));
 
         let dir = create_temp_file("type-align.md", "# Type alignment test\n\nContent.");
         let file_path = dir.path().join("type-align.md");
@@ -1542,11 +1542,11 @@ mod tests {
 
         coordinator.process(&input, &sink).await.unwrap();
         let results = coordinator.wait_for_background().await;
-        assert!(results.iter().all(|r| r.is_ok()), "Phase 3 should succeed — got: {:?}", results);
+        assert!(results.iter().all(|r| r.is_ok()), "semantic extraction should succeed — got: {:?}", results);
 
         assert!(
             received.load(std::sync::atomic::Ordering::SeqCst),
-            "Phase 3 should receive SemanticInput"
+            "semantic extraction should receive SemanticInput"
         );
     }
 
@@ -1590,12 +1590,12 @@ mod tests {
         let mut coordinator = ExtractionCoordinator::new()
             .with_engine(engine.clone(), context_id.clone());
 
-        // Passthrough structural module so Phase 3 chains
+        // Passthrough structural module so semantic extraction chains
         let module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
             id: "passthrough", mime: "text/",
         });
         coordinator.register_structural_module(module);
-        coordinator.register_phase3(semantic);
+        coordinator.register_semantic_extraction(semantic);
 
         let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
             .with_framework_context(FrameworkContext {

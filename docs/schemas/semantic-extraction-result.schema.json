@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://plexus.dev/schemas/phase3-result.schema.json",
-  "title": "Phase 3 Result",
-  "description": "Structured result from Phase 3 (semantic extraction via llm-orc). Parsed by SemanticAdapter::parse_response().",
+  "$id": "https://plexus.dev/schemas/semantic-extraction-result.schema.json",
+  "title": "Semantic Extraction Result",
+  "description": "Structured result from semantic extraction via llm-orc. Parsed by SemanticAdapter::parse_response().",
   "type": "object",
   "properties": {
     "concepts": {

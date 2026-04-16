@@ -232,9 +232,9 @@ flowchart TD
 
     subgraph Adapters["adapter/adapters"]
         content["ContentAdapter<br>(fragment → nodes + edges)"]
-        extraction["ExtractionCoordinator<br>(file → Phase 1 registration)"]
+        extraction["ExtractionCoordinator<br>(file → registration)"]
         provenance["ProvenanceAdapter<br>(mark/chain lifecycle)"]
-        semantic["SemanticAdapter<br>(Phase 3 via llm-orc)"]
+        semantic["SemanticAdapter<br>(semantic extraction via llm-orc)"]
         declarative["DeclarativeAdapter<br>(consumer YAML spec)"]
         analysis["GraphAnalysisAdapter<br>(external analysis results)"]
     end
@@ -701,7 +701,7 @@ flowchart TD
 | mcp → api | MCP integration tests (if present) | MCP tool handlers call real PlexusApi |
 | adapter/adapters → llm_orc | `semantic::tests::*` with mock LlmOrcClient | SemanticAdapter processes with mock client (real adapter, mock external) |
 | ExtractionCoordinator → StructuralModule | `extraction::tests::structural_*` | Real coordinator dispatches to real MarkdownStructureModule, output contains sections and vocabulary |
-| ExtractionCoordinator → SemanticAdapter | `extraction::tests::phase3_receives_structural_context` | Real coordinator passes vocabulary and sections to real SemanticAdapter (mock llm-orc) |
+| ExtractionCoordinator → SemanticAdapter | `extraction::tests::semantic_extraction_receives_structural_context` | Real coordinator passes vocabulary and sections to real SemanticAdapter (mock llm-orc) |
 | PipelineBuilder → MarkdownStructureModule | `builder::tests::default_pipeline_registers_markdown_module` | Default pipeline has markdown module registered; markdown files trigger structural analysis |
 | adapter/adapters → adapter/enrichments (lens) | `declarative::tests::lens_construction_from_yaml` | DeclarativeAdapter::lens() constructs real LensEnrichment from parsed YAML spec |
 | adapter/enrichments (lens) → enrichment loop | `integration_tests::lens_creates_translated_edges` | LensEnrichment runs in real enrichment loop, creates edges with `lens:` namespace |

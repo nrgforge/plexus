@@ -40,7 +40,7 @@ fn build_real_coordinator(
     let mut coordinator = ExtractionCoordinator::new()
         .with_engine(engine, context_id);
     coordinator.register_structural_module(Arc::new(MarkdownStructureModule::new()));
-    coordinator.register_phase3(semantic);
+    coordinator.register_semantic_extraction(semantic);
     coordinator
 }
 
@@ -173,14 +173,14 @@ async fn structural_analysis_feeds_vocabulary_to_semantic() {
     // Structural analysis should have produced file + concept nodes
     let ctx = engine.get_context(&context_id).expect("context exists");
 
-    // File node must exist (Phase 1)
+    // File node must exist (registration)
     let file_node_id = NodeId::from_string(format!("file:{}", file_path));
     assert!(
         ctx.get_node(&file_node_id).is_some(),
-        "file node should exist from Phase 1"
+        "file node should exist from registration"
     );
 
-    // Concept nodes should exist (from Phase 3 semantic extraction)
+    // Concept nodes should exist (from semantic extraction)
     let concept_count = ctx.nodes()
         .filter(|n| n.node_type == "concept")
         .count();
@@ -216,7 +216,7 @@ async fn enrichments_fire_on_extraction_output() {
 
     let ctx = engine.get_context(&context_id).expect("context exists");
 
-    // After extraction, Phase 1 frontmatter tags create tagged_with edges.
+    // After extraction, registration's frontmatter tags create tagged_with edges.
     // These edges involve concept nodes sharing the same file source,
     // which should trigger CoOccurrenceEnrichment to create may_be_related edges.
     let tagged_edges: Vec<_> = ctx.edges.iter()
@@ -271,7 +271,7 @@ async fn non_markdown_file_gets_no_structural_analysis() {
     coordinator.process(&input, &sink).await.unwrap();
     let bg_results = coordinator.wait_for_background().await;
 
-    // Phase 1 should create file node regardless
+    // Registration should create file node regardless
     let ctx = engine.get_context(&context_id).expect("context exists");
     let file_node_id = NodeId::from_string(format!("file:{}", file_path));
     assert!(
@@ -279,8 +279,8 @@ async fn non_markdown_file_gets_no_structural_analysis() {
         "file node should exist even for non-markdown files"
     );
 
-    // Background tasks should still run (Phase 3 gets empty structural context)
+    // Background tasks should still run (semantic extraction gets empty structural context)
     // Semantic extraction may still produce concepts from code
     let successes = bg_results.iter().filter(|r| r.is_ok()).count();
-    assert!(successes > 0, "Phase 3 should still run for non-markdown files: {:?}", bg_results);
+    assert!(successes > 0, "semantic extraction should still run for non-markdown files: {:?}", bg_results);
 }

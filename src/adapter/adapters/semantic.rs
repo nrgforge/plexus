@@ -1,14 +1,14 @@
-//! Phase 3 semantic adapter — LLM-based concept extraction (ADR-021)
+//! Semantic extraction adapter — LLM-based concept extraction (ADR-021)
 //!
-//! Delegates to llm-orc for deep semantic analysis. Runs as Phase 3
-//! in the extraction coordinator, after Phase 2 (heuristic analysis).
+//! Delegates to llm-orc for deep semantic analysis. Runs as the semantic
+//! extraction phase in the extraction coordinator, after structural analysis.
 //!
 //! When llm-orc is unavailable, returns `AdapterError::Skipped` for
 //! graceful degradation (Invariant 47).
 //!
 //! The adapter:
 //! 1. Checks llm-orc availability
-//! 2. Serializes Phase 2 output (from context) as input
+//! 2. Serializes structural analysis output (from context) as input
 //! 3. Invokes the extraction ensemble
 //! 4. Deserializes the response into concept nodes and edges
 
@@ -132,7 +132,7 @@ fn extract_json(text: &str) -> Option<serde_json::Value> {
 /// Shared construction: normalizes the label, creates a deterministic NodeId,
 /// and sets the label property. Callers add their own extra properties
 /// (confidence, concept_type, source, etc.) after this returns.
-/// Phase 3 semantic adapter — delegates to llm-orc for concept extraction.
+/// Semantic extraction adapter — delegates to llm-orc for concept extraction.
 pub struct SemanticAdapter {
     /// The llm-orc client (mock or real)
     client: Arc<dyn LlmOrcClient>,
@@ -150,8 +150,8 @@ impl SemanticAdapter {
 
     /// Build the input payload for llm-orc from the extraction context.
     ///
-    /// Produces structured JSON conforming to `docs/schemas/phase2-output.schema.json`.
-    /// Reads Phase 2 output from the shared context and serializes
+    /// Produces structured JSON conforming to `docs/schemas/structural-analysis-output.schema.json`.
+    /// Reads structural analysis output from the shared context and serializes
     /// relevant information (file path, extracted terms, sections).
     /// When sections are present, includes them so llm-orc can chunk along
     /// structural boundaries (ADR-021 Scenario 3).
@@ -184,7 +184,7 @@ impl SemanticAdapter {
         }
 
         if let Some(ctx) = context {
-            // Collect existing concepts (from Phase 1 frontmatter + Phase 2 analysis)
+            // Collect existing concepts (from registration frontmatter + structural analysis)
             let concepts: Vec<String> = ctx
                 .nodes()
                 .filter(|n| n.dimension == dimension::SEMANTIC && n.node_type == "concept")
@@ -211,7 +211,7 @@ impl SemanticAdapter {
             }
         }
 
-        serde_json::to_string(&payload).expect("Phase 2 output serialization should not fail")
+        serde_json::to_string(&payload).expect("structural analysis output serialization should not fail")
     }
 
 }
@@ -244,7 +244,7 @@ impl Adapter for SemanticAdapter {
             ));
         }
 
-        // Build input from Phase 2 context, including section boundaries
+        // Build input from structural analysis context, including section boundaries
         let input_text = self.build_input(semantic_input, None);
 
         // Invoke llm-orc ensemble
@@ -269,7 +269,7 @@ impl Adapter for SemanticAdapter {
         for (agent_name, agent_result) in &response.results {
             if let Some(ref text) = agent_result.response {
                 if let Some(parsed) = extract_json(text) {
-                    let contribution_key = format!("extract-phase3:{}", agent_name);
+                    let contribution_key = format!("extract-semantic:{}", agent_name);
                     let agent_emission =
                         self.parse_agent_response(&parsed, file_path, &contribution_key);
                     emission = emission.merge(agent_emission);
@@ -290,7 +290,7 @@ impl Adapter for SemanticAdapter {
 /// Build a tagged_with edge from a file node (structure) to a concept node (semantic).
 ///
 /// Sets combined_weight = 1.0 and inserts a contribution under `contribution_key`.
-/// Used by all Phase 3 parsers (standard, SpaCy, themes).
+/// Used by all semantic extraction parsers (standard, SpaCy, themes).
 fn tagged_with_edge(
     file_node_id: &NodeId,
     concept_id: NodeId,
@@ -712,10 +712,10 @@ mod tests {
         })
     }
 
-    // --- Scenario: Phase 3 delegates to llm-orc (ADR-021) ---
+    // --- Scenario: Semantic extraction delegates to llm-orc (ADR-021) ---
 
     #[tokio::test]
-    async fn phase3_delegates_to_llm_orc() {
+    async fn semantic_extraction_delegates_to_llm_orc() {
         // Mock llm-orc returns structured concepts
         let llm_response = r#"{
             "concepts": [
@@ -757,7 +757,7 @@ mod tests {
         let adapter = SemanticAdapter::new(mock_client, "semantic-extraction");
         let ctx = Arc::new(Mutex::new(Context::new("test")));
 
-        // Pre-populate with a file node (from Phase 1)
+        // Pre-populate with a file node (from registration)
         {
             let mut c = ctx.lock().unwrap();
             c.add_node(crate::adapter::file_node("/docs/example.md"));
@@ -816,10 +816,10 @@ mod tests {
         );
     }
 
-    // --- Scenario: Phase 3 graceful degradation via SemanticAdapter ---
+    // --- Scenario: Semantic extraction graceful degradation via SemanticAdapter ---
 
     #[tokio::test]
-    async fn phase3_skips_when_llm_orc_unavailable() {
+    async fn semantic_extraction_skips_when_llm_orc_unavailable() {
         let mock_client = Arc::new(MockClient::unavailable());
         let adapter = SemanticAdapter::new(mock_client, "semantic-extraction");
 
@@ -893,7 +893,7 @@ mod tests {
         assert_eq!(adapter.input_kind(), "extract-semantic");
     }
 
-    // --- Scenario: Long document chunking via Phase 2 boundaries (ADR-021) ---
+    // --- Scenario: Long document chunking via structural analysis boundaries (ADR-021) ---
 
     #[test]
     fn build_input_includes_section_boundaries() {
@@ -1055,7 +1055,7 @@ mod tests {
 
         let sink = test_sink(ctx.clone());
 
-        // Input with section boundaries (simulating Phase 2 output)
+        // Input with section boundaries (simulating structural analysis output)
         let input = AdapterInput::new(
             "extract-semantic",
             SemanticInput::with_sections(
@@ -1488,11 +1488,11 @@ mod tests {
 
         let has_primed = tagged.iter().any(|e| {
             e.contributions
-                .contains_key("extract-phase3:entity-primed-1")
+                .contains_key("extract-semantic:entity-primed-1")
         });
         let has_rel = tagged.iter().any(|e| {
             e.contributions
-                .contains_key("extract-phase3:relationship-1")
+                .contains_key("extract-semantic:relationship-1")
         });
 
         assert!(has_primed, "should have contribution from entity-primed-1");
@@ -1591,7 +1591,7 @@ mod tests {
         for edge in &implement_edges {
             assert!(
                 edge.contributions
-                    .contains_key("extract-phase3:spacy-extract"),
+                    .contains_key("extract-semantic:spacy-extract"),
                 "SpaCy edges should carry spacy-extract contribution"
             );
         }
@@ -1688,7 +1688,7 @@ mod tests {
         // Contribution key includes agent name
         for edge in &tagged {
             assert!(
-                edge.contributions.contains_key("extract-phase3:theme"),
+                edge.contributions.contains_key("extract-semantic:theme"),
                 "theme edges should carry theme contribution"
             );
         }

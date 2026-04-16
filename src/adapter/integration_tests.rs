@@ -3967,7 +3967,7 @@ mod tests {
         let extract_data = serde_json::json!({ "file_path": tmp.to_str().unwrap() });
         pipeline.ingest(ctx_id.as_str(), "extract-file", Box::new(extract_data)).await.unwrap();
 
-        // Phase 1 creates a file node in the graph
+        // Registration creates a file node in the graph
         let ctx = engine.get_context(&ctx_id).unwrap();
         let file_node_id = NodeId::from_string(format!("file:{}", tmp.to_str().unwrap()));
         assert!(ctx.get_node(&file_node_id).is_some(), "extract-file should create a file node");
@@ -4026,11 +4026,11 @@ mod tests {
         let json_data = serde_json::json!({ "file_path": tmp.to_str().unwrap() });
         let events = pipeline.ingest(ctx_id.as_str(), "extract-file", Box::new(json_data)).await.unwrap();
 
-        // Phase 1 should create a file node
+        // Registration should create a file node
         let ctx = engine.get_context(&ctx_id).unwrap();
         let file_node_id = NodeId::from_string(format!("file:{}", tmp.to_str().unwrap()));
         let file_node = ctx.get_node(&file_node_id);
-        assert!(file_node.is_some(), "Phase 1 should create a file node");
+        assert!(file_node.is_some(), "registration should create a file node");
         assert_eq!(file_node.unwrap().node_type, "file", "file node has correct node_type");
         // Note: ExtractionCoordinator doesn't implement transform_events,
         // so outbound events may be empty. The file node in the graph is the proof.

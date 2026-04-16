@@ -39,7 +39,7 @@ docs/
 │   └── essays/         ← 26 research essays (graduated)
 │       └── research-logs/ ← per-essay research process logs (21 logs)
 ├── papers/             ← publication drafts (plexus-design, semantic-extraction)
-├── schemas/            ← JSON schemas (phase2-output, phase3-result, graph-export, analysis-result)
+├── schemas/            ← JSON schemas (structural-analysis-output, semantic-extraction-result, graph-export, analysis-result)
 ├── references/
 │   ├── field-guide.md  ← module-to-code mapping, design rationale
 │   ├── experiment-data/ ← raw evidence trail for paper claims

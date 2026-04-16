@@ -20,7 +20,7 @@ pub struct TestEnv {
 }
 
 impl TestEnv {
-    /// Default env with `MockClient::unavailable()` — Phase 3 skips gracefully.
+    /// Default env with `MockClient::unavailable()` — semantic extraction skips gracefully.
     pub fn new() -> Self {
         let client = Arc::new(MockClient::unavailable());
         Self::with_mock_client(client)

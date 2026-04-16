@@ -1,10 +1,10 @@
 //! Extraction contract acceptance tests.
 //!
 //! Scenarios:
-//! - Phase 1 file extraction creates file node with MIME type and size
-//! - Phase 1 creates extraction status node tracking phase completion
-//! - Phase 1 extracts frontmatter tags from markdown files
-//! - Phase 3 with mock ensemble produces concept nodes and relationships
+//! - Registration creates file node with MIME type and size
+//! - Registration creates extraction status node tracking phase completion
+//! - Registration extracts frontmatter tags from markdown files
+//! - Semantic extraction with mock ensemble produces concept nodes and relationships
 
 use super::helpers::TestEnv;
 use plexus::adapter::extraction::{ExtractionCoordinator, ExtractFileInput};
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Minimal structural module that succeeds without emitting anything.
-/// Required because Phase 3 chains after structural analysis.
+/// Required because semantic extraction chains after structural analysis.
 struct PassthroughModule;
 
 #[async_trait]
@@ -31,10 +31,10 @@ impl StructuralModule for PassthroughModule {
     }
 }
 
-// --- Phase 1 tests (use standard pipeline via TestEnv) ---
+// --- Registration tests (use standard pipeline via TestEnv) ---
 
 #[tokio::test]
-async fn phase1_creates_file_node_with_mime_type_and_size() {
+async fn registration_creates_file_node_with_mime_type_and_size() {
     let env = TestEnv::new();
     let fixture_path = TestEnv::fixture("simple.md");
     let file_path = fixture_path.to_str().unwrap();
@@ -66,7 +66,7 @@ async fn phase1_creates_file_node_with_mime_type_and_size() {
 }
 
 #[tokio::test]
-async fn phase1_creates_extraction_status_node() {
+async fn registration_creates_extraction_status_node() {
     let env = TestEnv::new();
     let fixture_path = TestEnv::fixture("plain.txt");
     let file_path = fixture_path.to_str().unwrap();
@@ -86,14 +86,14 @@ async fn phase1_creates_extraction_status_node() {
     let status_node = ctx.get_node(&status_id).expect("extraction status node should exist");
 
     assert_eq!(
-        status_node.properties.get("phase1"),
+        status_node.properties.get("registration"),
         Some(&PropertyValue::String("complete".to_string())),
-        "phase1 should be marked complete"
+        "registration should be marked complete"
     );
 }
 
 #[tokio::test]
-async fn phase1_extracts_frontmatter_tags() {
+async fn registration_extracts_frontmatter_tags() {
     let env = TestEnv::new();
     let fixture_path = TestEnv::fixture("frontmatter.md");
     let file_path = fixture_path.to_str().unwrap();
@@ -136,10 +136,10 @@ async fn phase1_extracts_frontmatter_tags() {
     );
 }
 
-// --- Phase 3 test (custom wiring with mock ensemble) ---
+// --- Semantic extraction test (custom wiring with mock ensemble) ---
 
 #[tokio::test]
-async fn phase3_with_mock_ensemble_produces_concepts() {
+async fn semantic_extraction_with_mock_ensemble_produces_concepts() {
     // Build a mock ensemble response with concepts
     let mut results = HashMap::new();
     results.insert(
@@ -164,17 +164,17 @@ async fn phase3_with_mock_ensemble_produces_concepts() {
     // Build engine with store
     let store = Arc::new(SqliteStore::open_in_memory().unwrap());
     let engine = Arc::new(PlexusEngine::with_store(store.clone()));
-    let context_id = ContextId::from_string("phase3-test");
-    let mut ctx = Context::new("phase3-test");
+    let context_id = ContextId::from_string("semantic-extraction-test");
+    let mut ctx = Context::new("semantic-extraction-test");
     ctx.id = context_id.clone();
     engine.upsert_context(ctx).unwrap();
 
-    // Wire coordinator with structural passthrough + Phase 3 semantic
+    // Wire coordinator with structural passthrough + semantic extraction
     let semantic = Arc::new(SemanticAdapter::new(mock_client, "extract-semantic"));
     let mut coordinator = ExtractionCoordinator::new()
         .with_engine(engine.clone(), context_id.clone());
     coordinator.register_structural_module(Arc::new(PassthroughModule));
-    coordinator.register_phase3(semantic);
+    coordinator.register_semantic_extraction(semantic);
 
     let fixture_path = TestEnv::fixture("simple.md");
     let file_path = fixture_path.to_str().unwrap();
@@ -199,7 +199,7 @@ async fn phase3_with_mock_ensemble_produces_concepts() {
 
     assert!(
         bg_results.iter().all(|r| r.is_ok()),
-        "Phase 3 should succeed with mock client: {:?}",
+        "semantic extraction should succeed with mock client: {:?}",
         bg_results
     );
 
@@ -207,6 +207,6 @@ async fn phase3_with_mock_ensemble_produces_concepts() {
     let ctx = engine.get_context(&context_id).expect("context exists");
     assert!(
         ctx.get_node(&NodeId::from_string("concept:testing")).is_some(),
-        "concept:testing should be produced by Phase 3 mock ensemble"
+        "concept:testing should be produced by semantic extraction mock ensemble"
     );
 }

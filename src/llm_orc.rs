@@ -6,7 +6,7 @@
 //! - `MockClient`: returns preconfigured responses (testing)
 //!
 //! llm-orc runs as a persistent service. Plexus calls it for:
-//! - Phase 3 semantic extraction (ADR-021)
+//! - Semantic extraction (ADR-021)
 //! - On-demand external enrichment (ADR-023, vocabulary updated by ADR-024)
 
 use async_trait::async_trait;
