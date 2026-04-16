@@ -42,24 +42,25 @@ A content-agnostic knowledge graph engine that derives structure from unstructur
 
 ## Current State
 
-The query surface cycle (2026-03-26 — 2026-04-01) shipped event cursors, lens declaration, and composable query filters. 461 tests passing, 36 ADRs at that point.
+**MCP consumer interaction cycle — BUILD complete (2026-04-01 — 2026-04-16).** WP-A through WP-H.2 shipped plus post-WP hardening. Runtime spec loading (ADR-037) is live; the MCP query surface (ADR-036) is wired; the two-consumer cross-pollination scenario is verified end-to-end through the compiled `plexus mcp` binary over raw JSON-RPC.
 
-**Active cycle: MCP consumer interaction surface — BUILD in progress.** WP-A through WP-G.2 shipped (2026-04-01 — 2026-04-13). **WP-H pending** — the cycle's e2e acceptance criterion ("first real MCP consumer workflow") requires live MCP transport verification, which boundary tests satisfy in principle but do not verify end-to-end. WP-H delivers that verification and folds in a scope-reductive design correction: spec loading becomes intentional-only (file-based auto-discovery removed). See [roadmap.md](roadmap.md) for WP-H's detailed sub-package plan (H.1 = removal + ADR-037 supersession, H.2 = live MCP subprocess acceptance test) and open questions raised during planning.
+**Central new capability:** persisted lens enrichments rehydrate at library construction time via `PipelineBuilder::with_persisted_specs` — vocabulary layers are a durable property of the **context** rather than the **consumer process**. Cross-pollination between consumer domains happens automatically whenever any consumer holds the library against a shared context.
 
-The shipped cycle work added runtime spec loading (ADR-037) and exposed the query surface via MCP (ADR-036), including provenance-scoped filtering (Invariant 59) on `evidence_trail` and the `RankBy::NormalizedWeight` variant at the Rust API level. System design v1.2 captures the amendment; see [roadmap.md](roadmap.md) Completed Work Log for the commit trail. The central new capability is that persisted lens enrichments rehydrate at library construction time via `PipelineBuilder::with_persisted_specs` — making vocabulary layers a durable property of the **context** rather than the **consumer process**, so cross-pollination between consumer domains happens automatically whenever any consumer holds the library against a shared context.
+**Key builder evolution:** `PipelineBuilder::with_llm_client(client)` is the single method that wires SemanticAdapter onto the ExtractionCoordinator (so `extract-file` invokes llm-orc) AND stores the client on the pipeline so `load_spec` can propagate it to consumer declarative adapters with `ensemble:` fields. `default_pipeline` constructs a `SubprocessClient` by default.
+
+**MCP surface:** 17 tools — 1 session (`set_context`), 1 ingest, 6 context management, 7 graph read (`evidence_trail`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`), 2 spec lifecycle (`load_spec`, `unload_spec`). All thin wrappers over `PlexusApi`.
 
 Cycle artifacts:
-- ADRs 036 (MCP query surface), 037 (consumer spec loading) — Accepted
-- Domain model invariants 60 (upfront spec validation), 61 (consumer owns spec), 62 (durable vocabulary + lens registration)
-- Reflection 003 (multi-consumer lens interaction) — surfaced the single-consumer assumption in the query surface cycle
-- Product discovery updated 2026-04-02 with multi-consumer interaction model and e2e acceptance criterion
-- Interaction specs for three stakeholders (consumer application developer, extractor author, engine developer)
+- ADRs 036 (MCP query surface), 037 (consumer spec loading; §4 superseded 2026-04-14 by WP-H.1)
+- Domain model invariants 60 (upfront spec validation), 61 (consumer owns spec; narrowed 2026-04-14 to programmatic-only), 62 (durable vocabulary + lens registration)
+- Domain-model terminology: extraction phases use descriptive names (registration / structural_analysis / semantic_extraction), not "Phase 1/2/3"
+- 38 ADRs total. **508 tests default-run** (425 lib + 82 acceptance + 1 doc). **511 tests with `PLEXUS_INTEGRATION=1`** (T6/T7/T8/T11 against real Ollama).
 
-38 ADRs total. MCP surface at 16 tools (1 session + 1 ingest + 6 context + 7 graph read + 1 spec load). 494 tests passing as of WP-G.2 completion (426 lib + 67 acceptance + 1 doc). No conformance debt carried forward from prior cycles; WP-H's own acceptance verification is the cycle's remaining in-scope work.
+**Confirmed architectural follow-ups** (see [cycle-status.md](cycle-status.md) § Follow-ups):
+- Background-phase + lens gap (T11 pins current behavior): semantic extraction's output is not translated by registered lenses. Consumers wanting lens coverage over llm-orc-driven extraction must use a declarative adapter with `ensemble:` field (foreground path) instead.
+- Outbound event asymmetry (SemanticAdapter + GraphAnalysisAdapter still don't override `transform_events`)
+- Customizable outbound events in declarative specs
+- Async event delivery for long-running ingest (cursors cover GraphEvents but not OutboundEvents)
+- MCP ingest response should carry actual events, not just a count
 
-**To resume work:** invoke `/rdd-build` and read `docs/cycle-status.md` § **Resumption Instructions for Fresh Session**. WP-H has been fully planned (roadmap.md) with open questions documented; implementation picks up from H.1 (the smaller, low-risk refactor).
-
-**After WP-H ships, optional follow-up phases for the cycle:**
-- `/rdd-play` — post-build experiential discovery (inhabit stakeholder roles, discover what specs missed)
-- `/rdd-synthesize` — mine the artifact trail for a publishable essay outline
-- `/rdd-graduate` — fold cycle knowledge into native docs and archive the scoped-cycle artifacts
+**To resume work:** invoke `/rdd-play` for experiential discovery (recommended next phase — inhabit stakeholder roles, exercise the live system, produce field notes), `/rdd-synthesize` for publishable insight extraction, or `/rdd-graduate` to fold cycle knowledge into native docs.

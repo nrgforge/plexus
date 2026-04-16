@@ -1,7 +1,7 @@
 # Active RDD Cycle: MCP Consumer Interaction Surface
 
 **Started:** 2026-04-01
-**Current phase:** BUILD (in progress — WP-A through WP-H.1 shipped; **WP-H.2 pending** for live MCP subprocess acceptance test)
+**Current phase:** BUILD ✅ Complete — WP-A through WP-H.2 shipped plus post-WP hardening (llm-orc wiring, phase nomenclature rename, outbound event symmetry, extended test matrix). Ready for `/rdd-play`.
 **Artifact base:** ./docs/
 **Scope:** Scoped cycle — MCP transport query surface + multi-consumer spec/lens interaction model
 
@@ -26,7 +26,8 @@
 | BUILD (WP-G.1) | ✅ Complete | `98343bb` feat: evidence_trail accepts optional QueryFilter | Closes Invariant 59 for evidence_trail. `contributor_ids` and `min_corroboration` compose meaningfully with evidence-dimension edges; `relationship_prefix` included for API consistency (typically empty results — docstring and tool description note this). Breaking change to `PlexusApi::evidence_trail` and `query::evidence_trail` signatures: both gain required `Option<QueryFilter>` parameter. Threading applied to both StepQuery branches (references+contains branch 1, tagged_with branch 2). 2 new tests: unit-level filter-threading test + MCP-level boundary test using nonexistent-contributor filter to prove filter is actually applied. |
 | BUILD (WP-G.2) | ✅ Complete | `22e24a2` feat: RankBy::NormalizedWeight variant | Closes ADR-034 conformance debt. `Box<dyn NormalizationStrategy>` variant; Clone/Copy/PartialEq/Eq derives dropped (zero usage in codebase); manual `Debug` impl. Signature change: `TraversalResult::rank_by` gains `&Context` parameter. New `PlexusApi::rank_traversal()` helper resolves the context internally so MCP remains thin-shell. NormalizedWeight NOT exposed via MCP — ADR-036 §1 specifies only "raw_weight" and "corroboration". Wart did not cascade — roadmap's worst-case (revert G.2) didn't materialize. 2 unit tests in `query::types::tests`. |
 | BUILD (WP-H.1) | ✅ Complete | `81ce6ef` refactor: remove file-based spec auto-discovery | Scope-reductive removal delivered in a single commit. Net −224 lines across 11 files. ADR-037 §4 superseded with dated note; domain-model Invariant 61 narrowed (Amendment 8); system-design Amendment 6 records the removal. Also removed `PlexusMcpServer::with_project_dir` (sole caller of `with_adapter_specs`) and the `project_dir` parameter on `default_pipeline` and `run_mcp_server` — scope broader than roadmap line-item list but follows mechanically from `with_adapter_specs` removal. 494 → 492 tests. Orthogonal rehydration path (`with_persisted_specs` → `specs` table) verified unaffected. |
-| BUILD (WP-H.2) | ☐ Pending | — | Live MCP subprocess acceptance test covering the two-consumer vocabulary-layer cross-pollination story end-to-end. Satisfies the product-discovery acceptance criterion at the transport layer. Raw JSON-RPC over stdin/stdout (no rmcp client dependency). Hard dep on H.1 (now unblocked). |
+| BUILD (WP-H.2) | ✅ Complete | `ce7dda5` test: live MCP e2e subprocess acceptance | Raw JSON-RPC over stdin/stdout, ~100 LoC harness, one acceptance test exercising two-consumer cross-pollination end-to-end through the compiled binary. rmcp 0.14 protocol version `2025-03-26`. Test passed first run. Cycle reaches TS-7. |
+| POST-WP-H.2 hardening | ✅ Complete | `f15807d`, `cede6c4`, `0d042ac`, `532f6ba`, `6a0addb`, `6951d1a`, `f810808`, `3f04363`, `2557206` | Surfaced + closed findings A (SemanticAdapter not wired via default_pipeline) and B (load_spec didn't propagate LlmOrcClient) via TDD. Renamed extraction-phase nomenclature to descriptive names (registration/structural_analysis/semantic_extraction). Extracted McpHarness to shared module. Added T1/T2/T3/T5 deterministic matrix tests. Exposed `unload_spec` MCP tool (symmetry with `load_spec`) + T4 lifecycle. Added T6/T7/T8 gated real-llm-orc tests. Symmetrized `transform_events` on DeclarativeAdapter + ExtractionCoordinator. Added T9 (N-consumer), T10 (consumer cycling), T11 (confirmed background-phase lens gap). |
 
 ## Feed-Forward Signals
 
@@ -221,11 +222,19 @@ T11 pins current behavior — when the gap is closed, the test's assertion flips
 
 ## Resumption Instructions for Fresh Session
 
-When resuming WP-H.2 in a new session:
+BUILD is complete. Natural next invocations:
 
-1. Invoke `/rdd-build` — the skill will re-orient from cycle-status.md and roadmap.md.
-2. Read `docs/roadmap.md` § **WP-H.2** (live MCP e2e harness sub-package: test architecture, hello-world scenario, subprocess invocation, adapter choice, risk section).
-3. Read `docs/roadmap.md` § **Open questions raised during WP-H planning** — OQ-H1 (protocol version handshake), OQ-H3 (cross-pollination visibility via `find_nodes`), OQ-H4 (test timing budget) still open; OQ-H2 and OQ-H5 resolved by WP-H.1.
-4. The binary invocation shape is: `Command::new(env!("CARGO_BIN_EXE_plexus")).args(["mcp", "--db", &temp_db_path])`. The clap binary at `src/bin/plexus.rs` accepts `mcp --db <path>` as verified during WP-H planning.
-5. Test scope: ONE subprocess acceptance test exercising the two-consumer happy path. Use raw JSON-RPC over stdin/stdout (no rmcp client dependency). Verify spec loading is intentional-only after WP-H.1 removed the file-based path — dropping a YAML into any directory will not affect the test.
-6. At WP-H.2 completion, the cycle reaches TS-7 and BUILD is genuinely complete. Optional follow-up phases (play, synthesize, graduate) become available.
+1. **`/rdd-play`** (recommended) — post-build experiential discovery. Inhabit the "consumer developer building an app on Plexus" role through a live MCP session; exercise the system to surface UX friction, missing affordances, and surprises the specifications missed. Produces field notes. The user explicitly flagged the live MCP demo as a play activity rather than housekeeping verification.
+2. **`/rdd-synthesize`** — if the writer wants to extract publishable insight from the artifact trail (essays, ADRs, cycle-status, confirmed findings like the background-phase lens gap).
+3. **`/rdd-graduate`** — when the scoped cycle has served its purpose and should be folded into native docs.
+
+**Test counts at cycle close:**
+- **508 tests default-run** (425 lib + 82 acceptance + 1 doc)
+- **511 tests with `PLEXUS_INTEGRATION=1`** (adds T6/T7/T8/T11 against real Ollama)
+
+**Confirmed architectural follow-ups** (see § Follow-ups Deferred to Future Cycles below for details):
+- Background-phase + lens gap (T11 confirms): enrichment loop doesn't fire for background emissions; semantic extraction's output isn't lens-translated
+- Outbound-event asymmetry (SemanticAdapter, GraphAnalysisAdapter still don't override `transform_events`)
+- Customizable outbound events in declarative specs
+- Async event delivery for long-running ingest
+- MCP ingest response should carry actual events, not just count

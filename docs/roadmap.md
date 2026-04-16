@@ -388,9 +388,9 @@ These are decisions the architect phase deliberately deferred to BUILD, or princ
 
 ## Completed Work Log
 
-### Cycle: MCP Consumer Interaction Surface — Part 1 (2026-04-01 — 2026-04-13)
+### Cycle: MCP Consumer Interaction Surface (2026-04-01 — 2026-04-16) ✅
 
-*Cycle in progress. WP-H (e2e harness + intentional-only spec loading) is the remaining work. Part 1 below records WP-A through WP-G.2 as shipped; WP-H will be appended to the Completed Work Log when it lands.*
+Cycle complete. Records WP-A through WP-H.2 plus post-WP hardening (llm-orc wiring, phase nomenclature rename, outbound-event symmetry, extended test matrix).
 
 **Derived from:** System Design v1.2, ADR-036, ADR-037, Invariants 60–62, Reflection 003, product-discovery.md (2026-04-02)
 
@@ -405,15 +405,28 @@ These are decisions the architect phase deliberately deferred to BUILD, or princ
 | WP-F | MCP `load_spec` tool | `11d686c`, `8be7722` (no-context test) | Done |
 | WP-G.1 | `evidence_trail` + QueryFilter | `98343bb` | Done |
 | WP-G.2 | `RankBy::NormalizedWeight` variant | `22e24a2` | Done |
+| WP-H.1 | Remove file-based spec auto-discovery + ADR-037 §4 supersession | `81ce6ef` | Done |
+| WP-H.2 | Live MCP e2e subprocess acceptance harness | `ce7dda5` | Done |
+| Post-H Finding A | ExtractionCoordinator multi-context refactor | `f15807d` | Done |
+| Post-H Finding A+B | `with_llm_client` builder method (wires semantic extraction; propagates client to `load_spec`) | `cede6c4` | Done |
+| Post-H rename | Extraction-phase nomenclature → descriptive names | `0d042ac` | Done |
+| Test matrix | McpHarness extraction + T1/T2/T3/T5 + unload_spec MCP tool + T4 + T6/T7/T8 gated | `532f6ba`, `6a0addb`, `6951d1a`, `f810808` | Done |
+| Outbound events | DeclarativeAdapter + ExtractionCoordinator `transform_events` override | `3f04363` | Done |
+| Test matrix extended | T9 (N-consumer), T10 (consumer cycling), T11 (confirmed background-phase lens gap) | `2557206` | Done |
 
 **Summary:**
 - Three-effect model for `load_spec` (durable graph data + durable enrichment registration + transient adapter wiring) working end-to-end
 - `PipelineBuilder::with_persisted_specs` rehydrates persisted lens enrichments at library construction time — vocabulary layers are a property of the **context**, not the **consumer process**
-- MCP transport grew from 9 to 16 tools: 1 session, 1 ingest, 6 context, 7 graph read, 1 spec load
+- `PipelineBuilder::with_llm_client` wires SemanticAdapter AND propagates the client to declarative adapters with `ensemble:` fields via `load_spec`
+- MCP transport grew from 9 to 17 tools: 1 session, 1 ingest, 6 context, 7 graph read, 2 spec lifecycle (`load_spec` + `unload_spec`)
 - `evidence_trail` now composable with `QueryFilter` — Invariant 59 holds for every query primitive
 - `RankBy::NormalizedWeight` variant available at the Rust API level (not exposed via MCP in this cycle)
+- Consumer-facing outbound events: DeclarativeAdapter + ExtractionCoordinator emit `{type}_created` / `file_registered` / `concept_created` events; MCP consumers see meaningful counts from ingest
+- File-based spec auto-discovery removed (intentional-only loading per Invariant 61)
+- Extraction-phase nomenclature standardized: registration / structural_analysis / semantic_extraction
 - Standing principle established mid-cycle: **ADRs are immutable unless genuinely superseded** — update them when necessary, never casually to match what shipped
-- Final state: 426 lib tests + 67 acceptance tests + 1 doc test (494 total)
+- **Confirmed architectural gap (T11):** lenses do not fire on background-phase emissions; consumers using `extract-file` route will not see lens translation over LLM-extracted structure. Use declarative adapter with `ensemble:` field (foreground path) for that case.
+- Final state: 425 lib tests + 82 acceptance tests + 1 doc test = 508 default-run; 511 with `PLEXUS_INTEGRATION=1` (T6/T7/T8/T11 real-Ollama)
 
 **Dependency graph (as-built):** A, B, E, G.1, G.2 open-choice starting points. C hard on B. D hard on B+C. F hard on C. Pre-WP-F bug fix blocked F's e2e acceptance criterion. As-shipped order: A → B → C → WP-C fix → D → pre-WP-F fix → E → F → F follow-up test → G.1 → G.2.
 

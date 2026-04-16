@@ -116,28 +116,41 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 
 | Concept | Code Manifestation | Location |
 |---------|-------------------|----------|
-| IngestPipeline | `pub struct IngestPipeline` | `src/adapter/pipeline/ingest.rs` |
-| PipelineBuilder | `pub struct PipelineBuilder` | `src/adapter/pipeline/builder.rs` |
+| IngestPipeline | `pub struct IngestPipeline` (fields: adapters + enrichments behind `RwLock`, optional `llm_client`) | `src/adapter/pipeline/ingest.rs` |
+| PipelineBuilder | `pub struct PipelineBuilder` (holds `engine` ref for coordinator wiring) | `src/adapter/pipeline/builder.rs` |
 | with_structural_module | `PipelineBuilder::with_structural_module()` | `src/adapter/pipeline/builder.rs` |
 | with_default_structural_modules | `PipelineBuilder::with_default_structural_modules()` | `src/adapter/pipeline/builder.rs` |
+| with_default_enrichments | `PipelineBuilder::with_default_enrichments()` — CoOccurrence, DiscoveryGap, TemporalProximity, (EmbeddingSimilarity if `embeddings` feature) | `src/adapter/pipeline/builder.rs` |
+| with_enrichment | `PipelineBuilder::with_enrichment(Arc<dyn Enrichment>)` — custom enrichment (e.g. lens) | `src/adapter/pipeline/builder.rs` |
+| with_llm_client | `PipelineBuilder::with_llm_client(Arc<dyn LlmOrcClient>)` — wires `SemanticAdapter` onto coordinator AND stores client on pipeline so `load_spec` can propagate it to declarative adapters with `ensemble:` fields | `src/adapter/pipeline/builder.rs` |
+| with_persisted_specs | `PipelineBuilder::with_persisted_specs(Vec<PersistedSpec>)` — rehydrates lens enrichments at construction (ADR-037 §2) | `src/adapter/pipeline/builder.rs` |
+| default_pipeline | `PipelineBuilder::default_pipeline(engine)` — wires default adapters + structural modules + enrichments + `SubprocessClient` llm-orc + persisted specs | `src/adapter/pipeline/builder.rs` |
+| gather_persisted_specs | `pub fn gather_persisted_specs(engine)` — iterates contexts, reads specs table | `src/adapter/pipeline/builder.rs` |
 | classify_input | `pub fn classify_input()` | `src/adapter/pipeline/router.rs` |
 | ClassifyError | `pub struct ClassifyError` | `src/adapter/pipeline/router.rs` |
 | Input routing (Invariant 17) | Fan-out in `IngestPipeline::ingest()` | `src/adapter/pipeline/ingest.rs` |
+| Runtime registration (ADR-037 §5) | `register_integration`, `deregister_adapter`, `deregister_enrichment` on `&self` via interior mutability | `src/adapter/pipeline/ingest.rs` |
 
 ### Design Rationale
 
-`IngestPipeline::ingest()` is the single write path (Invariant 34). All mutations enter here. `PipelineBuilder` was extracted from MCP to make pipeline construction transport-neutral — MCP and CLI both call `PipelineBuilder::default_pipeline()` instead of constructing pipelines inline.
+`IngestPipeline::ingest()` is the single write path (Invariant 34). All mutations enter here. `PipelineBuilder` was extracted from MCP to make pipeline construction transport-neutral — MCP and CLI both call `PipelineBuilder::default_pipeline(engine)` instead of constructing pipelines inline.
 
 `classify_input()` auto-detects input kind from JSON shape (`{text:...}` → content, `{file_path:...}` → extract-file). This powers the MCP `ingest` tool's optional `input_kind` parameter (ADR-028).
 
 `with_structural_module()` registers a `StructuralModule` with the `ExtractionCoordinator`. `with_default_structural_modules()` registers `MarkdownStructureModule` as a built-in default. Both are called before `build()`.
+
+`with_llm_client()` is the single method that unlocks llm-orc for both the built-in `extract-file` path (via SemanticAdapter on the coordinator) and consumer declarative specs with `ensemble:` fields (via `load_spec` attaching the client to the DeclarativeAdapter). Closed two wiring gaps found post-WP-H.2. Without this call, semantic extraction is silently skipped and ensemble-declaring specs fail with `AdapterError::Skipped`.
+
+The `ExtractionCoordinator` serves all contexts the engine owns (library mode); background tasks derive their `ContextId` from the per-ingest input, not from a builder-time binding.
+
+**Known gap** (T11 pinned): the enrichment loop runs once after the foreground adapter returns. Background-phase emissions (structural analysis + semantic extraction) bypass the enrichment loop, so registered lenses do not translate llm-orc-driven extraction output. Fix path: either `EngineSink::commit` triggers enrichment per-emission, or background tasks re-enter `pipeline.ingest`. Needs an ADR.
 
 ### Key Integration Points
 
 - **api** — `PlexusApi` holds `Arc<IngestPipeline>` and delegates all writes to it.
 - **adapter/sink** — Pipeline creates `EngineSink` per adapter dispatch.
 - **adapter/enrichment** — Pipeline calls `run_enrichment_loop()` after adapter dispatch.
-- **adapter/adapters, adapter/enrichments** — Registered at construction time via `PipelineBuilder`.
+- **adapter/adapters, adapter/enrichments** — Registered at construction time via `PipelineBuilder`, or at runtime via `load_spec` → `register_integration` (interior mutability).
 
 ---
 
@@ -342,15 +355,22 @@ Provenance reads are separated from writes. `ProvenanceApi` is read-only — all
 
 | Concept | Code Manifestation | Location |
 |---------|-------------------|----------|
-| PlexusMcpServer | `pub struct PlexusMcpServer` | `src/mcp/mod.rs` |
-| 16 MCP tools | `#[tool]` methods on `PlexusMcpServer` | `src/mcp/mod.rs` |
+| PlexusMcpServer | `pub struct PlexusMcpServer` (constructed via `::new(engine)`; internal `default_pipeline` wiring) | `src/mcp/mod.rs` |
+| 17 MCP tools | `#[tool]` methods on `PlexusMcpServer` | `src/mcp/mod.rs` |
 | run_mcp_server | `pub fn run_mcp_server()` | `src/mcp/mod.rs` |
 
 ### Design Rationale
 
 MCP is a thin transport shell (Invariant 38). It delegates all logic to `PlexusApi`. The only non-delegation code is `set_context` (session state) and `classify_input` routing in `ingest`. Pipeline construction uses `PipelineBuilder::default_pipeline()` — extracted from inline construction to keep the transport thin.
 
-The 16-tool surface is organized as 1 session (`set_context`) + 1 data-write (`ingest`) + 6 context management + 7 graph read (`evidence_trail`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`) + 1 spec load (`load_spec`). `load_spec` is the only non-thin-wrapper — it routes through `PlexusApi::load_spec`, which enforces the three-effect model (ADR-037, Invariant 62) — but the MCP-layer handler itself is still 18 lines of delegation and JSON marshalling.
+The 17-tool surface is organized as:
+- 1 session: `set_context`
+- 1 data write: `ingest`
+- 6 context management: `context_list`, `context_create`, `context_delete`, `context_rename`, `context_add_sources`, `context_remove_sources`
+- 7 graph read: `evidence_trail`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`
+- 2 spec lifecycle: `load_spec`, `unload_spec`
+
+`load_spec` and `unload_spec` route through `PlexusApi::load_spec` / `unload_spec`, which enforce the three-effect model and durable-vocabulary contracts (ADR-037, Invariant 62). The MCP-layer handlers themselves are thin-wrapper delegation + JSON marshalling.
 
 ### Key Integration Points
 
@@ -396,7 +416,7 @@ External LLM orchestration runs as a subprocess (ADR-024). The trait abstraction
 | Filter queries by provenance/corroboration | `query/filter.rs` — QueryFilter, RankBy |
 | Pull-based change queries | `query/cursor.rs` — PersistedEvent, ChangeSet, CursorFilter |
 | Understand provenance reads | `provenance/api.rs` |
-| Understand the MCP surface | `mcp/mod.rs` (9 tools) |
+| Understand the MCP surface | `mcp/mod.rs` (17 tools: session, context CRUD, ingest, evidence_trail, find_nodes, traverse, find_path, changes_since, list_tags, shared_concepts, load_spec, unload_spec) |
 | Understand weight normalization | `graph/context.rs` (scale norm), `query/normalize.rs` (query-time norm) |
 | Understand evidence trail | `query/step.rs` (`evidence_trail()`), ADR-013 |
 | Understand contribution tracking | `graph/edge.rs` (contributions), `adapter/sink/engine_sink.rs` (emit phase 2), ADR-003 |
