@@ -23,7 +23,7 @@
 //! appeared / an edge appeared / the lens translated at least once),
 //! never on exact labels or counts.
 
-use super::mcp_harness::{is_error, node_count, McpHarness};
+use super::mcp_harness::{is_error, node_count, tool_result_json, McpHarness};
 use serde_json::json;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -150,9 +150,14 @@ emit:
         LLM_CALL_TIMEOUT,
     ).await;
     assert!(!is_error(&resp), "t7 ingest failed: {}", resp);
-    // Note: DeclarativeAdapter does not override `transform_events`, so
-    // the MCP ingest response reports events: 0 even on successful emit.
-    // Observable signal = nodes in the graph via find_nodes.
+    // DeclarativeAdapter::transform_events emits `{type}_created` events
+    // per created node — visible in the MCP ingest response.
+    let event_count = tool_result_json(&resp)["events"].as_u64().unwrap_or(0);
+    assert!(
+        event_count >= 2,
+        "ensemble-driven ingest should produce ≥2 outbound events (theme + keyword), got {}",
+        event_count
+    );
 
     // At least one theme and one keyword should have been emitted.
     let theme_resp = h.call_tool("find_nodes", json!({"node_type": "theme"})).await;

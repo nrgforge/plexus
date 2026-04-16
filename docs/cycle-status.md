@@ -183,6 +183,32 @@ BUILD in progress. WP-A through WP-G.2 shipped (see Phase Status table above for
 77. **Adapter choice for H.2 ingest:** built-in content adapter (tag-based `FragmentInput`). Deterministic, Rust-only, no llm-orc dependency. Verifying transport, not extraction.
 78. **Subprocess over in-process rmcp client:** maximum fidelity (actual compiled binary, actual stdio, actual protocol framing). One subprocess test is affordable; if the harness grows, reconsider.
 
+## Follow-ups Deferred to Future Cycles
+
+Discovered during post-WP-H.2 test matrix work:
+
+### Outbound event asymmetry across built-in adapters
+
+Only `ContentAdapter` and `ProvenanceAdapter` override `Adapter::transform_events`. `ExtractionCoordinator`, `SemanticAdapter`, `GraphAnalysisAdapter`, and `DeclarativeAdapter` use the trait default (empty `Vec<OutboundEvent>`). MCP consumers see `events: 0` for ingest paths through any of these, even when graph mutations are successful. Resolved in this cycle for `DeclarativeAdapter` (symmetric-pattern fix). The other three remain as follow-up:
+
+- **SemanticAdapter** — runs in background via ExtractionCoordinator; its outbound events are not observable through the caller's ingest response. Needs a different delivery mechanism (async push or event log cursor consumption).
+- **GraphAnalysisAdapter** — emits `PropertyUpdated`-shape graph mutations, not `NodesAdded`/`EdgesAdded`. Outbound event shape would be different from Content/Provenance patterns.
+- **ExtractionCoordinator** — registration phase creates foreground nodes that could produce outbound events; structural and semantic phases run in background (same issue as SemanticAdapter).
+
+### Customizable outbound events in declarative specs
+
+Consumers' declarative specs today cannot declare their own outbound event shapes — the adapter derives them mechanically from emit primitives (`{node_type}_created`, `{relationship}_linked`). A future spec grammar extension could add an `outbound_events:` section letting consumers define domain-specific event kinds and details tailored to their application. Would also require deciding on a template surface (similar to emit primitives' `{input.X}` / `{ensemble.X}` accessors).
+
+### Async event delivery for long-running ingest
+
+The outbound events pattern is **synchronous push-at-ingest-return**. For adapters/enrichments running over large graphs, synchronous delivery blocks the caller for minutes. Even when events ARE produced synchronously, pushing them through the ingest response doesn't fit workflows where the consumer wants notifications as work completes rather than batched at the end.
+
+Partially covered today: `changes_since` (ADR-035) lets consumers pull events from a persistent log asynchronously. But the OutboundEvent abstraction (consumer-vocabulary events from `transform_events`) is distinct from `GraphEvent` (graph-level mutation events). Consumers would benefit from pulling OutboundEvents cursor-style too, or from a push channel (webhook, SSE, etc.) for long-running workflows. Architectural question for a dedicated cycle.
+
+### MCP ingest response surface
+
+`ok_text({ "input_kind": "...", "events": events.len() })` — just a count. The `kind` and `detail` of each `OutboundEvent` are discarded at the MCP boundary. Consumers see `events: 3` but can't distinguish `"fragment_indexed"` from `"concepts_detected"`. Small wire-format change (include `events: [{kind, detail}, ...]` or similar) would materially improve MCP consumer ergonomics. Ties into the customizable-events question — custom event shapes are only useful if they surface beyond the count.
+
 ## Resumption Instructions for Fresh Session
 
 When resuming WP-H.2 in a new session:

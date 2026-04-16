@@ -11,7 +11,7 @@
 use crate::adapter::enrichment::Enrichment;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, PropertyUpdate};
+use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, PropertyUpdate};
 use crate::graph::{dimension, ContentType, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -791,6 +791,48 @@ impl Adapter for DeclarativeAdapter {
         }
 
         Ok(())
+    }
+
+    fn transform_events(
+        &self,
+        events: &[crate::graph::events::GraphEvent],
+        context: &crate::graph::Context,
+    ) -> Vec<OutboundEvent> {
+        use crate::graph::events::GraphEvent;
+        let my_id = self.spec.adapter_id.as_str();
+        let mut outbound = Vec::new();
+        for event in events {
+            match event {
+                GraphEvent::NodesAdded { node_ids, adapter_id, .. } if adapter_id == my_id => {
+                    for node_id in node_ids {
+                        let type_label = context
+                            .get_node(node_id)
+                            .map(|n| n.node_type.as_str())
+                            .unwrap_or("node");
+                        outbound.push(OutboundEvent::new(
+                            format!("{}_created", type_label),
+                            node_id.to_string(),
+                        ));
+                    }
+                }
+                GraphEvent::EdgesAdded { edge_ids, adapter_id, .. } if adapter_id == my_id => {
+                    for edge_id in edge_ids {
+                        let relationship = context
+                            .edges
+                            .iter()
+                            .find(|e| &e.id == edge_id)
+                            .map(|e| e.relationship.as_str())
+                            .unwrap_or("edge");
+                        outbound.push(OutboundEvent::new(
+                            format!("{}_linked", relationship),
+                            edge_id.to_string(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        outbound
     }
 }
 

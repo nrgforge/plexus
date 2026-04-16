@@ -22,7 +22,7 @@ use crate::adapter::semantic::SemanticInput;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::structural::{StructuralModule, StructuralOutput};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, concept_node};
+use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, concept_node};
 use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -608,6 +608,59 @@ impl Adapter for ExtractionCoordinator {
         }
 
         Ok(())
+    }
+
+    /// Emit outbound events for the registration phase only.
+    ///
+    /// Registration runs synchronously within `process()`, so its graph
+    /// events are available in the ingest caller's response. The
+    /// emitted node types are `file` (one per registered source) and
+    /// `concept` (one per YAML frontmatter tag). The extraction-status
+    /// node is internal bookkeeping — not surfaced as an outbound event.
+    ///
+    /// Structural analysis and semantic extraction run in background
+    /// tasks — their events arrive AFTER the ingest caller's response
+    /// returns and are not observable here. Consumers that need
+    /// notifications for background phases must use `changes_since`
+    /// (ADR-035) or a future async delivery mechanism.
+    fn transform_events(
+        &self,
+        events: &[crate::graph::events::GraphEvent],
+        context: &Context,
+    ) -> Vec<OutboundEvent> {
+        use crate::graph::events::GraphEvent;
+        let my_id = self.id();
+        let mut outbound = Vec::new();
+        for event in events {
+            if let GraphEvent::NodesAdded { node_ids, adapter_id, .. } = event {
+                if adapter_id != my_id {
+                    continue;
+                }
+                for node_id in node_ids {
+                    let node_type = context
+                        .get_node(node_id)
+                        .map(|n| n.node_type.as_str())
+                        .unwrap_or("node");
+                    // Map internal node types to consumer-facing event kinds.
+                    let kind = match node_type {
+                        "file" => "file_registered",
+                        "concept" => "concept_created",
+                        // extraction-status is internal — skip
+                        "extraction-status" => continue,
+                        other => {
+                            // Fallback for unexpected node types
+                            outbound.push(OutboundEvent::new(
+                                format!("{}_created", other),
+                                node_id.to_string(),
+                            ));
+                            continue;
+                        }
+                    };
+                    outbound.push(OutboundEvent::new(kind, node_id.to_string()));
+                }
+            }
+        }
+        outbound
     }
 }
 
