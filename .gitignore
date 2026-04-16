@@ -8,3 +8,6 @@
 
 # Git worktrees
 .worktrees/
+
+# Session artifacts (play DB, scratch notes — ephemeral, not tracked)
+/session/

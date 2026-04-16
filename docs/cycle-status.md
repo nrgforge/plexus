@@ -1,7 +1,7 @@
 # Active RDD Cycle: MCP Consumer Interaction Surface
 
 **Started:** 2026-04-01
-**Current phase:** BUILD ✅ Complete — WP-A through WP-H.2 shipped plus post-WP hardening (llm-orc wiring, phase nomenclature rename, outbound event symmetry, extended test matrix). Ready for `/rdd-play`.
+**Current phase:** PLAY ▶ Setup complete — v0.2.0 released, project-level `.mcp.json` wired. Consumer Application Developer stakeholder pre-selected. Inhabitation begins after `brew upgrade plexus` + Claude Code restart.
 **Artifact base:** ./docs/
 **Scope:** Scoped cycle — MCP transport query surface + multi-consumer spec/lens interaction model
 
@@ -28,6 +28,7 @@
 | BUILD (WP-H.1) | ✅ Complete | `81ce6ef` refactor: remove file-based spec auto-discovery | Scope-reductive removal delivered in a single commit. Net −224 lines across 11 files. ADR-037 §4 superseded with dated note; domain-model Invariant 61 narrowed (Amendment 8); system-design Amendment 6 records the removal. Also removed `PlexusMcpServer::with_project_dir` (sole caller of `with_adapter_specs`) and the `project_dir` parameter on `default_pipeline` and `run_mcp_server` — scope broader than roadmap line-item list but follows mechanically from `with_adapter_specs` removal. 494 → 492 tests. Orthogonal rehydration path (`with_persisted_specs` → `specs` table) verified unaffected. |
 | BUILD (WP-H.2) | ✅ Complete | `ce7dda5` test: live MCP e2e subprocess acceptance | Raw JSON-RPC over stdin/stdout, ~100 LoC harness, one acceptance test exercising two-consumer cross-pollination end-to-end through the compiled binary. rmcp 0.14 protocol version `2025-03-26`. Test passed first run. Cycle reaches TS-7. |
 | POST-WP-H.2 hardening | ✅ Complete | `f15807d`, `cede6c4`, `0d042ac`, `532f6ba`, `6a0addb`, `6951d1a`, `f810808`, `3f04363`, `2557206` | Surfaced + closed findings A (SemanticAdapter not wired via default_pipeline) and B (load_spec didn't propagate LlmOrcClient) via TDD. Renamed extraction-phase nomenclature to descriptive names (registration/structural_analysis/semantic_extraction). Extracted McpHarness to shared module. Added T1/T2/T3/T5 deterministic matrix tests. Exposed `unload_spec` MCP tool (symmetry with `load_spec`) + T4 lifecycle. Added T6/T7/T8 gated real-llm-orc tests. Symmetrized `transform_events` on DeclarativeAdapter + ExtractionCoordinator. Added T9 (N-consumer), T10 (consumer cycling), T11 (confirmed background-phase lens gap). |
+| PLAY (setup) | ✅ Complete | `050d277` chore: v0.2.0; `.mcp.json` + `/session/` scaffolding (subsequent commit) | User chose **Path A** (restart-based for MCP fidelity) over Path B (in-session subprocess) — rationale: inhabited stakeholder uses MCP tools as they present naturally, not JSON-RPC framing. v0.2.0 release cut (41 commits since v0.1.0) so the Homebrew-installed binary exposes the full 17-tool surface. Stakeholder pre-selected: **Consumer Application Developer** (maximum epistemic distance from builder; matches cycle acceptance criterion voice). First objective proposed from interaction-specs Consumer Application Developer task sequence; obstacles will be discovered during play. |
 
 ## Feed-Forward Signals
 
@@ -222,11 +223,37 @@ T11 pins current behavior — when the gap is closed, the test's assertion flips
 
 ## Resumption Instructions for Fresh Session
 
-BUILD is complete. Natural next invocations:
+**Current state: Play phase setup complete; Consumer Application Developer inhabitation pending.**
 
-1. **`/rdd-play`** (recommended) — post-build experiential discovery. Inhabit the "consumer developer building an app on Plexus" role through a live MCP session; exercise the system to surface UX friction, missing affordances, and surprises the specifications missed. Produces field notes. The user explicitly flagged the live MCP demo as a play activity rather than housekeeping verification.
-2. **`/rdd-synthesize`** — if the writer wants to extract publishable insight from the artifact trail (essays, ADRs, cycle-status, confirmed findings like the background-phase lens gap).
-3. **`/rdd-graduate`** — when the scoped cycle has served its purpose and should be folded into native docs.
+### Pre-play setup done this session (2026-04-16)
+
+- **v0.2.0 released.** 41 commits since v0.1.0 covering the full query surface cycle + MCP consumer interaction cycle. Version bump commit `050d277`, tag `v0.2.0`, CI green including `publish-homebrew-formula`. Tap: `nrgforge/homebrew-tap`.
+- **Project-level `.mcp.json`** wires plexus MCP with a relative DB path at `./session/play.db`. Relies on the `plexus` binary being on `PATH` (Homebrew installation).
+- **`/session/` added to `.gitignore`** — play DB and scratch state live there, not tracked.
+- **Path chosen: A (restart-based).** Alternative was in-session subprocess driving (Path B) — rejected because the Consumer Application Developer stakeholder engages through MCP tools as they present naturally, not JSON-RPC over bash.
+- **Stakeholder pre-selected: Consumer Application Developer.** Super-objective from product-discovery.md: *"Ingest domain-specific data into a knowledge graph, receive structural signals in domain vocabulary, and act on those signals — without learning graph internals."* Rationale: maximum epistemic distance from the builder perspective; the cycle's acceptance criterion (product-discovery.md §End-to-End Acceptance Criterion) is written in this stakeholder's voice.
+- **First objective proposed** (from interaction-specs.md §Consumer Application Developer task sequence): set_context → load_spec → ingest → query through lens → load second spec → query across both vocabulary layers. Play will discover which obstacles actually matter; no obstacles are pre-designed.
+
+### To resume
+
+1. `brew upgrade plexus` — verify with `plexus --version` → `plexus 0.2.0`
+2. Exit current Claude Code session if still open; restart in `/Users/nathangreen/Development/plexus`
+3. `/rdd:rdd` → choose PLAY, or invoke `/rdd:play` directly — the skill reloads, reads this cycle-status, and picks up at the "confirm stakeholder + begin inhabitation" step
+4. Confirm Consumer Application Developer (or redirect) and begin; the gamemaster proposes the first point of concentration from the task sequence above
+
+**MCP tool surface expected at resumption: 17 tools.** 1 session (`set_context`) + 1 ingest + 6 context CRUD (create / list / delete / rename / add_sources / remove_sources) + 7 graph read (`find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`, `evidence_trail`) + 2 spec lifecycle (`load_spec`, `unload_spec`). If the count differs after restart, the Homebrew upgrade or `.mcp.json` wiring did not land.
+
+### Play frame reminders for the resuming gamemaster
+
+- Play shapes **attention**, not conclusions — never embed expected outcomes in prompts.
+- Obstacles are **discovered**, not designed. Complications and inversions are introduced as scenarios to encounter, not as conclusions to draw.
+- Field notes are **raw observations** during play; categorization by feedback destination (missing scenario / usability friction / new question / challenged assumption / delight / interaction gap) is post-session work, not in-the-moment work.
+- Field notes land at `docs/essays/reflections/field-notes.md` — file does not exist yet; first entry will create it.
+
+### Alternative paths still available after play
+
+- `/rdd:synthesize` — mine artifact trail + delights/surprises from field notes for publishable insight.
+- `/rdd:graduate` — fold durable knowledge into native docs when the scoped cycle has served its purpose.
 
 **Test counts at cycle close:**
 - **508 tests default-run** (425 lib + 82 acceptance + 1 doc)
