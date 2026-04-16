@@ -205,6 +205,16 @@ The outbound events pattern is **synchronous push-at-ingest-return**. For adapte
 
 Partially covered today: `changes_since` (ADR-035) lets consumers pull events from a persistent log asynchronously. But the OutboundEvent abstraction (consumer-vocabulary events from `transform_events`) is distinct from `GraphEvent` (graph-level mutation events). Consumers would benefit from pulling OutboundEvents cursor-style too, or from a push channel (webhook, SSE, etc.) for long-running workflows. Architectural question for a dedicated cycle.
 
+### Lenses do NOT fire on background-phase emissions (CONFIRMED)
+
+Empirically verified by `tests/acceptance/mcp_matrix_llm_orc.rs::t11_lens_does_not_fire_on_background_phase_emissions`. The `IngestPipeline::ingest` enrichment loop runs once — after the foreground adapter's `process()` returns, over events drained from the foreground sink. Background tasks (ExtractionCoordinator's structural + semantic phases) spawn via `tokio::spawn` AFTER the ingest caller returns and write through their own `EngineSink::for_engine` — those emissions never re-enter the enrichment loop.
+
+**Consumer impact:** llm-orc-driven extraction output (concept nodes + `related_to` / `similar_to` / `is_a` / `part_of` edges produced by `extract-semantic`) is NOT translated by any registered lens today. A consumer wanting lens coverage over LLM-extracted structure must use a declarative adapter with an `ensemble:` field (foreground path, covered by T8 gated test) rather than relying on the built-in `extract-file` route.
+
+**Path to fix:** either (a) `EngineSink::commit` triggers the enrichment loop per-emission, or (b) background tasks re-enter `pipeline.ingest` with their own sentinel input_kind. Option (a) is simpler but changes engine persistence semantics (enrichment loop runs synchronously inside commit); option (b) is cleaner layering but requires background tasks to know about the pipeline. Needs its own ADR.
+
+T11 pins current behavior — when the gap is closed, the test's assertion flips from `== 0` to `> 0`.
+
 ### MCP ingest response surface
 
 `ok_text({ "input_kind": "...", "events": events.len() })` — just a count. The `kind` and `detail` of each `OutboundEvent` are discarded at the MCP boundary. Consumers see `events: 3` but can't distinguish `"fragment_indexed"` from `"concepts_detected"`. Small wire-format change (include `events: [{kind, detail}, ...]` or similar) would materially improve MCP consumer ergonomics. Ties into the customizable-events question — custom event shapes are only useful if they surface beyond the count.

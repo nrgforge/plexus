@@ -18,6 +18,12 @@
 //! - T8: T7 + lens — declarative adapter invokes ensemble, emits
 //!   edges, lens translates those edges into consumer vocabulary.
 //!   Proves lens composition over llm-orc-driven emissions.
+//! - T11: Background-phase + lens — registers a lens on a context, then
+//!   ingests via `extract-file`. Verifies whether the lens fires on
+//!   edges produced by semantic extraction (background phase), or only
+//!   on edges from foreground adapter emissions + their enrichment loop.
+//!   Architectural probe — the answer shapes how consumers can use lenses
+//!   with llm-orc-backed extraction.
 //!
 //! LLM output varies, so assertions are property-based (a concept
 //! appeared / an edge appeared / the lens translated at least once),
@@ -242,6 +248,119 @@ emit:
         lens_nodes >= 2,
         "lens should translate ≥1 related_to edge (2 incident nodes) — got {}",
         lens_nodes
+    );
+
+    h.shutdown().await;
+}
+
+// ── T11: Background-phase + lens interaction (gated) ───────────────────
+
+/// PINS CURRENT BEHAVIOR: lenses do NOT fire on background-phase
+/// emissions (semantic extraction produces concepts + relationships
+/// but no registered lens translates them).
+///
+/// Architectural cause: `IngestPipeline::ingest` runs the enrichment
+/// loop once, after the foreground adapter's `process()` returns, on
+/// events drained from the foreground sink. Background tasks spawn via
+/// `tokio::spawn` AFTER ingest returns and write through their own
+/// `EngineSink::for_engine` — those emissions do not re-enter the
+/// pipeline's enrichment loop.
+///
+/// Consumer impact: llm-orc-driven extraction output (concept nodes,
+/// related_to/similar_to/is_a/part_of edges) is NOT translated by
+/// registered lenses. A consumer wanting lens coverage over
+/// LLM-extracted structure must either (a) use a declarative adapter
+/// that invokes llm-orc via `ensemble:` (foreground path — covered
+/// by T8) or (b) wait for a future architectural fix that wires
+/// background emissions into the enrichment loop.
+///
+/// This test runs with `PLEXUS_INTEGRATION=1` + real Ollama (~55s).
+/// It is a contract-pinning test: the assertion reflects current
+/// behavior. When the architectural gap is closed, this test will
+/// start failing — flip the assertion and update cycle-status.
+#[tokio::test]
+async fn t11_lens_does_not_fire_on_background_phase_emissions() {
+    if !integration_enabled() {
+        return;
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("t11.db");
+    let file_path = tmp.path().join("t11.md");
+    std::fs::write(
+        &file_path,
+        "# Travel journal\n\nYesterday I walked along the river at dawn. \
+         The water was cold and the sky was clear. Small birds sang in the reeds.\n",
+    )
+    .expect("write fixture");
+
+    let mut h = McpHarness::spawn(&db).await;
+    h.initialize().await;
+    assert!(!is_error(&h.call_tool("set_context", json!({"name": "t11"})).await));
+
+    // Spec declares a lens translating any of several relationships that
+    // semantic extraction might produce. Minimal emit (never routed to;
+    // present only to satisfy validation).
+    let spec_yaml = r#"
+adapter_id: t11-lens-probe
+input_kind: t11.never-routed
+lens:
+  consumer: t11
+  translations:
+    - from: [related_to, similar_to, is_a, part_of]
+      to: semantic_connection
+emit:
+  - create_node:
+      id: "noop:{input.id}"
+      type: noop
+      dimension: semantic
+"#;
+    assert!(!is_error(
+        &h.call_tool("load_spec", json!({"spec_yaml": spec_yaml})).await
+    ));
+
+    // Ingest via extract-file — registration synchronous, structural +
+    // semantic extraction run in background.
+    let resp = h.call_tool("ingest", json!({
+        "data": {"file_path": file_path.to_str().unwrap()},
+        "input_kind": "extract-file",
+    })).await;
+    assert!(!is_error(&resp), "extract-file ingest failed: {}", resp);
+
+    // Poll until semantic extraction produces concepts (proof the
+    // background phase completed).
+    let mut concepts = 0;
+    let deadline = std::time::Instant::now() + SEMANTIC_POLL_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        let cresp = h.call_tool("find_nodes", json!({"node_type": "concept"})).await;
+        concepts = node_count(&cresp);
+        if concepts > 0 {
+            break;
+        }
+        tokio::time::sleep(SEMANTIC_POLL_INTERVAL).await;
+    }
+    assert!(
+        concepts > 0,
+        "semantic extraction should produce concepts (prerequisite for this test)"
+    );
+
+    // The observation: does the lens have any edges over
+    // semantic-extraction-produced relationships?
+    let lens_resp = h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:t11:"}),
+    ).await;
+    let lens_count = node_count(&lens_resp);
+
+    assert_eq!(
+        lens_count, 0,
+        "CURRENT BEHAVIOR PINNED: lens should NOT fire on background-phase \
+         emissions — concepts from semantic extraction: {}, lens coverage: {}. \
+         If this assertion fails, either (a) the architectural gap has been \
+         closed (great — flip to `lens_count > 0` and update cycle-status) \
+         or (b) an unexpected path now triggers the lens over background \
+         emissions (investigate).",
+        concepts, lens_count
     );
 
     h.shutdown().await;

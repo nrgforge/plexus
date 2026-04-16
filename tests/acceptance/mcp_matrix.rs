@@ -12,10 +12,15 @@
 //!   the same DB, without re-loading the spec.
 //! - T5: Error paths — malformed YAML and no-active-context errors
 //!   surface via the `isError: true` JSON-RPC result field.
-//!
 //! - T4: unload_spec lifecycle — ingest (lens fires) → unload_spec →
 //!   second ingest (unloaded lens does not fire on new edges); previously-
 //!   translated vocabulary edges remain in the graph (Invariant 62).
+//! - T9: N-consumer cross-pollination — 4 consumers on same context,
+//!   each with distinct namespace. Every consumer's vocabulary covers
+//!   content from every other consumer.
+//! - T10: Consumer cycling — load spec → ingest → unload → reload same
+//!   adapter_id with modified lens translation → ingest. Old lens edges
+//!   persist; new lens fires on both pre- and post-reload content.
 
 use super::mcp_harness::{
     is_error, is_rpc_error, node_count, rpc_error_message, tool_result_json, tool_result_text,
@@ -437,6 +442,243 @@ async fn t5_error_paths() {
             || msg.to_lowercase().contains("parse"),
         "tool error should name the validation class — got: {}",
         msg
+    );
+
+    h.shutdown().await;
+}
+
+// ── T9: N-consumer cross-pollination ───────────────────────────────────
+
+/// Given four consumers on the same context, each with a distinct lens
+/// namespace translating `may_be_related`,
+/// when each consumer ingests one fragment via the built-in content
+/// adapter,
+/// then each consumer's vocabulary namespace covers concepts from
+/// every other consumer's content (co_occurrence produces
+/// may_be_related between each ingest's concept pair; every registered
+/// lens fires on every may_be_related edge regardless of which
+/// consumer's ingest produced it).
+///
+/// The two-consumer case (mcp_e2e) already proves the mechanism.
+/// This test catches regressions where a future change would
+/// inadvertently hardcode a 2-consumer assumption.
+#[tokio::test]
+async fn t9_n_consumer_cross_pollination() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("t9.db");
+    let mut h = McpHarness::spawn(&db).await;
+    h.initialize().await;
+    assert!(!is_error(&h.call_tool("set_context", json!({"name": "t9"})).await));
+
+    let consumers = [
+        ("alpha", "link_a"),
+        ("beta", "link_b"),
+        ("gamma", "link_c"),
+        ("delta", "link_d"),
+    ];
+    let ingest_pairs = [
+        ("river", "stones"),
+        ("forest", "moss"),
+        ("city", "glass"),
+        ("desert", "wind"),
+    ];
+
+    for (consumer, to_rel) in &consumers {
+        let yaml = format!(
+            r#"
+adapter_id: {consumer}-content
+input_kind: {consumer}.fragment
+lens:
+  consumer: {consumer}
+  translations:
+    - from: [may_be_related]
+      to: {to_rel}
+emit:
+  - create_node:
+      id: "concept:{{input.name}}"
+      type: concept
+      dimension: semantic
+"#,
+            consumer = consumer,
+            to_rel = to_rel
+        );
+        let resp = h.call_tool("load_spec", json!({"spec_yaml": yaml})).await;
+        assert!(!is_error(&resp), "load_spec {} failed: {}", consumer, resp);
+    }
+
+    for (tag_a, tag_b) in &ingest_pairs {
+        let resp = h.call_tool("ingest", json!({
+            "data": {"text": format!("{} and {}", tag_a, tag_b), "tags": [tag_a, tag_b]},
+            "input_kind": "content",
+        })).await;
+        assert!(!is_error(&resp), "ingest ({}, {}) failed: {}", tag_a, tag_b, resp);
+    }
+
+    // Each of the four lens namespaces should touch concepts drawn from
+    // all four ingests. Each ingest creates 2 concepts; 4 ingests = 8
+    // unique concepts; each lens should cover all 8.
+    for (consumer, _) in &consumers {
+        let resp = h.call_tool(
+            "find_nodes",
+            json!({"relationship_prefix": format!("lens:{}:", consumer)}),
+        ).await;
+        let n = node_count(&resp);
+        assert_eq!(
+            n, 8,
+            "lens:{}: should cover all 8 concepts from 4 ingests (N-consumer cross-pollination) — got {}",
+            consumer, n
+        );
+    }
+
+    h.shutdown().await;
+}
+
+// ── T10: Consumer cycling — load → unload → reload with modified spec ──
+
+/// Given a loaded spec with lens translating may_be_related →
+/// thematic_connection,
+/// when the consumer unloads the spec and reloads the same adapter_id
+/// with a modified lens (may_be_related → conceptual_link),
+/// then:
+/// - pre-unload `lens:trellis:thematic_connection` edges persist
+///   (Invariant 62: vocabulary edges are durable graph data)
+/// - the reloaded lens's initial sweep creates
+///   `lens:trellis:conceptual_link` edges over pre-unload content
+/// - subsequent ingests produce `lens:trellis:conceptual_link` edges
+///   but NOT new `lens:trellis:thematic_connection` edges (the old
+///   lens is deregistered)
+/// - both target relationships are queryable simultaneously
+///
+/// Keeps `lens.consumer: trellis` stable so the namespace is shared;
+/// only the translation target changes. Exercises the spec update
+/// path ADR-037 describes (retract + load_spec — minus the retract
+/// half, since old edges are allowed to persist as durable data).
+#[tokio::test]
+async fn t10_consumer_cycling_reload_with_modified_spec() {
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("t10.db");
+    let mut h = McpHarness::spawn(&db).await;
+    h.initialize().await;
+    assert!(!is_error(&h.call_tool("set_context", json!({"name": "t10"})).await));
+
+    let spec_v1 = r#"
+adapter_id: trellis-content
+input_kind: trellis.fragment
+lens:
+  consumer: trellis
+  translations:
+    - from: [may_be_related]
+      to: thematic_connection
+emit:
+  - create_node:
+      id: "concept:{input.name}"
+      type: concept
+      dimension: semantic
+"#;
+    assert!(!is_error(
+        &h.call_tool("load_spec", json!({"spec_yaml": spec_v1})).await
+    ));
+
+    // First ingest: produces may_be_related + lens:trellis:thematic_connection
+    assert!(!is_error(&h.call_tool("ingest", json!({
+        "data": {"text": "first", "tags": ["travel", "routine"]},
+        "input_kind": "content",
+    })).await));
+
+    let thematic_before = node_count(&h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:thematic_connection"}),
+    ).await);
+    assert!(
+        thematic_before >= 2,
+        "pre-unload thematic_connection should cover ≥2 nodes, got {}",
+        thematic_before
+    );
+
+    // Unload
+    assert!(!is_error(
+        &h.call_tool("unload_spec", json!({"adapter_id": "trellis-content"})).await
+    ));
+
+    // thematic_connection edges persist through unload (Invariant 62)
+    let thematic_after_unload = node_count(&h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:thematic_connection"}),
+    ).await);
+    assert_eq!(
+        thematic_after_unload, thematic_before,
+        "thematic_connection edges should persist through unload — before: {}, after: {}",
+        thematic_before, thematic_after_unload
+    );
+
+    // Reload with modified translation (same adapter_id, same namespace)
+    let spec_v2 = r#"
+adapter_id: trellis-content
+input_kind: trellis.fragment
+lens:
+  consumer: trellis
+  translations:
+    - from: [may_be_related]
+      to: conceptual_link
+emit:
+  - create_node:
+      id: "concept:{input.name}"
+      type: concept
+      dimension: semantic
+"#;
+    let reload_resp = h.call_tool("load_spec", json!({"spec_yaml": spec_v2})).await;
+    assert!(!is_error(&reload_resp), "reload failed: {}", reload_resp);
+
+    // Reload's initial sweep translates existing may_be_related edges
+    // into conceptual_link. The sweep's count should be > 0.
+    let reload_result = tool_result_json(&reload_resp);
+    assert!(
+        reload_result["vocabulary_edges_created"].as_u64().unwrap_or(0) > 0,
+        "reload initial sweep should create ≥1 conceptual_link edge over pre-unload content"
+    );
+
+    // Both translation targets are simultaneously present
+    let thematic_after_reload = node_count(&h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:thematic_connection"}),
+    ).await);
+    let conceptual_after_reload = node_count(&h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:conceptual_link"}),
+    ).await);
+    assert_eq!(
+        thematic_after_reload, thematic_before,
+        "thematic_connection unchanged by reload (old lens deregistered, edges durable)"
+    );
+    assert!(
+        conceptual_after_reload >= 2,
+        "conceptual_link should cover the pre-unload concepts post-reload sweep — got {}",
+        conceptual_after_reload
+    );
+
+    // Second ingest: only the new lens fires; thematic_connection must NOT grow
+    assert!(!is_error(&h.call_tool("ingest", json!({
+        "data": {"text": "second", "tags": ["nature", "stillness"]},
+        "input_kind": "content",
+    })).await));
+
+    let thematic_after_second_ingest = node_count(&h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:thematic_connection"}),
+    ).await);
+    let conceptual_after_second_ingest = node_count(&h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "lens:trellis:conceptual_link"}),
+    ).await);
+    assert_eq!(
+        thematic_after_second_ingest, thematic_before,
+        "post-reload ingest must NOT grow thematic_connection (old lens deregistered)"
+    );
+    assert!(
+        conceptual_after_second_ingest > conceptual_after_reload,
+        "post-reload ingest must grow conceptual_link (new lens fires) — \
+         before: {}, after: {}",
+        conceptual_after_reload, conceptual_after_second_ingest
     );
 
     h.shutdown().await;
