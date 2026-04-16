@@ -432,6 +432,16 @@ impl PlexusApi {
         let adapter = DeclarativeAdapter::from_yaml(spec_yaml)
             .map_err(|e| SpecLoadError::Validation(e.to_string()))?;
 
+        // Attach the pipeline's llm-orc client (if configured) so declarative
+        // adapters with `ensemble:` fields can invoke their ensemble. Without
+        // this propagation, ensemble-declaring specs would fail at runtime
+        // with `AdapterError::Skipped("ensemble declared but no LlmOrcClient
+        // configured")`. Specs without an ensemble are unaffected.
+        let adapter = match self.pipeline.llm_client() {
+            Some(client) => adapter.with_llm_client(client),
+            None => adapter,
+        };
+
         let adapter_id = adapter.id().to_string();
 
         // Extract enrichments and lens

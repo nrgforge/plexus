@@ -15,6 +15,7 @@ use crate::graph::events::GraphEvent;
 use crate::adapter::traits::{Adapter, AdapterInput};
 use crate::adapter::types::OutboundEvent;
 use crate::graph::{ContextId, PlexusEngine};
+use crate::llm_orc::LlmOrcClient;
 use std::sync::{Arc, RwLock};
 
 /// The unified ingest pipeline.
@@ -32,6 +33,12 @@ pub struct IngestPipeline {
     engine: Arc<PlexusEngine>,
     adapters: RwLock<Vec<Arc<dyn Adapter>>>,
     enrichments: RwLock<Arc<EnrichmentRegistry>>,
+    /// Optional llm-orc client. When present, attached to declarative
+    /// adapters (with `ensemble:` field) at `load_spec` time and shared
+    /// with the built-in SemanticAdapter wired by `with_llm_client` on
+    /// the builder. Stored as a single Option so all consumers of the
+    /// pipeline see the same client without duplication.
+    pub(crate) llm_client: Option<Arc<dyn LlmOrcClient>>,
 }
 
 impl IngestPipeline {
@@ -41,7 +48,16 @@ impl IngestPipeline {
             engine,
             adapters: RwLock::new(Vec::new()),
             enrichments: RwLock::new(Arc::new(EnrichmentRegistry::empty())),
+            llm_client: None,
         }
+    }
+
+    /// Get the configured llm-orc client, if any.
+    ///
+    /// Used by `PlexusApi::load_spec` to attach the client to declarative
+    /// adapters whose specs declare an `ensemble:` field.
+    pub fn llm_client(&self) -> Option<Arc<dyn LlmOrcClient>> {
+        self.llm_client.clone()
     }
 
     /// Register an adapter.

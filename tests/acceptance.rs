@@ -34,3 +34,5 @@ mod filter;
 mod spec;
 #[path = "acceptance/mcp_e2e.rs"]
 mod mcp_e2e;
+#[path = "acceptance/llm_orc_wiring.rs"]
+mod llm_orc_wiring;

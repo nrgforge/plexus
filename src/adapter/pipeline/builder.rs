@@ -10,11 +10,13 @@ use crate::adapter::enrichment::Enrichment;
 use crate::adapter::adapters::content::ContentAdapter;
 use crate::adapter::adapters::extraction::ExtractionCoordinator;
 use crate::adapter::adapters::provenance_adapter::ProvenanceAdapter;
+use crate::adapter::adapters::semantic::SemanticAdapter;
 use crate::adapter::adapters::structural::{MarkdownStructureModule, StructuralModule};
 use crate::adapter::enrichments::cooccurrence::CoOccurrenceEnrichment;
 use crate::adapter::enrichments::discovery_gap::DiscoveryGapEnrichment;
 use crate::adapter::enrichments::temporal_proximity::TemporalProximityEnrichment;
 use crate::graph::PlexusEngine;
+use crate::llm_orc::LlmOrcClient;
 use crate::storage::PersistedSpec;
 use std::sync::Arc;
 
@@ -25,6 +27,7 @@ use std::sync::Arc;
 /// registration logic.
 pub struct PipelineBuilder {
     pipeline: IngestPipeline,
+    engine: Arc<PlexusEngine>,
     coordinator: Option<ExtractionCoordinator>,
     enrichments: Vec<Arc<dyn Enrichment>>,
 }
@@ -35,6 +38,7 @@ impl PipelineBuilder {
         let pipeline = IngestPipeline::new(engine.clone());
         Self {
             pipeline,
+            engine,
             coordinator: None,
             enrichments: Vec::new(),
         }
@@ -43,10 +47,13 @@ impl PipelineBuilder {
     /// Register the core adapters: ContentAdapter, ExtractionCoordinator, ProvenanceAdapter.
     ///
     /// The `ExtractionCoordinator` is held by the builder until `build()` so
-    /// that structural modules can be registered on it via `with_structural_module()`.
+    /// that structural modules can be registered on it via `with_structural_module()`
+    /// and the llm-orc client via `with_llm_client()`. The engine is attached
+    /// so background structural analysis and semantic extraction can persist
+    /// via `EngineSink` (Invariant 30).
     pub fn with_default_adapters(mut self) -> Self {
         self.pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
-        self.coordinator = Some(ExtractionCoordinator::new());
+        self.coordinator = Some(ExtractionCoordinator::new().with_engine(self.engine.clone()));
         // ProvenanceAdapter is registered via register_integration in build()
         self
     }
@@ -107,6 +114,35 @@ impl PipelineBuilder {
     /// Add a custom enrichment.
     pub fn with_enrichment(mut self, enrichment: Arc<dyn Enrichment>) -> Self {
         self.enrichments.push(enrichment);
+        self
+    }
+
+    /// Configure the llm-orc client for the pipeline.
+    ///
+    /// Two effects:
+    /// 1. **Built-in semantic extraction:** registers `SemanticAdapter` on
+    ///    the `ExtractionCoordinator`, so `extract-file` ingest performs
+    ///    LLM-based concept extraction (the third extraction phase).
+    /// 2. **Declarative ensemble support:** the client is stored on the
+    ///    pipeline so that `PlexusApi::load_spec` can attach it to any
+    ///    `DeclarativeAdapter` whose spec declares an `ensemble:` field.
+    ///
+    /// Without this call, `extract-file` ingest produces only registration
+    /// + structural analysis output, and `load_spec` will reject specs that
+    /// declare an ensemble (`AdapterError::Skipped("ensemble declared but
+    /// no LlmOrcClient configured")`). `default_pipeline` calls this with
+    /// `SubprocessClient::new()` so production hosts get both behaviors by
+    /// default; consumers wanting to inject a mock client (for tests) call
+    /// this method explicitly with their own client.
+    ///
+    /// Must be called after `with_default_adapters()`.
+    pub fn with_llm_client(mut self, client: Arc<dyn LlmOrcClient>) -> Self {
+        self.pipeline.llm_client = Some(client.clone());
+        if let Some(ref mut coordinator) = self.coordinator {
+            coordinator.register_semantic_extraction(Arc::new(
+                SemanticAdapter::new(client, "extract-semantic"),
+            ));
+        }
         self
     }
 
@@ -171,10 +207,12 @@ impl PipelineBuilder {
     /// Equivalent to:
     /// ```ignore
     /// let persisted = gather_persisted_specs(&engine);
+    /// let client: Arc<dyn LlmOrcClient> = Arc::new(SubprocessClient::new());
     /// PipelineBuilder::new(engine)
     ///     .with_default_adapters()
     ///     .with_default_structural_modules()
     ///     .with_default_enrichments()
+    ///     .with_llm_client(client)
     ///     .with_persisted_specs(persisted)
     ///     .build()
     /// ```
@@ -183,12 +221,21 @@ impl PipelineBuilder {
     /// context's specs table (ADR-037 §2, Invariant 62 effect b). The
     /// specs table is the context's lens registry — any library instance
     /// against a context transiently runs every lens registered on it.
+    ///
+    /// Wires `SubprocessClient` as the llm-orc client so both built-in
+    /// semantic extraction (`extract-file` route) and consumer declarative
+    /// specs with `ensemble:` field can invoke llm-orc. When llm-orc is
+    /// not running, semantic extraction degrades gracefully (Invariant 47
+    /// — `AdapterError::Skipped`); registration and structural analysis
+    /// always complete.
     pub fn default_pipeline(engine: Arc<PlexusEngine>) -> IngestPipeline {
         let persisted = gather_persisted_specs(&engine);
+        let client: Arc<dyn LlmOrcClient> = Arc::new(crate::llm_orc::SubprocessClient::new());
         Self::new(engine)
             .with_default_adapters()
             .with_default_structural_modules()
             .with_default_enrichments()
+            .with_llm_client(client)
             .with_persisted_specs(persisted)
             .build()
     }
