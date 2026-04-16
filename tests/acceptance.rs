@@ -38,5 +38,7 @@ mod mcp_harness;
 mod mcp_e2e;
 #[path = "acceptance/mcp_matrix.rs"]
 mod mcp_matrix;
+#[path = "acceptance/mcp_matrix_llm_orc.rs"]
+mod mcp_matrix_llm_orc;
 #[path = "acceptance/llm_orc_wiring.rs"]
 mod llm_orc_wiring;

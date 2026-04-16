@@ -50,8 +50,12 @@ impl McpHarness {
     }
 
     pub async fn recv_line(&mut self) -> Value {
+        self.recv_line_with_timeout(CALL_TIMEOUT).await
+    }
+
+    pub async fn recv_line_with_timeout(&mut self, call_timeout: Duration) -> Value {
         let mut buf = String::new();
-        let read = timeout(CALL_TIMEOUT, self.stdout.read_line(&mut buf))
+        let read = timeout(call_timeout, self.stdout.read_line(&mut buf))
             .await
             .expect("timeout waiting for MCP response line")
             .expect("read response line");
@@ -87,6 +91,20 @@ impl McpHarness {
     }
 
     pub async fn call_tool(&mut self, name: &str, arguments: Value) -> Value {
+        self.call_tool_with_timeout(name, arguments, CALL_TIMEOUT).await
+    }
+
+    /// Call a tool with a custom response timeout.
+    ///
+    /// Use for operations whose handler may take longer than the default
+    /// 5s — notably ingest calls that synchronously invoke llm-orc
+    /// (declarative adapters with `ensemble:` fields).
+    pub async fn call_tool_with_timeout(
+        &mut self,
+        name: &str,
+        arguments: Value,
+        call_timeout: Duration,
+    ) -> Value {
         let id = self.next_id;
         self.next_id += 1;
         let req = json!({
@@ -96,7 +114,7 @@ impl McpHarness {
             "params": { "name": name, "arguments": arguments }
         });
         self.send_line(&req).await;
-        self.recv_line().await
+        self.recv_line_with_timeout(call_timeout).await
     }
 
     pub async fn shutdown(mut self) {

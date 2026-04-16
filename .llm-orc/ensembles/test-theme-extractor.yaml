@@ -1,0 +1,28 @@
+# Minimal test fixture ensemble for declarative adapter + llm-orc wiring.
+#
+# Used by gated MCP acceptance tests (PLEXUS_INTEGRATION=1) to verify:
+# - T7: declarative spec with `ensemble:` field invokes the ensemble
+# - T8: lens over an llm-orc-backed declarative adapter
+#
+# Single agent named `synthesizer` (the default agent the declarative
+# adapter reads from). Returns compact JSON with deterministic-ish shape
+# so emit primitives can reference `{ensemble.theme}` and `{ensemble.keyword}`.
+
+name: test-theme-extractor
+description: >
+  Minimal single-agent ensemble for testing. Given text, extracts one
+  theme word and one keyword. Intentionally small so tests run fast.
+
+agents:
+  - name: synthesizer
+    model_profile: analyst-mistral
+    timeout_seconds: 60
+    temperature: 0.1
+    system_prompt: |
+      You extract a single theme and a single keyword from the given text.
+
+      Respond with ONLY this JSON shape — no prose, no markdown fences:
+      {"theme": "<single lowercase word>", "keyword": "<single lowercase word>"}
+
+      The theme is the high-level subject. The keyword is the most salient
+      noun from the text. Both must be single lowercase words with no spaces.
