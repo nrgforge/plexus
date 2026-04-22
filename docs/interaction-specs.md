@@ -1,8 +1,8 @@
 # Interaction Specifications
 
-**Derived from:** product-discovery.md (stakeholder models, 2026-04-02)
-**Complements:** scenarios 036-037 (business-rule behavior)
-**Scope:** MCP consumer interaction surface cycle
+**Derived from:** product-discovery.md (stakeholder models, 2026-04-02; updated 2026-04-17)
+**Complements:** scenarios 036-037 (MCP consumer interaction surface), scenarios 038-042 (default-install and lens-grammar)
+**Scope:** MCP consumer interaction surface cycle + Default-install and lens-design cycle (additions 2026-04-20)
 
 ---
 
@@ -54,6 +54,54 @@ The consumer may then explore a specific vocabulary layer by filtering with `rel
 - Lens translation rules persist in SQLite (ADR-037). Other consumers' ingests continue to trigger the disconnected consumer's lens, growing its vocabulary layer.
 - On reconnection, the consumer calls `set_context` and (if needed) `load_spec` to re-establish its adapter for ingestion. The vocabulary layer is already there; only the adapter routing needs re-establishment.
 - `changes_since` with the consumer's last cursor reveals everything that happened while it was away — including vocabulary edges created by its persisted lens reacting to other consumers' ingests.
+
+### Task: Understand the default-build baseline before authoring a spec *(added 2026-04-20, ADR-038, ADR-040)*
+
+**Interaction mechanics:** A consumer installing the default Homebrew/CLI binary encounters a **lean baseline**: CoOccurrence runs on `tagged_with` edges, TemporalProximity runs on nodes carrying `created_at`, DiscoveryGap is registered but idle (no `similar_to` producer in the default build), EmbeddingSimilarity is not registered. Before authoring a spec, the consumer reads the onboarding documentation that names this baseline explicitly.
+
+The consumer chooses one of two activation paths when embedding-based discovery is needed:
+
+- **llm-orc path (default build):** install llm-orc, configure it with an embedding provider (Ollama locally, OpenAI-compatible endpoint, or any other provider llm-orc supports), author (or adopt) a declarative adapter spec that declares an external enrichment invoking an llm-orc ensemble to emit `similar_to` edges. This is the path the worked-example spec (shipped at `examples/specs/embedding-activation.yaml` or equivalent) demonstrates.
+- **In-process path (library consumers):** rebuild with `plexus = { features = ["embeddings"] }`. Registers `EmbeddingSimilarityEnrichment` with `FastEmbedEmbedder`; no llm-orc required.
+
+Consumers whose content flow does not require embedding-based discovery skip activation entirely. The lean baseline is a valid end-state, not a deferred feature.
+
+### Task: Choose a minimum-useful spec rather than a minimum-viable one *(added 2026-04-20, ADR-042 + Product Debt routing)*
+
+**Interaction mechanics:** A **minimum-viable spec** is any spec that passes `load_spec` validation — declaring an adapter ID, input kind, input schema, and at least one `emit` primitive. A minimum-viable spec is not necessarily useful: a spec declaring a single `create_node` emission on untagged input produces isolated nodes with no structural signal. CoOccurrence does not fire (no `tagged_with` edges); TemporalProximity runs but produces only time-proximity edges between arbitrary nodes; DiscoveryGap is idle in the default build. The consumer sees mechanism but not value.
+
+A **minimum-useful spec** names the infrastructure preconditions that make its emissions produce structural signal. At least one of the following must hold:
+
+- The spec's emit produces `tagged_with` edges to concept nodes (so CoOccurrence can detect shared-source patterns).
+- The spec declares an external enrichment that produces `similar_to` edges (so DiscoveryGap and any downstream enrichment fire).
+- The spec declares an ensemble (via the `ensemble:` field) that performs semantic extraction over prose content, producing tagged concept nodes that CoOccurrence then operates on.
+- The `features = ["embeddings"]` build is active and the spec operates on content whose nodes carry embeddable content (so `EmbeddingSimilarityEnrichment` produces `similar_to`).
+
+The consumer chooses one of these infrastructure preconditions, names it explicitly in their spec or in their deployment instructions, and tests that the resulting spec produces edges — not only validates and loads. Testing the loaded spec against untagged prose and verifying that structure emerges is the acceptance check.
+
+### Task: Choose a dimension for my spec's node types *(added 2026-04-20, ADR-042)*
+
+**Interaction mechanics:** Every `create_node` primitive in a declarative adapter spec declares a `dimension` string — the named facet the node lives in. The choice is load-bearing: enrichments filter by dimension (Invariant 50) and `find_nodes` queries can scope by dimension.
+
+The consumer chooses a dimension per node-type by consulting:
+
+- **Shipped-adapter conventions.** If the consumer's node type collides with a shipped-adapter node type, the author consults the shipped adapter's documentation. The content adapter places fragments in `structure`; the extraction coordinator places file and `extraction-status` nodes in `structure`. A consumer whose `fragment` node is conceptually the same as the content adapter's `fragment` should match the convention (`structure`). A consumer whose `fragment` is conceptually different should depart deliberately and accept that dimension-scoped queries and enrichments will see the two node populations separately.
+- **Extension to novel domains.** If the consumer's node type has no shipped-adapter convention (e.g., `gesture_phrase`, `code_symbol`, `audio_event`), the consumer chooses a dimension name that suits the domain. Plexus does not prescribe. Common patterns: group node types that an enrichment will filter together into the same dimension; use distinct dimensions for orthogonal facets of the same content.
+
+Plexus validates dimension values syntactically at `load_spec` time (rejects empty strings, whitespace, reserved characters like `:`). Plexus does **not** validate semantic appropriateness — no warn-on-divergence, no canonical node-type-to-dimension table. The author's choice is authoritative for any string that passes syntactic validation.
+
+**Silent-idle failure mode to avoid:** a spec that declares an enrichment reading a property (e.g., `TemporalProximityEnrichment` reading `created_at`) without the spec's `create_node` primitives writing that property produces a silent-idle enrichment — registered, called, but emitting nothing because the read value is always absent. This is not surfaced as an error; the author diagnoses by inspecting the graph for expected edges and, when absent, checking property writes match enrichment reads.
+
+### Task: Choose named-relationship or structural-predicate output relationships in the lens *(added 2026-04-20, ADR-041)*
+
+**Interaction mechanics:** When authoring the `lens:` section of the adapter spec, the author decides the naming register of each translation's `to` relationship. Two registers are available:
+
+- **Named relationships** (`thematic_connection`, `cites`, `draft_about_theme`): the `to` name interprets the edge's meaning. Appropriate for operational jobs within the app — publishing-pipeline routing, search ranking, analytics aggregation — where the app's logic branches on the relationship name.
+- **Structural predicates** (`latent_pair`, `bridges_communities`, `density_shift`, `dormant_since_T`, `member_of_candidate_cluster`): the `to` name describes the shape of the connection without interpreting it. Appropriate for discovery-oriented jobs — creative-writing scaffolding, thesis-finding, reflective discovery — where the value proposition involves the end-user's interpretive work, and the app's surface presents the connection as a prompt rather than an assertion.
+
+The choice is **per-job within an app**, not per-app. A consumer whose app supports both a user-facing discovery surface and an operational publishing pipeline may declare translation rules of both registers within a single `lens:` section. The structural-predicate recommendation for discovery-oriented jobs is a **convention** (documented in product discovery and here), not a grammar-enforced constraint. Plexus accepts any syntactically well-formed `to` string.
+
+**Hypothesis-level framing:** the claim that structural predicates preserve a phenomenology-of-discovery experience that named relationships cancel is held as hypothesis in product discovery, not as settled principle. Consumers authoring discovery-oriented lenses should know the convention rests on composition-shape reasoning (structural predicates extend more naturally under network-science enrichments; query patterns differ in expressive reach) rather than on validated phenomenological evidence. A future cycle may promote the hypothesis; until then, the convention is guidance, not requirement.
 
 ---
 

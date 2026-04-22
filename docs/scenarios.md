@@ -19,3 +19,6 @@ Scenarios are organized by ADR group in [`docs/scenarios/`](scenarios/).
 | [026-027-embedding-and-retraction](scenarios/026-027-embedding-and-retraction.md) | ADR-026–027 | Embedding enrichment, contribution retraction |
 | [030-032-structural-module-system](scenarios/030-032-structural-module-system.md) | ADR-030–032 | Structural module trait, output, first module |
 | [033-035-query-surface](scenarios/033-035-query-surface.md) | ADR-033–035 | Lens declaration, composable query filters, event cursor persistence |
+| [036-mcp-query-surface](scenarios/036-mcp-query-surface.md) | ADR-036 | MCP query surface tools |
+| [037-consumer-spec-loading](scenarios/037-consumer-spec-loading.md) | ADR-037 | `load_spec`, `unload_spec`, spec persistence, lens lifecycle |
+| [038-042-default-install-lens-design](scenarios/038-042-default-install-lens-design.md) | ADR-038–042 | Release-binary feature profile, `created_at` property contract, DiscoveryGap trigger sources, lens grammar conventions, dimension extensibility |

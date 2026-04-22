@@ -1,7 +1,7 @@
 # Active RDD Cycle: Default-Install Experience and Lens Design Principles
 
 **Started:** 2026-04-17
-**Current phase:** DECIDE (next) — DISCOVER update complete 2026-04-17; MODEL light-touch pass complete 2026-04-20
+**Current phase:** ARCHITECT (next) — DISCOVER update complete 2026-04-17; MODEL light-touch pass complete 2026-04-20; DECIDE complete 2026-04-21
 **Artifact base:** ./docs/
 **Scope:** Default-install consumer experience (what happens when a new consumer installs plexus via Homebrew and follows the advertised path) + lens design principles (named-relationship vs structural-predicate conventions, and whether the phenomenology-of-discovery constraint applies broadly or only to specific consumer types)
 
@@ -17,8 +17,8 @@
 | Spike 1 (lens grammar comparison) | ⏸ Deferred to DECIDE | — | Not tractable as a live experiment in the current build — the structural predicates the hypothesis turns on (`bridges_communities`, etc.) require enrichments that don't exist yet. Carried to DECIDE as analytical work alongside lens-grammar ADR drafting. |
 | DISCOVER (update) | ✅ Complete | `docs/product-discovery.md` (updated); gate reflection note at `docs/housekeeping/gates/default-install-lens-design-discover-gate.md`; susceptibility snapshot at `docs/housekeeping/audits/susceptibility-snapshot-default-install-lens-design-discover.md` | Updates reflect PLAY field-notes, Spike 2 resolution, and gate-surfaced refinements (two deployment classes for the embedding decision; parallel-code-paths constraint on the ADR; grounding-examples-not-build-targets stance; lens-as-grammar parked for future cycle with composition-shape awareness carried forward). Snapshot recommended one Grounding Reframe for MODEL entry (see below); mental-model section hedging applied per option A. |
 | MODEL | ✅ Complete | `docs/domain-model.md` (Dimension entry softened; OQ 15 added then re-expanded with candidates; Amendment Log entry #9); gate reflection note at `docs/housekeeping/gates/default-install-lens-design-model-gate.md`; susceptibility snapshot at `docs/housekeeping/audits/susceptibility-snapshot-default-install-lens-design-model.md` | Light-touch pass complete. No invariant changes. Dimension entry reshaped from enumeration to extensibility-aware framing (three candidates staged; option (c) minimal selected per user's "dial complexity without complecting" guidance). OQ 15 routes spec-author-guidance question to DECIDE with extensibility as binding constraint and three live candidates explicitly staged (warn-on-divergence / documentation-only / syntactic-only). Grounding Reframe honored: no mental-model hypotheses promoted, no lens-as-grammar vocabulary added. Code documentation drift flagged (`src/graph/node.rs:10` cites a non-existent ADR title) — DECIDE/BUILD small cleanup task. Future-cycle belief-mapping question logged for lens-as-grammar entry. |
-| DECIDE | ▶ Next | — | — |
-| ARCHITECT | ☐ Pending | — | Light-touch pass planned. Principal work: update `system-design.md` to name both embedding backends as first-class (per DECIDE's shipping ADR); verify DiscoveryGap trigger broadening (if it happens) does not cross module boundaries; regenerate `docs/ORIENTATION.md` if drift is present. |
+| DECIDE | ✅ Complete | ADRs 038–042 at `docs/decisions/`; scenarios at `docs/scenarios/038-042-default-install-lens-design.md`; interaction-specs updates in `docs/interaction-specs.md` (Consumer Application Developer stakeholder, four new tasks); argument audit reports at `docs/housekeeping/audits/argument-audit-decide-default-install-lens-design*.md`; conformance scan at `docs/housekeeping/audits/conformance-scan-decide-default-install-lens-design.md`; susceptibility snapshot at `docs/housekeeping/audits/susceptibility-snapshot-default-install-lens-design-decide.md`; gate reflection note at `docs/housekeeping/gates/default-install-lens-design-decide-gate.md` | Five ADRs: (038) release-binary feature profile — `default = []` stays, no Rust code path to llm-orc, consumer activates embedding via declarative adapter spec; (039) `created_at` property contract — `node.properties["created_at"]` authoritative, ISO-8601 UTC, adapters write + enrichment reads; (040) DiscoveryGap trigger sources — source-agnostic, no algorithm broadening, multiple parameterizations; (041) lens grammar conventions — structural-predicate endorsement as convention (not requirement) for discovery-oriented jobs, per-job not per-app, phenomenology held as hypothesis with argument-grounds split made visible; (042) dimension extensibility guidance — option (ii)+(iii) documentation + syntactic validation, option (i) rejected this cycle with empirical escalation signal named as BUILD opportunity. Grounding Reframe honored: bundled-default-spec option staged at gate, rejected on specific ground (would re-create truthfulness gap at a different layer because bundled spec produces no effect without llm-orc), rejection recorded in ADR-038. Three user-applied clarifying additions during gate: tautology-threshold scope condition (ADR-041), argument-grounds split (ADR-041), empirical escalation signal (ADR-042). No invariant changes — no backward propagation triggered. Conformance scan found 7 debt items (3 Structural, 2 Gap, 2 Drift) — D-01–D-04 a coordinated four-site fix for `created_at`; D-06 highest-consequence (`resolve_dimension` is an exclusive allowlist, needs conversion to syntactic validator); D-07 the known `graph/node.rs:10` doc drift. |
+| ARCHITECT | ▶ Next | — | Light-touch pass planned. Principal work: update `system-design.md` to name both embedding backends as first-class per deployment class (Homebrew/CLI default = llm-orc-driven via consumer spec; library-consumer with `features = ["embeddings"]` = in-process fastembed); verify ADR-040's DiscoveryGap trigger-coupling story does not cross module boundaries (naming/documentation concern, not structural); regenerate `docs/ORIENTATION.md` if drift present. Surface gate-carried open questions (empirical escalation signal for ADR-042; phenomenology hypothesis for ADR-041; documentation-deliverables contingency for ADR-038) in the ARCHITECT brief. Carry forward "Candidates Considered" stylistic discipline from MODEL. |
 | BUILD | ☐ Pending | — | — |
 | PLAY | ☐ Optional | — | Second PLAY by non-builder stakeholder is **not happening this cycle** (user is the sole tester at present; methodologically valuable but not realistic in current resourcing). Cycle continues without it. |
 | SYNTHESIZE | ☐ Optional | — | — |
@@ -80,6 +80,17 @@ This isn't a Grounding Reframe action per se, but a note for cycle sequencing �
 
 ---
 
+## Feed-Forward Signals from DECIDE → ARCHITECT (2026-04-21)
+
+1. **Documentation deliverables are load-bearing for ADR-038's reframing.** ADR-038's "positive decision, not defect-by-omission" stance holds only if BUILD produces the README updates, worked-example spec at `examples/specs/embedding-activation.yaml`, and onboarding material naming the lean baseline. ARCHITECT should weight these deliverables when scoping BUILD; if they are delayed or weak, the defect-by-omission framing reasserts.
+2. **Worked-example spec quality bar.** The spec must cross the tautology threshold — demonstrate `similar_to` edges emerging over content the author did not pre-encode with overlapping tags. Embedding-over-untagged-prose is the target shape. A pre-tagged worked example would repeat the field-notes-flagged tautology failure mode. ARCHITECT should reference this requirement when sizing BUILD.
+3. **Conformance debt D-01 through D-04 is a coordinated four-site fix, not four independent fixes.** Three producer sites + one consumer parser must move together as a single `fix:` commit. ARCHITECT does not need to do this work; the coupling should be called out in the ARCHITECT brief so BUILD treats it as atomic.
+4. **Conformance debt D-06 is structural.** `resolve_dimension`'s exclusive-allowlist contradicts ADR-042's extensibility promise. Converting it to a syntactic well-formedness check + adding validation to `validate_spec()` for fail-fast behavior per Invariant 60 is medium-scope but bounded. ARCHITECT should confirm this does not introduce new module boundaries or trait changes.
+5. **Optional BUILD-phase instrumentation:** silent-idle detection at spec load time. Named in ADR-042 as an empirical escalation signal opportunity. Not required; ARCHITECT surfaces if relevant to a logging/observability surface already being touched in architecture updates.
+6. **ADR-040's "no algorithm broadening" is a narrowness commitment, not a structural change.** The enrichment stays the same shape; what changes is how its activation story is documented across the ADR chain. ARCHITECT should confirm no module-boundary crossing.
+7. **Lens grammar ADR (041) does not require ARCHITECT action** — convention lives in product discovery, spec-author documentation, and interaction specs. No system-design touch required unless the lens module's documentation benefits from naming the convention.
+8. **Carry "Candidates Considered" stylistic discipline forward.** Per susceptibility snapshot Advisory item 2, the MODEL-gate-introduced corrective for the swift-adoption pattern should continue into ARCHITECT. Stage compressed options explicitly.
+
 ## Feed-Forward Signals (categorized routing of PLAY field notes)
 
 ### From PLAY — routed to DISCOVER (update mode)
@@ -109,28 +120,29 @@ This isn't a Grounding Reframe action per se, but a note for cycle sequencing �
 
 ## Context for Resumption
 
-**For the next session:**
+**For the next session (ARCHITECT):**
 
-1. Invoke `/rdd:rdd` or `/rdd:discover` — will detect the new cycle from this cycle-status.
-2. Read `docs/essays/reflections/field-notes.md` (raw observations from PLAY) and `docs/housekeeping/audits/susceptibility-snapshot-mcp-consumer-interaction-play.md` (the snapshot's Grounding Reframe recommendations) as the primary inputs.
-3. Begin DISCOVER in **update mode** against `docs/product-discovery.md`. The task is:
-   - Section-by-section review of product-discovery against PLAY findings
-   - Add the assumption inversion (default-install experience) as an open question, not a resolved finding (per Uncertainty 2)
-   - Add the easy-vs-honest demo value tension
-   - Refine the Consumer Application Developer stakeholder model (apps as lenses, not containers)
-   - Add the feedback-loop architecture to the consumer journey
-   - Hold the phenomenology-of-discovery constraint as a candidate lens-design value, not a settled principle (per Uncertainty 1)
+1. Invoke `/rdd:rdd` or `/rdd:architect` — the orchestrator will detect the cycle state from this document and resume at ARCHITECT.
+2. Primary inputs to ARCHITECT:
+   - `docs/decisions/038-release-binary-feature-profile.md` through `042-dimension-extensibility-guidance.md` — the five accepted-pending decisions this phase extends.
+   - `docs/housekeeping/gates/default-install-lens-design-decide-gate.md` — the gate reflection note, which captures settled premises, open questions, and specific commitments carried forward.
+   - `docs/housekeeping/audits/susceptibility-snapshot-default-install-lens-design-decide.md` — the susceptibility snapshot at the DECIDE → ARCHITECT boundary, which recommends carrying "Candidates Considered" discipline forward and notes a partial-fidelity inhabitation concern.
+   - `docs/housekeeping/audits/conformance-scan-decide-default-install-lens-design.md` — 7 debt items, with which map to BUILD scenarios vs. pure cleanup already labeled.
+   - `docs/system-design.md` (v1.2) — the document ARCHITECT primarily edits.
 
-**Grounding spikes to run alongside DISCOVER (or during DECIDE):**
+3. ARCHITECT's planned scope (light-touch pass):
+   - Name both embedding backends as first-class in system-design, per deployment class: Homebrew/CLI default = llm-orc-driven via consumer adapter spec; library-consumer with `features = ["embeddings"]` = in-process fastembed. Cite ADR-038.
+   - Verify ADR-040's DiscoveryGap trigger-coupling story does not cross module boundaries — confirm it is a naming/documentation concern at the enrichment level, not a structural architectural change. Document the confirmation briefly in system-design.
+   - Regenerate `docs/ORIENTATION.md` if any drift is detected after the system-design update.
+   - Surface gate-carried open questions (empirical escalation signal for ADR-042; phenomenology hypothesis for ADR-041; documentation-deliverables contingency for ADR-038) in the ARCHITECT brief so BUILD inherits them visibly.
 
-- Spike 1: Draft alternative Trellis lens specs (named vs structural) and query against each. Resolves Uncertainty 1.
-- Spike 2: Audit Cargo.toml + git history + prior ADRs for the rationale behind `default = []`. Resolves Uncertainty 2.
+4. ADR status note for ARCHITECT: all five ADRs are currently **Proposed**. ARCHITECT does not flip them to Accepted — that happens when the user accepts the DECIDE output. The user may want to flip ADR statuses to Accepted as part of the ARCHITECT phase's opening action, or defer until ARCHITECT completes. Ask at ARCHITECT opening.
 
-Both spikes are small; both can run before or during DECIDE to inform the ADRs that follow.
+5. No invariant changes landed in DECIDE; no backward propagation required.
 
-**Optional second PLAY later in this cycle:** Inhabited by a non-builder stakeholder to validate the fixes land. This is a methodological strength but not a blocker.
+**Optional second PLAY later in this cycle:** Inhabited by a non-builder stakeholder to validate the fixes land. Carried from DISCOVER; still a methodological strength, still not a blocker.
 
-**MCP session state:** `./session/play.db` from the prior cycle contains the test graph with `writing-context-test`, loaded specs for `trellis-fragment` and `carrel-source`, and ingested content. Keep or reset at the practitioner's discretion. Resetting would restore the blank-slate condition for the next exploratory session.
+**MCP session state:** `./session/play.db` from the prior PLAY session remains untouched. Not relevant to ARCHITECT; will re-become relevant if a second PLAY session runs after BUILD.
 
 ---
 
