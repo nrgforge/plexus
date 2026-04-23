@@ -1,6 +1,6 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-04-22 (ARCHITECT complete — Default-install experience and lens design principles cycle)
+**Last updated:** 2026-04-22 (BUILD WP-A + WP-C complete — Default-install experience and lens design principles cycle)
 **Derived from:** System Design v1.3, ADRs 038–042, conformance scan 038-042 (7 debt items, all Bug), DECIDE gate reflection (2026-04-21)
 
 ## Current State
@@ -51,7 +51,7 @@
 
 ---
 
-### WP-C: Developer-facing documentation drift (`docs:` — D-05 + D-07)
+### WP-C: Developer-facing documentation drift (`docs:` — D-05 + D-07) ✅ Complete (`4c028aa`, 2026-04-22)
 
 **Objective:** Close two small documentation debts surfaced by the conformance scan. Both are single-file edits, trivial per site, no code behavior change.
 
