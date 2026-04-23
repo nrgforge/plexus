@@ -283,10 +283,17 @@ pub fn rfc3339_now() -> PropertyValue {
 /// Normalizes `label` to lowercase for the ID (`concept:<lowercase>`) and the
 /// `label` property. Writes the current UTC timestamp as an ISO-8601 /
 /// RFC-3339 string to `properties["created_at"]` — the authoritative surface
-/// for timestamp-based enrichments. Callers that want a different ingest time
-/// can overwrite the property on the returned node; subsequent call sites
-/// that re-derive the same `concept:<normalized>` node via upsert will not
-/// overwrite the original timestamp.
+/// for timestamp-based enrichments.
+///
+/// **Upsert semantic caveat.** Re-emitting the same `concept:<normalized>`
+/// node produces a fresh `created_at` each call; `Context::add_node`'s
+/// HashMap-insert is last-writer-wins, so the concept's stored timestamp
+/// reflects most-recent re-emission rather than first-creation. This is a
+/// known divergence from ADR-039's first-creation intent in re-ingestion
+/// patterns, accepted for the default-install cycle and parked for a future
+/// cycle on node-level reinforcement (cycle-status §"Node-level reinforcement
+/// vs. overwrite semantics"; domain-model §"node property merge on
+/// multi-source upsert", extended 2026-04-22).
 ///
 /// Returns the `(NodeId, Node)` pair so callers can add additional properties
 /// before wrapping in `AnnotatedNode`.
