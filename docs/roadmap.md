@@ -1,6 +1,6 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-04-22 (BUILD WP-A + WP-C complete — Default-install experience and lens design principles cycle)
+**Last updated:** 2026-04-22 (BUILD WP-A + WP-B + WP-C complete — Default-install experience and lens design principles cycle)
 **Derived from:** System Design v1.3, ADRs 038–042, conformance scan 038-042 (7 debt items, all Bug), DECIDE gate reflection (2026-04-21)
 
 ## Current State
@@ -33,9 +33,11 @@
 
 ---
 
-### WP-B: Dimension extensibility — `resolve_dimension` + `validate_spec` (ADR-042)
+### WP-B: Dimension extensibility — `resolve_dimension` + `validate_spec` (ADR-042) ✅ Complete (`2cc25ee`, 2026-04-22)
 
 **Objective:** Close conformance debt D-06 — the highest-consequence structural violation in the cycle. `resolve_dimension` in `DeclarativeAdapter` currently rejects any dimension string not in a hardcoded allowlist (`structure`, `semantic`, `provenance`, `relational`, `temporal`, `default`) with a `process()`-time error. This blocks ADR-042's extensibility commitment: a consumer authoring a spec declaring `dimension: "gesture"` or any novel dimension cannot use Plexus without modifying Rust. After this WP, syntactic validation is the gate, not semantic policy.
+
+**Grep-before-committing outcome (2026-04-22):** `&'static str` was *not* entrenched on the wire or in contribution keys. `Node.dimension`, `Edge.source_dimension`, `Edge.target_dimension`, and `CreateNodePrimitive.dimension` were already `String`; `Edge::new_in_dimension` / `new_cross_dimensional` / `Node::new_in_dimension` all take `impl Into<String>`. The lifetime was scoped purely to `resolve_dimension`'s return type and three local call sites — risk call-out closed green. Implementation eliminated `resolve_dimension` entirely in favor of a `validate_dimension_syntax(&str) -> Result<(), AdapterError>` helper, with call sites passing the already-`String` dimension through directly.
 
 **Changes:**
 - `src/adapter/adapters/declarative.rs` (`resolve_dimension`) — replace the exclusive `match` with a permissive well-formedness check: accept any string that is not empty, does not contain whitespace, and does not contain reserved characters (currently `:` and `\0`). Everything else passes.
