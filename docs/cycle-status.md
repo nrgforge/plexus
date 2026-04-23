@@ -120,29 +120,33 @@ This isn't a Grounding Reframe action per se, but a note for cycle sequencing �
 
 ## Context for Resumption
 
-**For the next session (ARCHITECT):**
+**For the next session (BUILD WP-D — ADR-038 onboarding deliverables):**
 
-1. Invoke `/rdd:rdd` or `/rdd:architect` — the orchestrator will detect the cycle state from this document and resume at ARCHITECT.
-2. Primary inputs to ARCHITECT:
-   - `docs/decisions/038-release-binary-feature-profile.md` through `042-dimension-extensibility-guidance.md` — the five accepted-pending decisions this phase extends.
-   - `docs/housekeeping/gates/default-install-lens-design-decide-gate.md` — the gate reflection note, which captures settled premises, open questions, and specific commitments carried forward.
-   - `docs/housekeeping/audits/susceptibility-snapshot-default-install-lens-design-decide.md` — the susceptibility snapshot at the DECIDE → ARCHITECT boundary, which recommends carrying "Candidates Considered" discipline forward and notes a partial-fidelity inhabitation concern.
-   - `docs/housekeeping/audits/conformance-scan-decide-default-install-lens-design.md` — 7 debt items, with which map to BUILD scenarios vs. pure cleanup already labeled.
-   - `docs/system-design.md` (v1.2) — the document ARCHITECT primarily edits.
+1. Invoke `/rdd:rdd` or `/rdd:build` — the orchestrator will detect the cycle state from this document and resume at BUILD with WP-A, WP-B, WP-C already landed.
 
-3. ARCHITECT's planned scope (light-touch pass):
-   - Name both embedding backends as first-class in system-design, per deployment class: Homebrew/CLI default = llm-orc-driven via consumer adapter spec; library-consumer with `features = ["embeddings"]` = in-process fastembed. Cite ADR-038.
-   - Verify ADR-040's DiscoveryGap trigger-coupling story does not cross module boundaries — confirm it is a naming/documentation concern at the enrichment level, not a structural architectural change. Document the confirmation briefly in system-design.
-   - Regenerate `docs/ORIENTATION.md` if any drift is detected after the system-design update.
-   - Surface gate-carried open questions (empirical escalation signal for ADR-042; phenomenology hypothesis for ADR-041; documentation-deliverables contingency for ADR-038) in the ARCHITECT brief so BUILD inherits them visibly.
+2. **WP-D is substantive enough to warrant its own session.** Per the build skill's Session Management guidance, WP-D's quality bar (the worked-example spec must cross the tautology threshold — emergent `similar_to` edges over untagged prose) requires empirical iteration that is easier to do against a clean context. The iteration shape: install/verify llm-orc + Ollama; pick candidate embedding model (nomic-embed-text / mxbai-embed-large / alternate); author spec; ingest against untagged prose fixture; observe emitted edges; adjust model/threshold/batch parameters; re-run; converge when edges reflect semantic similarity rather than mechanical tag coincidence; document the landing choice AND the rejected alternatives inline.
 
-4. ADR status note for ARCHITECT: all five ADRs are currently **Proposed**. ARCHITECT does not flip them to Accepted — that happens when the user accepts the DECIDE output. The user may want to flip ADR statuses to Accepted as part of the ARCHITECT phase's opening action, or defer until ARCHITECT completes. Ask at ARCHITECT opening.
+3. **Primary inputs for WP-D:**
+   - `docs/decisions/038-release-binary-feature-profile.md` — what the lean baseline is and what activation requires.
+   - `docs/decisions/041-lens-grammar-conventions.md` — structural-predicate-for-discovery-oriented-jobs convention; per-job not per-app; phenomenology held as hypothesis.
+   - `docs/decisions/042-dimension-extensibility-guidance.md` §Required BUILD deliverables — the 4 enumerated items + landing criterion.
+   - `docs/roadmap.md` §WP-D — detailed deliverable list (README, `examples/specs/embedding-activation.yaml`, spec-author docs on dimension choice, `create_node` primitive field-level docs, shipped-adapter convention notes, lens grammar convention docs, minimum-useful-spec pattern).
+   - `docs/roadmap.md` §Open Decision Points — worked-example provider (Ollama via llm-orc, settled at DECIDE gate), embedding strategy exploration, tautology threshold, onboarding tone, recursive-tautology awareness escalation path.
 
-5. No invariant changes landed in DECIDE; no backward propagation required.
+4. **WP-D load-bearing constraints (inherited from prior gates):**
+   - **Tautology threshold is hard:** embedding-over-untagged-prose, not pre-tagged demo. If the worked example cannot cross this bar, escalate to practitioner — the response shape may be a new research cycle on emergent-structure demonstration, not a WP-D patch. Shipping a thin example is worse than no example.
+   - **Capability-loss transparency is load-bearing alongside capability-present framing.** README must name what the reader does NOT get without llm-orc activation (DiscoveryGap stays idle, EmbeddingSimilarity silent, semantic-extraction-driven lens content absent), not just what they do get.
+   - **Onboarding tone:** direct, not apologetic ("the default binary ships with two active enrichments…") and not overclaiming ("four core enrichments out of the box"). Both fail honest-to-demo.
+   - **ADR-038 reframing is contingent on WP-D landing with substance.** Weak or delayed deliverables reassert defect-by-omission framing.
+   - **Composition-shape observation opportunity (from ADR-041 §split treatment):** once the worked example produces emergent `similar_to` edges over untagged prose, BUILD can run both lens grammar conventions (`lens:trellis:thematic_connection` vs `lens:trellis:latent_pair`) over the same content and observe whether the analytical claims hold. Add to stewardship at WP-D close if the worked example crosses tautology; skip silently if it does not.
 
-**Optional second PLAY later in this cycle:** Inhabited by a non-builder stakeholder to validate the fixes land. Carried from DISCOVER; still a methodological strength, still not a blocker.
+5. **WP-E (optional) decision point:** silent-idle debug instrumentation for dimension-choice divergence. Named in ADR-042 as a BUILD opportunity. Include WP-E if the WP-D work is already touching the spec validator path; defer otherwise. WP-B already extended `validate_spec`, so any WP-E instrumentation can slot in next to `validate_spec_dimensions` without new structural surface area — near-zero marginal cost.
 
-**MCP session state:** `./session/play.db` from the prior PLAY session remains untouched. Not relevant to ARCHITECT; will re-become relevant if a second PLAY session runs after BUILD.
+6. **No invariant changes landed in WP-A, WP-B, or WP-C; no backward propagation required.** All three WPs were code-level (property contract; dimension validator) + docstring corrections. Domain model is unchanged.
+
+**Optional second PLAY later in this cycle:** inhabited by a non-builder stakeholder to validate WP-D lands. Carried from DISCOVER; methodological strength, not a blocker. Declined for this cycle (user is the sole tester at present).
+
+**MCP session state:** `./session/play.db` from the prior PLAY session remains untouched. Not relevant to WP-D; will re-become relevant if a second PLAY session runs after BUILD.
 
 ---
 
@@ -161,6 +165,11 @@ This isn't a Grounding Reframe action per se, but a note for cycle sequencing �
 **Precondition for the future cycle:** This current cycle's BUILD (or a follow-up cycle) needs to cross the tautology threshold in practice — untagged content ingested with either Ollama-backed embeddings or llm-orc semantic extraction active, producing structure the user didn't pre-encode. Lens-as-grammar research will need real emergent graph content to study, not pre-tagged demonstrations. Until that's in hand, the grammar cycle would be speculative in the same way PLAY1 was — reasoning about what ought to be rather than observing what is.
 
 **Recommended opening belief-mapping question for the future cycle (logged 2026-04-20 per MODEL-phase susceptibility snapshot):** *"What would you need to believe for dimension assignment to be within scope for the grammar formalism?"* This cycle's MODEL phase reached the conclusion that dimension and lens are "different in kind" (node identity vs. edge meaning) based on a structural comparison that was not belief-mapped. The lens-as-grammar cycle inherits that conclusion as a scoping constraint unless its opening belief-mapping explicitly surfaces and tests it. If the grammar formalism ends up subsuming dimension assignment (i.e., dimensions as one grammatical register the graph speaks in alongside lens relationships), the separation may be an artifact of the current architecture rather than a necessary distinction. The opening question preserves the option to reconcile dimension and lens under the grammar framework without presuming the answer either way.
+
+**Reserved-character set for dimension validation — parked from BUILD WP-B gate (2026-04-22):** WP-B landed with a minimal reserved set (`:`, `\0`, whitespace) per ADR-042 §iii. The gate's belief-mapping question asked what would need to be true for that minimal set to be insufficient — when the first "should have reserved `.` / `/` / `[]` too" moment arrives, and what signal tells us we're there. The practitioner's answer: *"not sure until we get into it with real domain lens… don't want to hem us in, but perhaps we'll discover other ways we need to modify as we dig into grammars in future work."* The decision is therefore: minimal set ships, extension question is load-bearing for this hypothesis to resolve. Concretely, the lens-as-grammar cycle should:
+- Observe whether real domain lens specs produce dimension strings that conflict with grammars the cycle introduces (e.g., query syntax collisions, path-derived dimensions, template-accessor collisions).
+- Remember the one-way-door risk: extending the reserved set retroactively invalidates existing consumer specs. The extension mechanism is the standing principle on spec YAML grammar — additive only until `spec_version` is introduced with migration path + fail-loud for unknown versions (see cycle-status §"Standing principles"). A retrospective reserved-character addition requires that versioning infrastructure, not a silent schema tightening.
+- If the future cycle's grammar work doesn't surface dimension-character conflicts in practice, the minimal set was correct; if it does, the reserved-set extension is the forcing function that motivates introducing `spec_version` at last.
 
 ### Node-level reinforcement vs. overwrite semantics (node companion to ADR-003)
 
