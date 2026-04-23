@@ -8,6 +8,41 @@
 //! Structure-aware: fires based on relationship, not node content type
 //! (Invariant 50). Idempotent: checks for existing edges before emitting,
 //! so the enrichment loop reaches quiescence.
+//!
+//! # Trigger-source contract (ADR-040)
+//!
+//! This enrichment fires only when some producer emits its configured trigger
+//! relationship. It is source-agnostic: any producer of the trigger relationship
+//! activates it, with no preference between sources. Accepted trigger sources
+//! for the default parameterization (`trigger = "similar_to"`):
+//!
+//! - **In-process** (library-consumer path): `features = ["embeddings"]` compiles
+//!   in `EmbeddingSimilarityEnrichment` (ADR-026), which emits `similar_to`
+//!   reactively in the core enrichment loop.
+//! - **Consumer-declared external enrichment** (default Homebrew path, ADR-038):
+//!   a declarative adapter spec may declare an llm-orc ensemble that computes
+//!   embeddings and emits `similar_to` via `ingest()`. Per Invariant 49, those
+//!   edges re-enter the core enrichment loop and DiscoveryGap fires on them.
+//! - **Direct spec emission:** a spec's `emit` section may create `similar_to`
+//!   edges via `create_edge`.
+//! - **Another consumer's lens:** any lens translating a source relationship
+//!   into `similar_to` activates this enrichment on the translated edges.
+//!
+//! # Silent-idle-by-design
+//!
+//! In the default Homebrew build there is no built-in producer of `similar_to`
+//! (EmbeddingSimilarity is feature-gated off per ADR-038; the lean baseline is
+//! CoOccurrence-only). Without either an in-process producer (`features =
+//! ["embeddings"]`) or a consumer-authored spec declaring an external embedding
+//! enrichment, DiscoveryGap does not fire. This is expected behavior, not a bug
+//! — Plexus remains usable; embedding-dependent discovery stays quiet until a
+//! producer is active.
+//!
+//! Multiple instances are permitted under distinct parameterizations (ADR-024,
+//! ADR-040): an `id()` of `discovery_gap:{trigger}:{output}` makes each
+//! registration distinct. The algorithm does not broaden — co-occurrence-based
+//! gap detection or other structural-absence patterns are out of scope for this
+//! enrichment; consumers grow that capability via the declarative path.
 
 use crate::adapter::enrichment::Enrichment;
 use crate::graph::events::GraphEvent;

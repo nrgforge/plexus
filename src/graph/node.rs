@@ -5,9 +5,11 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use uuid::Uuid;
 
-/// Core dimensions for the multi-dimensional knowledge graph
+/// Core dimensions for the multi-dimensional knowledge graph.
 ///
-/// See ADR-009: Multi-Dimensional Knowledge Graph Architecture
+/// These constants name the shipped conventions. Dimensions are an open facet
+/// (ADR-042): consumer specs may declare novel dimensions subject to syntactic
+/// well-formedness.
 pub mod dimension {
     /// Structure dimension: AST, headers, sections, code blocks
     pub const STRUCTURE: &str = "structure";
@@ -153,8 +155,9 @@ pub struct Node {
     pub node_type: String,
     /// Primary content domain
     pub content_type: ContentType,
-    /// Dimension this node belongs to (structure, semantic, relational, temporal)
-    /// See ADR-009: Multi-Dimensional Knowledge Graph Architecture
+    /// Dimension this node belongs to. Shipped conventions include `structure`,
+    /// `semantic`, `relational`, `temporal`, `provenance`, and `default`;
+    /// consumers may declare novel dimensions (ADR-042).
     #[serde(default = "default_dimension")]
     pub dimension: String,
     /// Domain-specific properties
