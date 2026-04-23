@@ -223,19 +223,40 @@ fn apply_single_filter(value: &Value, filter: &str) -> Result<Value, AdapterErro
 // Spec types
 // ---------------------------------------------------------------------------
 
-/// Map a dimension name string to the dimension constant.
-fn resolve_dimension(name: &str) -> Result<&'static str, AdapterError> {
-    match name {
-        "structure" => Ok(dimension::STRUCTURE),
-        "semantic" => Ok(dimension::SEMANTIC),
-        "provenance" => Ok(dimension::PROVENANCE),
-        "relational" => Ok(dimension::RELATIONAL),
-        "temporal" => Ok(dimension::TEMPORAL),
-        "default" => Ok(dimension::DEFAULT),
-        _ => Err(AdapterError::Internal(
-            format!("unknown dimension: {}", name),
-        )),
+/// Dimension strings reserved for namespaced relationships or wire-format
+/// safety. A spec declaring a dimension containing any of these characters
+/// fails syntactic validation (ADR-042).
+const RESERVED_DIMENSION_CHARS: &[char] = &[':', '\0'];
+
+/// Validate that a dimension string is syntactically well-formed per ADR-042.
+///
+/// Accepts any consumer-declared dimension string (extensibility-aware per
+/// ADR-042). Rejects:
+/// - empty strings
+/// - strings containing any whitespace (protects readability and query grammar)
+/// - strings containing reserved characters (`:` clashes with namespaced
+///   relationship syntax like `lens:trellis:...`; `\0` protects wire format)
+///
+/// Semantic convention-policing (e.g., warn-on-divergence for Plexus-known
+/// node types) is out of scope — ADR-042 rejected option (i) in favor of
+/// documentation-only guidance.
+fn validate_dimension_syntax(name: &str) -> Result<(), AdapterError> {
+    if name.is_empty() {
+        return Err(AdapterError::Internal(
+            "dimension value is empty; must be a non-empty string".to_string(),
+        ));
     }
+    if name.chars().any(char::is_whitespace) {
+        return Err(AdapterError::Internal(
+            format!("dimension '{}' contains whitespace; must be whitespace-free", name),
+        ));
+    }
+    if let Some(c) = name.chars().find(|c| RESERVED_DIMENSION_CHARS.contains(c)) {
+        return Err(AdapterError::Internal(
+            format!("dimension '{}' contains reserved character '{}'; `:` and null are reserved", name, c),
+        ));
+    }
+    Ok(())
 }
 
 /// Map a node type string to a ContentType.
@@ -633,6 +654,11 @@ impl DeclarativeAdapter {
 
 /// Validate spec invariants at registration time.
 fn validate_spec(spec: &DeclarativeSpec) -> Result<(), AdapterError> {
+    // ADR-042: syntactic well-formedness of every declared dimension is
+    // checked at load time so `load_spec` fails fast (Invariant 60) rather
+    // than deferring the failure to `process()`.
+    validate_spec_dimensions(&spec.emit)?;
+
     let has_provenance = has_primitive_recursive(&spec.emit, |p| {
         matches!(p, Primitive::CreateProvenance(_))
     });
@@ -656,6 +682,42 @@ fn validate_spec(spec: &DeclarativeSpec) -> Result<(), AdapterError> {
     }
 
     Ok(())
+}
+
+/// Walk all `create_node` and `create_edge` primitives (including inside
+/// `for_each`) and validate their declared dimensions.
+fn validate_spec_dimensions(primitives: &[Primitive]) -> Result<(), AdapterError> {
+    for p in primitives {
+        match p {
+            Primitive::CreateNode(cn) => {
+                validate_dimension_syntax(&cn.dimension)
+                    .map_err(|e| wrap_dimension_error("create_node primitive", e))?;
+            }
+            Primitive::CreateEdge(ce) => {
+                if let Some(ref src) = ce.source_dimension {
+                    validate_dimension_syntax(src)
+                        .map_err(|e| wrap_dimension_error("create_edge source_dimension", e))?;
+                }
+                if let Some(ref tgt) = ce.target_dimension {
+                    validate_dimension_syntax(tgt)
+                        .map_err(|e| wrap_dimension_error("create_edge target_dimension", e))?;
+                }
+            }
+            Primitive::ForEach(fe) => {
+                validate_spec_dimensions(&fe.emit)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn wrap_dimension_error(context: &str, err: AdapterError) -> AdapterError {
+    let inner = match err {
+        AdapterError::Internal(msg) => msg,
+        other => other.to_string(),
+    };
+    AdapterError::Internal(format!("{}: {}", context, inner))
 }
 
 /// Check if any primitive (including nested for_each) matches a predicate.
@@ -889,10 +951,10 @@ fn interpret_create_node(
     ctx: &TemplateContext,
 ) -> Result<Node, AdapterError> {
     let node_id = resolve_id(&cn.id, ctx)?;
-    let dim = resolve_dimension(&cn.dimension)?;
+    validate_dimension_syntax(&cn.dimension)?;
     let content_type = resolve_content_type(&cn.node_type);
 
-    let mut node = Node::new_in_dimension(&cn.node_type, content_type, dim);
+    let mut node = Node::new_in_dimension(&cn.node_type, content_type, &cn.dimension);
     node.id = NodeId::from_string(node_id);
 
     for (key, template) in &cn.properties {
@@ -943,21 +1005,21 @@ fn interpret_create_edge(
     let edge = if let (Some(ref src_dim), Some(ref tgt_dim)) =
         (&ce.source_dimension, &ce.target_dimension)
     {
-        let src_d = resolve_dimension(src_dim)?;
-        let tgt_d = resolve_dimension(tgt_dim)?;
-        if src_d == tgt_d {
+        validate_dimension_syntax(src_dim)?;
+        validate_dimension_syntax(tgt_dim)?;
+        if src_dim == tgt_dim {
             Edge::new_in_dimension(
                 NodeId::from_string(source_id),
                 NodeId::from_string(target_id),
                 &ce.relationship,
-                src_d,
+                src_dim.as_str(),
             )
         } else {
             Edge::new_cross_dimensional(
                 NodeId::from_string(source_id),
-                src_d,
+                src_dim.as_str(),
                 NodeId::from_string(target_id),
-                tgt_d,
+                tgt_dim.as_str(),
                 &ce.relationship,
             )
         }
@@ -1692,6 +1754,221 @@ emit:
         let yaml = "not: [valid: yaml: spec";
         let result = DeclarativeAdapter::from_yaml(yaml);
         assert!(result.is_err(), "should fail on malformed YAML");
+    }
+
+    // --- WP-B (ADR-042): Dimension syntactic validation ---
+
+    #[test]
+    fn validate_dimension_syntax_accepts_well_formed() {
+        // Shipped conventions and novel consumer dimensions both accepted.
+        for name in &[
+            "structure", "semantic", "relational", "temporal", "provenance", "default",
+            "gesture", "harmonic", "movement-phrase", "custom_dim_42",
+        ] {
+            assert!(
+                validate_dimension_syntax(name).is_ok(),
+                "expected '{}' to validate",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn validate_dimension_syntax_rejects_empty() {
+        let err = validate_dimension_syntax("").expect_err("empty dimension must fail");
+        let AdapterError::Internal(msg) = err else { panic!("expected Internal error"); };
+        assert!(msg.contains("empty"), "error mentions empty: {}", msg);
+    }
+
+    #[test]
+    fn validate_dimension_syntax_rejects_whitespace() {
+        let err = validate_dimension_syntax("semantic dimension")
+            .expect_err("whitespace dimension must fail");
+        let AdapterError::Internal(msg) = err else { panic!("expected Internal error"); };
+        assert!(msg.contains("whitespace"), "error mentions whitespace: {}", msg);
+    }
+
+    #[test]
+    fn validate_dimension_syntax_rejects_reserved_colon() {
+        let err = validate_dimension_syntax("lens:trellis")
+            .expect_err("colon in dimension must fail");
+        let AdapterError::Internal(msg) = err else { panic!("expected Internal error"); };
+        assert!(msg.contains("reserved"), "error mentions reserved: {}", msg);
+    }
+
+    #[test]
+    fn validate_dimension_syntax_rejects_null_char() {
+        let err = validate_dimension_syntax("bad\0dim")
+            .expect_err("null char in dimension must fail");
+        let AdapterError::Internal(msg) = err else { panic!("expected Internal error"); };
+        assert!(msg.contains("reserved"), "error mentions reserved: {}", msg);
+    }
+
+    // --- Scenario (ADR-042 §Dimension Extensibility, scenario 1):
+    //     spec declaring a novel dimension loads successfully ---
+
+    #[test]
+    fn from_yaml_accepts_novel_dimension() {
+        let yaml = r#"
+adapter_id: gesture-spec
+input_kind: movement.gesture
+emit:
+  - create_node:
+      id: "gesture:{input.name}"
+      type: gesture_phrase
+      dimension: gesture
+"#;
+        let adapter = DeclarativeAdapter::from_yaml(yaml)
+            .expect("novel dimension must load (ADR-042 extensibility)");
+        assert_eq!(adapter.id(), "gesture-spec");
+    }
+
+    // --- Scenario (ADR-042 §Dimension Extensibility, scenario 2):
+    //     empty dimension fails at load_spec (Invariant 60 fail-fast) ---
+
+    #[test]
+    fn from_yaml_rejects_empty_dimension_at_load_time() {
+        let yaml = r#"
+adapter_id: bad-dim-empty
+input_kind: test.input
+emit:
+  - create_node:
+      id: "n:{input.tag}"
+      type: concept
+      dimension: ""
+"#;
+        let err = match DeclarativeAdapter::from_yaml(yaml) {
+            Ok(_) => panic!("empty dimension must fail at load time"),
+            Err(e) => e,
+        };
+        let AdapterError::Internal(msg) = err else { panic!("expected Internal error"); };
+        assert!(msg.contains("create_node") && msg.contains("empty"),
+            "error names the primitive and reason: {}", msg);
+    }
+
+    // --- Scenario (ADR-042 §Dimension Extensibility, scenario 3):
+    //     whitespace dimension fails at load_spec ---
+
+    #[test]
+    fn from_yaml_rejects_whitespace_dimension_at_load_time() {
+        let yaml = r#"
+adapter_id: bad-dim-ws
+input_kind: test.input
+emit:
+  - create_node:
+      id: "n:{input.tag}"
+      type: concept
+      dimension: "semantic dimension"
+"#;
+        let err = match DeclarativeAdapter::from_yaml(yaml) {
+            Ok(_) => panic!("whitespace dimension must fail at load time"),
+            Err(e) => e,
+        };
+        let AdapterError::Internal(msg) = err else { panic!("expected Internal error"); };
+        assert!(msg.contains("whitespace"), "error mentions whitespace: {}", msg);
+    }
+
+    // --- Scenario (ADR-042 §Dimension Extensibility, scenario 4):
+    //     reserved-character dimension fails at load_spec ---
+
+    #[test]
+    fn from_yaml_rejects_reserved_char_dimension_at_load_time() {
+        let yaml = r#"
+adapter_id: bad-dim-colon
+input_kind: test.input
+emit:
+  - create_node:
+      id: "n:{input.tag}"
+      type: concept
+      dimension: "lens:trellis"
+"#;
+        let err = match DeclarativeAdapter::from_yaml(yaml) {
+            Ok(_) => panic!("reserved-char dimension must fail at load time"),
+            Err(e) => e,
+        };
+        let AdapterError::Internal(msg) = err else { panic!("expected Internal error"); };
+        assert!(msg.contains("reserved"), "error mentions reserved: {}", msg);
+    }
+
+    // --- Scenario (ADR-042 §Dimension Extensibility, scenario 5):
+    //     shipped-convention dimension loads without warning
+    //     (no policing — option (i) was rejected) ---
+
+    #[test]
+    fn from_yaml_accepts_shipped_convention_without_warning() {
+        // fragment in semantic dimension (collides with ContentAdapter's shipped
+        // convention of fragment-in-structure) — validation must still succeed.
+        let yaml = r#"
+adapter_id: consumer-spec
+input_kind: test.input
+emit:
+  - create_node:
+      id: "frag:{input.id}"
+      type: fragment
+      dimension: semantic
+"#;
+        let adapter = DeclarativeAdapter::from_yaml(yaml)
+            .expect("shipped convention must load even with colliding node_type");
+        assert_eq!(adapter.id(), "consumer-spec");
+    }
+
+    // --- Scenario (ADR-042 §Dimension Extensibility, scenario 7):
+    //     dimension validation runs at validate_spec, not at process ---
+
+    #[test]
+    fn dimension_validation_fires_at_validate_spec_not_process() {
+        // Proves Invariant 60: the error surfaces at from_yaml / load_spec
+        // time, before any process() could execute. This is a shape guarantee
+        // — if validation had been deferred to process(), construction would
+        // have succeeded here and the error would only appear on first ingest.
+        let yaml = r#"
+adapter_id: dim-wrong
+input_kind: test.input
+emit:
+  - create_node:
+      id: "n:{input.tag}"
+      type: concept
+      dimension: ""
+"#;
+        assert!(
+            DeclarativeAdapter::from_yaml(yaml).is_err(),
+            "validation must surface at from_yaml, not later"
+        );
+    }
+
+    // --- create_edge dimension validation ---
+
+    #[test]
+    fn from_yaml_rejects_malformed_edge_dimension_at_load_time() {
+        let yaml = r#"
+adapter_id: edge-dim
+input_kind: test.input
+emit:
+  - create_node:
+      id: "a"
+      type: concept
+      dimension: semantic
+  - create_node:
+      id: "b"
+      type: concept
+      dimension: semantic
+  - create_edge:
+      source: a
+      target: b
+      relationship: linked
+      source_dimension: "bad dim"
+      target_dimension: semantic
+"#;
+        let err = match DeclarativeAdapter::from_yaml(yaml) {
+            Ok(_) => panic!("whitespace in edge source_dimension must fail at load time"),
+            Err(e) => e,
+        };
+        let AdapterError::Internal(msg) = err else { panic!("expected Internal error"); };
+        assert!(
+            msg.contains("create_edge") && msg.contains("source_dimension"),
+            "error names the primitive and field: {}",
+            msg
+        );
     }
 
     // --- Scenario: DeclarativeAdapter exposes enrichments from spec ---

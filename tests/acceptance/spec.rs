@@ -653,3 +653,125 @@ emit:
             .collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Feature: Dimension Extensibility (ADR-042, WP-B)
+// ---------------------------------------------------------------------------
+
+/// Scenario (ADR-042 §Dimension Extensibility, scenario 1, end-to-end):
+/// a spec declaring a novel consumer dimension loads successfully AND
+/// ingesting through it produces nodes in that dimension — the
+/// extensibility promise exercised end-to-end.
+#[tokio::test]
+async fn load_spec_accepts_and_ingests_novel_dimension() {
+    use plexus::adapter::PipelineBuilder;
+    use plexus::storage::{OpenStore, SqliteStore};
+    use plexus::{Context, PlexusApi, PlexusEngine};
+    use std::sync::Arc;
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite"));
+    let engine = Arc::new(PlexusEngine::with_store(store));
+
+    let ctx = Context::new("movement");
+    engine.upsert_context(ctx).expect("upsert");
+
+    let pipeline = Arc::new(
+        PipelineBuilder::new(engine.clone())
+            .with_default_adapters()
+            .with_default_enrichments()
+            .build(),
+    );
+    let api = PlexusApi::new(engine.clone(), pipeline.clone());
+
+    // Novel dimension "gesture" — not in the shipped-convention set.
+    let spec_yaml = r#"
+adapter_id: gesture-spec
+input_kind: movement.gesture
+emit:
+  - create_node:
+      id: "gesture:{input.name}"
+      type: gesture_phrase
+      dimension: gesture
+"#;
+
+    api.load_spec("movement", spec_yaml)
+        .await
+        .expect("spec with novel dimension must load (ADR-042 extensibility)");
+
+    // Ingest through the spec's declared input_kind.
+    let input = serde_json::json!({ "name": "pivot-step" });
+    api.ingest("movement", "movement.gesture", Box::new(input))
+        .await
+        .expect("ingest must succeed");
+
+    // The resulting node must carry the novel dimension exactly as declared.
+    let ctx_id = engine
+        .resolve_by_name("movement")
+        .expect("context exists");
+    let ctx_read = engine.get_context(&ctx_id).expect("load context");
+    let gesture_nodes: Vec<_> = ctx_read
+        .nodes
+        .values()
+        .filter(|n| n.dimension == "gesture")
+        .collect();
+    assert_eq!(
+        gesture_nodes.len(),
+        1,
+        "expected exactly one node in the novel 'gesture' dimension; got dimensions: {:?}",
+        ctx_read
+            .nodes
+            .values()
+            .map(|n| n.dimension.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(gesture_nodes[0].node_type, "gesture_phrase");
+}
+
+/// Scenario (ADR-042 §Dimension Extensibility, scenario 7, end-to-end):
+/// malformed dimension causes `api.load_spec` to fail fast at load time
+/// per Invariant 60 — no graph mutations occur, no adapter is wired.
+#[tokio::test]
+async fn load_spec_rejects_malformed_dimension_at_load_time() {
+    use plexus::adapter::PipelineBuilder;
+    use plexus::storage::{OpenStore, SqliteStore};
+    use plexus::{Context, PlexusApi, PlexusEngine};
+    use std::sync::Arc;
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite"));
+    let engine = Arc::new(PlexusEngine::with_store(store));
+
+    let ctx = Context::new("test");
+    engine.upsert_context(ctx).expect("upsert");
+
+    let pipeline = Arc::new(
+        PipelineBuilder::new(engine.clone())
+            .with_default_adapters()
+            .with_default_enrichments()
+            .build(),
+    );
+    let api = PlexusApi::new(engine.clone(), pipeline.clone());
+
+    let spec_yaml = r#"
+adapter_id: bad-spec
+input_kind: test.input
+emit:
+  - create_node:
+      id: "n:{input.tag}"
+      type: concept
+      dimension: "lens:trellis"
+"#;
+
+    let result = api.load_spec("test", spec_yaml).await;
+    assert!(
+        result.is_err(),
+        "malformed dimension must fail at load_spec, not later"
+    );
+
+    // The malformed spec must not have registered the adapter for routing.
+    let kinds = pipeline.registered_input_kinds();
+    assert!(
+        !kinds.iter().any(|k| k == "test.input"),
+        "rejected spec must not leave its adapter registered: {:?}",
+        kinds
+    );
+}
