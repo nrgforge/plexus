@@ -268,11 +268,28 @@ impl OutboundEvent {
 
 // === Construction helpers ===
 
-/// Create a concept node with deterministic ID and label property.
+/// Current UTC time as an ISO-8601 / RFC-3339 string — the authoritative
+/// format for timestamp-based enrichments per ADR-039. Adapters that write
+/// `created_at` (or other timestamp properties `TemporalProximityEnrichment`
+/// reads) should use this helper rather than constructing the string inline,
+/// so the format decision stays in one place.
+pub fn rfc3339_now() -> PropertyValue {
+    PropertyValue::String(chrono::Utc::now().to_rfc3339())
+}
+
+/// Create a concept node with deterministic ID, label property, and
+/// `created_at` timestamp (ADR-039).
 ///
 /// Normalizes `label` to lowercase for the ID (`concept:<lowercase>`) and the
-/// `label` property. Returns the `(NodeId, Node)` pair so callers can add
-/// additional properties before wrapping in `AnnotatedNode`.
+/// `label` property. Writes the current UTC timestamp as an ISO-8601 /
+/// RFC-3339 string to `properties["created_at"]` — the authoritative surface
+/// for timestamp-based enrichments. Callers that want a different ingest time
+/// can overwrite the property on the returned node; subsequent call sites
+/// that re-derive the same `concept:<normalized>` node via upsert will not
+/// overwrite the original timestamp.
+///
+/// Returns the `(NodeId, Node)` pair so callers can add additional properties
+/// before wrapping in `AnnotatedNode`.
 pub fn concept_node(label: &str) -> (NodeId, Node) {
     use crate::graph::{dimension, ContentType};
     let normalized = label.to_lowercase();
@@ -281,6 +298,8 @@ pub fn concept_node(label: &str) -> (NodeId, Node) {
     node.id = id.clone();
     node.properties
         .insert("label".to_string(), PropertyValue::String(normalized));
+    node.properties
+        .insert("created_at".to_string(), rfc3339_now());
     (id, node)
 }
 

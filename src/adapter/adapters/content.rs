@@ -14,7 +14,7 @@
 use crate::graph::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{Emission, OutboundEvent, concept_node};
+use crate::adapter::types::{Emission, OutboundEvent, concept_node, rfc3339_now};
 use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -186,6 +186,10 @@ impl Adapter for ContentAdapter {
             "text".to_string(),
             PropertyValue::String(fragment.text.clone()),
         );
+        // ADR-039: authoritative created_at on properties for temporal enrichments.
+        fragment_node
+            .properties
+            .insert("created_at".to_string(), rfc3339_now());
         if let Some(ref source) = fragment.source {
             fragment_node.properties.insert(
                 "source".to_string(),
@@ -1024,5 +1028,58 @@ mod tests {
         let input = AdapterInput::new("content", json, "test");
         let result = adapter.process(&input, &sink).await;
         assert!(result.is_err());
+    }
+
+    // === ADR-039: fragment and concept nodes carry created_at in properties ===
+    //
+    // TemporalProximityEnrichment reads node.properties["created_at"]. The
+    // content adapter is one of three built-in producers that must write
+    // the authoritative ISO-8601 UTC string on every node it creates so
+    // temporal enrichment can fire on adapter-originated content.
+
+    #[tokio::test]
+    async fn fragment_and_concept_nodes_carry_created_at_iso8601() {
+        let adapter = ContentAdapter::new("content");
+        let (sink, ctx) = make_sink("content");
+
+        let input = AdapterInput::new(
+            "content",
+            FragmentInput::new("hello world", vec!["greeting".to_string()]),
+            "test",
+        );
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let ctx = ctx.lock().unwrap();
+
+        // Fragment node carries created_at as an ISO-8601 UTC string.
+        let fragment = ctx
+            .nodes
+            .values()
+            .find(|n| n.node_type == "fragment")
+            .expect("fragment node exists");
+        let fragment_ts = match fragment.properties.get("created_at") {
+            Some(PropertyValue::String(s)) => s.clone(),
+            other => panic!(
+                "fragment node must carry properties[\"created_at\"] as String, got {:?}",
+                other
+            ),
+        };
+        chrono::DateTime::parse_from_rfc3339(&fragment_ts)
+            .expect("fragment created_at must be parseable ISO-8601 UTC (RFC-3339)");
+
+        // Concept node created via the concept_node() helper also carries created_at.
+        let concept = ctx
+            .get_node(&NodeId::from_string("concept:greeting"))
+            .expect("concept:greeting node exists");
+        let concept_ts = match concept.properties.get("created_at") {
+            Some(PropertyValue::String(s)) => s.clone(),
+            other => panic!(
+                "concept node must carry properties[\"created_at\"] as String, got {:?}",
+                other
+            ),
+        };
+        chrono::DateTime::parse_from_rfc3339(&concept_ts)
+            .expect("concept created_at must be parseable ISO-8601 UTC (RFC-3339)");
     }
 }

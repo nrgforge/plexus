@@ -109,7 +109,15 @@ fn has_node_events(events: &[GraphEvent]) -> bool {
     events.iter().any(|e| matches!(e, GraphEvent::NodesAdded { .. }))
 }
 
-/// Extract a numeric timestamp from a node's properties.
+/// Extract a millisecond-precision timestamp from a node's properties.
+///
+/// ADR-039 designates `node.properties["created_at"]` as the authoritative
+/// surface for timestamp-based enrichments, stored as an ISO-8601 UTC
+/// (RFC-3339) string. Adapters that use a different property key can still
+/// pass integer or float millisecond timestamps if that fits their domain.
+/// Strings that fail RFC-3339 parsing are silently skipped (the pair is
+/// not considered by the enrichment — graceful-degradation contract per
+/// ADR-039 §"TemporalProximityEnrichment reads from properties").
 fn extract_timestamp(
     properties: &std::collections::HashMap<String, PropertyValue>,
     property_name: &str,
@@ -117,7 +125,9 @@ fn extract_timestamp(
     match properties.get(property_name)? {
         PropertyValue::Int(n) => Some(*n as u64),
         PropertyValue::Float(n) => Some(*n as u64),
-        PropertyValue::String(s) => s.parse::<u64>().ok(),
+        PropertyValue::String(s) => chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|dt| dt.timestamp_millis() as u64),
         _ => None,
     }
 }
@@ -134,13 +144,13 @@ mod tests {
     use super::*;
     use crate::graph::{ContentType, Node};
 
-    fn node_with_timestamp(id: &str, property: &str, value: u64) -> Node {
+    fn node_with_timestamp(id: &str, property: &str, iso8601: &str) -> Node {
         let mut n = Node::new("gesture", ContentType::Document);
         n.id = NodeId::from_string(id);
         n.dimension = dimension::SEMANTIC.to_string();
         n.properties.insert(
             property.to_string(),
-            PropertyValue::Int(value as i64),
+            PropertyValue::String(iso8601.to_string()),
         );
         n
     }
@@ -160,8 +170,9 @@ mod tests {
         let enrichment = TemporalProximityEnrichment::new("gesture_time", 500, "temporal_proximity");
 
         let mut ctx = Context::new("test");
-        ctx.add_node(node_with_timestamp("node-a", "gesture_time", 1000));
-        ctx.add_node(node_with_timestamp("node-b", "gesture_time", 1300));
+        // 300ms apart — within the 500ms threshold
+        ctx.add_node(node_with_timestamp("node-a", "gesture_time", "2026-04-20T12:00:00.000Z"));
+        ctx.add_node(node_with_timestamp("node-b", "gesture_time", "2026-04-20T12:00:00.300Z"));
 
         let emission = enrichment
             .enrich(&[nodes_added_event(vec!["node-b"])], &ctx)
@@ -192,8 +203,9 @@ mod tests {
         let enrichment = TemporalProximityEnrichment::new("gesture_time", 500, "temporal_proximity");
 
         let mut ctx = Context::new("test");
-        ctx.add_node(node_with_timestamp("node-a", "gesture_time", 1000));
-        ctx.add_node(node_with_timestamp("node-b", "gesture_time", 2000));
+        // 1000ms apart — exceeds the 500ms threshold
+        ctx.add_node(node_with_timestamp("node-a", "gesture_time", "2026-04-20T12:00:00.000Z"));
+        ctx.add_node(node_with_timestamp("node-b", "gesture_time", "2026-04-20T12:00:01.000Z"));
 
         assert!(
             enrichment.enrich(&[nodes_added_event(vec!["node-b"])], &ctx).is_none(),
@@ -226,8 +238,8 @@ mod tests {
         let enrichment = TemporalProximityEnrichment::new("gesture_time", 500, "temporal_proximity");
 
         let mut ctx = Context::new("test");
-        ctx.add_node(node_with_timestamp("node-a", "gesture_time", 1000));
-        ctx.add_node(node_with_timestamp("node-b", "gesture_time", 1300));
+        ctx.add_node(node_with_timestamp("node-a", "gesture_time", "2026-04-20T12:00:00.000Z"));
+        ctx.add_node(node_with_timestamp("node-b", "gesture_time", "2026-04-20T12:00:00.300Z"));
 
         // Round 1: productive
         let emission = enrichment
@@ -253,5 +265,82 @@ mod tests {
     fn stable_id() {
         let enrichment = TemporalProximityEnrichment::new("gesture_time", 500, "temporal_proximity");
         assert_eq!(enrichment.id(), "temporal:gesture_time:500:temporal_proximity");
+    }
+
+    // === Scenario: unparseable created_at values are skipped gracefully (ADR-039) ===
+
+    #[test]
+    fn unparseable_timestamp_skips_node_without_error() {
+        let enrichment =
+            TemporalProximityEnrichment::new("created_at", 86_400_000, "temporal_proximity");
+
+        let mut ctx = Context::new("test");
+        // One node parses; the other carries a malformed string.
+        ctx.add_node(node_with_timestamp("node-a", "created_at", "2026-04-20T12:00:00Z"));
+        ctx.add_node(node_with_timestamp("node-b", "created_at", "not-a-date"));
+
+        // The pair is dropped because one side is unparseable; the enrichment
+        // returns no emission but does not panic or error.
+        assert!(
+            enrichment
+                .enrich(&[nodes_added_event(vec!["node-a", "node-b"])], &ctx)
+                .is_none(),
+            "unparseable timestamp should be skipped gracefully"
+        );
+    }
+
+    // === Scenario: Int/Float parameterizations remain supported per ADR-039
+    //               ("e.g., gesture_time for EDDI" — consumer-chosen format) ===
+
+    #[test]
+    fn integer_timestamp_parameterization_still_supported() {
+        // A consumer using a non-`created_at` property with an integer ms
+        // timestamp. ADR-039's property-contract requirement applies to
+        // `created_at` specifically; other parameterizations carry their
+        // own format as part of the consumer's adapter contract.
+        let enrichment =
+            TemporalProximityEnrichment::new("gesture_time", 500, "temporal_proximity");
+
+        let mut ctx = Context::new("test");
+        let mut node_a = Node::new("gesture", ContentType::Document);
+        node_a.id = NodeId::from_string("node-a");
+        node_a.dimension = dimension::SEMANTIC.to_string();
+        node_a
+            .properties
+            .insert("gesture_time".to_string(), PropertyValue::Int(1_000));
+        ctx.add_node(node_a);
+
+        let mut node_b = Node::new("gesture", ContentType::Document);
+        node_b.id = NodeId::from_string("node-b");
+        node_b.dimension = dimension::SEMANTIC.to_string();
+        node_b
+            .properties
+            .insert("gesture_time".to_string(), PropertyValue::Float(1_300.0));
+        ctx.add_node(node_b);
+
+        let emission = enrichment
+            .enrich(&[nodes_added_event(vec!["node-a", "node-b"])], &ctx)
+            .expect("Int and Float timestamps remain supported for consumer-chosen properties");
+
+        assert_eq!(emission.edges.len(), 2, "symmetric edge pair expected");
+    }
+
+    // === Scenario: ISO-8601 UTC strings are the authoritative format (ADR-039) ===
+
+    #[test]
+    fn parses_iso8601_strings_as_authoritative_format() {
+        let enrichment =
+            TemporalProximityEnrichment::new("created_at", 86_400_000, "temporal_proximity");
+
+        let mut ctx = Context::new("test");
+        // Two nodes within the 24-hour threshold, both using ISO-8601 UTC.
+        ctx.add_node(node_with_timestamp("node-a", "created_at", "2026-04-20T12:00:00Z"));
+        ctx.add_node(node_with_timestamp("node-b", "created_at", "2026-04-20T18:00:00Z"));
+
+        let emission = enrichment
+            .enrich(&[nodes_added_event(vec!["node-a", "node-b"])], &ctx)
+            .expect("should emit temporal_proximity for ISO-8601 pair");
+
+        assert_eq!(emission.edges.len(), 2, "symmetric edge pair expected");
     }
 }

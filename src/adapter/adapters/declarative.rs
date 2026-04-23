@@ -11,7 +11,7 @@
 use crate::adapter::enrichment::Enrichment;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, PropertyUpdate};
+use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, PropertyUpdate, rfc3339_now};
 use crate::graph::{dimension, ContentType, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -901,6 +901,13 @@ fn interpret_create_node(
             .insert(key.clone(), PropertyValue::String(value));
     }
 
+    // ADR-039: inject created_at as authoritative timestamp property when the
+    // spec did not explicitly set it. Spec-authored values win — this preserves
+    // consumer sovereignty over the property (Invariant 61).
+    node.properties
+        .entry("created_at".to_string())
+        .or_insert_with(rfc3339_now);
+
     Ok(node)
 }
 
@@ -1152,6 +1159,101 @@ mod tests {
         assert_eq!(
             node.properties.get("mime_type"),
             Some(&PropertyValue::String("audio/mpeg".to_string()))
+        );
+    }
+
+    // --- ADR-039: interpret_create_node injects created_at when spec does not set it ---
+
+    #[tokio::test]
+    async fn interpret_create_node_injects_created_at_when_absent() {
+        let spec = DeclarativeSpec {
+            adapter_id: "test-declarative".to_string(),
+            input_kind: "extract-file".to_string(),
+            ensemble: None,
+            input_schema: None,
+            enrichments: None,
+            lens: None,
+            emit: vec![Primitive::CreateNode(CreateNodePrimitive {
+                id: IdStrategy::Template("artifact:{input.file_path}".to_string()),
+                node_type: "artifact".to_string(),
+                dimension: "structure".to_string(),
+                properties: HashMap::from([(
+                    "mime_type".to_string(),
+                    "{input.mime_type}".to_string(),
+                )]),
+            })],
+        };
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap();
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone());
+
+        let input_json = serde_json::json!({
+            "file_path": "untimed.md",
+            "mime_type": "text/markdown"
+        });
+        let input = AdapterInput::new("extract-file", input_json, "test");
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        let node = snapshot
+            .get_node(&NodeId::from_string("artifact:untimed.md"))
+            .expect("artifact node should exist");
+
+        match node.properties.get("created_at") {
+            Some(PropertyValue::String(s)) => {
+                chrono::DateTime::parse_from_rfc3339(s).expect(
+                    "injected created_at must be an RFC-3339 ISO-8601 UTC string",
+                );
+            }
+            other => panic!(
+                "DeclarativeAdapter should inject properties[\"created_at\"] as String when absent, got {:?}",
+                other
+            ),
+        }
+    }
+
+    // --- ADR-039: spec-authored created_at wins over adapter injection ---
+
+    #[tokio::test]
+    async fn interpret_create_node_preserves_spec_authored_created_at() {
+        let spec = DeclarativeSpec {
+            adapter_id: "test-declarative".to_string(),
+            input_kind: "extract-file".to_string(),
+            ensemble: None,
+            input_schema: None,
+            enrichments: None,
+            lens: None,
+            emit: vec![Primitive::CreateNode(CreateNodePrimitive {
+                id: IdStrategy::Template("artifact:{input.file_path}".to_string()),
+                node_type: "artifact".to_string(),
+                dimension: "structure".to_string(),
+                properties: HashMap::from([(
+                    "created_at".to_string(),
+                    "2020-01-01T00:00:00Z".to_string(),
+                )]),
+            })],
+        };
+
+        let adapter = DeclarativeAdapter::new(spec).unwrap();
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone());
+
+        let input_json = serde_json::json!({ "file_path": "vintage.md" });
+        let input = AdapterInput::new("extract-file", input_json, "test");
+
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        let node = snapshot
+            .get_node(&NodeId::from_string("artifact:vintage.md"))
+            .expect("artifact node should exist");
+
+        assert_eq!(
+            node.properties.get("created_at"),
+            Some(&PropertyValue::String("2020-01-01T00:00:00Z".to_string())),
+            "spec-authored created_at must be preserved verbatim, not overwritten by injection"
         );
     }
 

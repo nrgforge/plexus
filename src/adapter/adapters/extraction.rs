@@ -22,7 +22,7 @@ use crate::adapter::semantic::SemanticInput;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::structural::{StructuralModule, StructuralOutput};
 use crate::adapter::traits::{Adapter, AdapterInput};
-use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, concept_node};
+use crate::adapter::types::{AnnotatedEdge, AnnotatedNode, Emission, OutboundEvent, concept_node, rfc3339_now};
 use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -308,6 +308,10 @@ fn run_registration(
         "file_size".to_string(),
         PropertyValue::Int(file_size as i64),
     );
+    // ADR-039: authoritative created_at on properties for temporal enrichments.
+    file_node
+        .properties
+        .insert("created_at".to_string(), rfc3339_now());
 
     let mut emission = Emission::new().with_node(AnnotatedNode::new(file_node));
 
@@ -363,6 +367,10 @@ fn run_registration(
         "semantic_extraction".to_string(),
         PropertyValue::String("pending".to_string()),
     );
+    // ADR-039: authoritative created_at on properties for temporal enrichments.
+    status_node
+        .properties
+        .insert("created_at".to_string(), rfc3339_now());
     if let Some(ref warning) = metadata_warning {
         status_node.properties.insert(
             "registration_warning".to_string(),
@@ -825,6 +833,71 @@ mod tests {
             status.properties.get("structural_analysis"),
             Some(&PropertyValue::String("pending".to_string()))
         );
+    }
+
+    // --- ADR-039: registration phase nodes carry created_at in properties ---
+    //
+    // Both the file node and the extraction-status node must carry
+    // properties["created_at"] as an ISO-8601 UTC string so
+    // TemporalProximityEnrichment can fire on content ingested via the
+    // extract-file path. Concept nodes produced from frontmatter tags
+    // also inherit the contract via concept_node().
+
+    #[tokio::test]
+    async fn registration_writes_created_at_on_file_and_status_nodes() {
+        let coordinator = ExtractionCoordinator::new();
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone(), "extract-coordinator");
+
+        let dir = create_temp_file(
+            "timed.md",
+            "---\ntags: [timing]\n---\n\n# Timed\n\nContent.",
+        );
+        let file_path = dir.path().join("timed.md");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput {
+                file_path: file_path_str.clone(),
+            },
+            "test",
+        );
+
+        coordinator.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+
+        let file_node = snapshot
+            .get_node(&NodeId::from_string(format!("file:{}", file_path_str)))
+            .expect("file node should exist");
+        match file_node.properties.get("created_at") {
+            Some(PropertyValue::String(s)) => {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .expect("file node created_at must be RFC-3339 parseable");
+            }
+            other => panic!(
+                "file node must carry properties[\"created_at\"] as String, got {:?}",
+                other
+            ),
+        }
+
+        let status_node = snapshot
+            .get_node(&NodeId::from_string(format!(
+                "extraction-status:{}",
+                file_path_str
+            )))
+            .expect("extraction-status node should exist");
+        match status_node.properties.get("created_at") {
+            Some(PropertyValue::String(s)) => {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .expect("status node created_at must be RFC-3339 parseable");
+            }
+            other => panic!(
+                "extraction-status node must carry properties[\"created_at\"] as String, got {:?}",
+                other
+            ),
+        }
     }
 
     // --- Scenario: registration metadata failure does not prevent file registration ---

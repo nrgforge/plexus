@@ -59,6 +59,80 @@ async fn cooccurrence_creates_may_be_related_edges() {
     );
 }
 
+// ADR-039: TemporalProximityEnrichment fires on ContentAdapter output.
+//
+// The integration test for the `created_at` property contract. Two fragments
+// ingested through the real PlexusApi → IngestPipeline → ContentAdapter path,
+// in the same context, within the 24-hour default threshold. The contract is
+// satisfied only when the producer (ContentAdapter) and consumer
+// (TemporalProximityEnrichment) agree on the property surface (node.properties)
+// and the on-wire format (ISO-8601 UTC string).
+#[tokio::test]
+async fn temporal_proximity_fires_on_content_adapter_output_within_window() {
+    let env = TestEnv::new();
+
+    env.api
+        .ingest(
+            env.ctx_name(),
+            "content",
+            Box::new(FragmentInput::new(
+                "first fragment",
+                vec!["alpha".into()],
+            )),
+        )
+        .await
+        .expect("first ingest should succeed");
+
+    env.api
+        .ingest(
+            env.ctx_name(),
+            "content",
+            Box::new(FragmentInput::new(
+                "second fragment",
+                vec!["beta".into()],
+            )),
+        )
+        .await
+        .expect("second ingest should succeed");
+
+    let ctx = env
+        .engine
+        .get_context(&env.context_id)
+        .expect("context exists");
+
+    // Identify the two fragment nodes. Their IDs are UUID-v5-hashed from
+    // the fragment text, so we match by node_type rather than by ID.
+    let fragment_ids: Vec<_> = ctx
+        .nodes
+        .values()
+        .filter(|n| n.node_type == "fragment")
+        .map(|n| n.id.clone())
+        .collect();
+    assert_eq!(
+        fragment_ids.len(),
+        2,
+        "two fragments should have been ingested"
+    );
+
+    let has_forward = ctx.edges.iter().any(|e| {
+        e.source == fragment_ids[0]
+            && e.target == fragment_ids[1]
+            && e.relationship == "temporal_proximity"
+    });
+    let has_reverse = ctx.edges.iter().any(|e| {
+        e.source == fragment_ids[1]
+            && e.target == fragment_ids[0]
+            && e.relationship == "temporal_proximity"
+    });
+
+    assert!(
+        has_forward && has_reverse,
+        "TemporalProximityEnrichment should emit a symmetric temporal_proximity \
+         edge pair between two fragments ingested within the 24-hour window \
+         (ADR-039 producer/consumer contract)"
+    );
+}
+
 #[tokio::test]
 async fn enrichment_loop_quiesces() {
     let env = TestEnv::new();

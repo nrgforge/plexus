@@ -34,7 +34,7 @@ pub use traits::{Adapter, AdapterInput};
 pub use sink::{AdapterError, AdapterSink, EmitResult, Rejection, RejectionReason};
 pub use types::{
     Annotation, AnnotatedEdge, AnnotatedNode, EdgeRemoval, Emission, OutboundEvent,
-    PropertyUpdate, Removal, chain_node, concept_node, file_node, mark_node,
+    PropertyUpdate, Removal, chain_node, concept_node, file_node, mark_node, rfc3339_now,
 };
 
 // Adapter submodule re-exports (preserve crate::adapter::<name>::* paths)
