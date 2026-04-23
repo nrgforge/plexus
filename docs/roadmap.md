@@ -13,7 +13,7 @@
 
 ## Work Packages
 
-### WP-A: `created_at` property contract — coordinated four-site `fix:` (ADR-039)
+### WP-A: `created_at` property contract — coordinated four-site `fix:` (ADR-039) ✅ Complete (`f82bd76`, 2026-04-22)
 
 **Objective:** Close conformance debt D-01 through D-04 as a single coherent fix. The bug is a full producer/consumer mismatch: three built-in adapters write `created_at` into `NodeMetadata` while `TemporalProximityEnrichment` reads `node.properties["created_at"]` and parses it as `u64` epoch milliseconds. After this WP, `TemporalProximityEnrichment` actually fires on adapter-created nodes with timestamps within the threshold — the silent-dead enrichment PLAY surfaced becomes live in the default build.
 
