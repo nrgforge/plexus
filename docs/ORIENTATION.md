@@ -35,32 +35,27 @@ A content-agnostic knowledge graph engine that derives structure from unstructur
 **Tier 3 — Supporting material:**
 - [domain-model.md](domain-model.md) — ubiquitous language (concepts, actions, relationships, invariants). The naming authority.
 - [essays/](essays/) — research essays with citation and argument audits.
-- [decisions/](decisions/) — 38 ADRs (000–037). Architectural decisions with context, rationale, and consequences.
+- [decisions/](decisions/) — 43 ADRs (000–042). Architectural decisions with context, rationale, and consequences.
 - [scenarios/](scenarios/) — behavior scenarios grouped by ADR range. Acceptance criteria for each feature.
 - [references/field-guide.md](references/field-guide.md) — module-to-code mapping. Where things live and why.
 - [audits/](audits/) — citation audits, argument audits, conformance scans.
 
 ## Current State
 
-**MCP consumer interaction cycle — BUILD complete (2026-04-01 — 2026-04-16).** WP-A through WP-H.2 shipped plus post-WP hardening. Runtime spec loading (ADR-037) is live; the MCP query surface (ADR-036) is wired; the two-consumer cross-pollination scenario is verified end-to-end through the compiled `plexus mcp` binary over raw JSON-RPC.
+**Default-install experience and lens design principles cycle — ARCHITECT complete (2026-04-22), BUILD pending.** DISCOVER (update), MODEL (light-touch), DECIDE, and ARCHITECT all complete. Five ADRs landed in DECIDE (all Accepted 2026-04-21):
 
-**Central new capability:** persisted lens enrichments rehydrate at library construction time via `PipelineBuilder::with_persisted_specs` — vocabulary layers are a durable property of the **context** rather than the **consumer process**. Cross-pollination between consumer domains happens automatically whenever any consumer holds the library against a shared context.
+- **ADR-038** — Release-binary feature profile. `default = []` stays; the Homebrew/CLI binary ships lean. No Rust code path to llm-orc for embedding. Consumers activate embedding via a declarative adapter spec declaring an llm-orc ensemble; library consumers under `features = ["embeddings"]` retain the in-process `FastEmbedEmbedder` path.
+- **ADR-039** — `created_at` property contract. Authoritative on `node.properties["created_at"]` as ISO-8601 UTC string. Producer/consumer alignment is a coordinated four-site fix in BUILD (WP-A).
+- **ADR-040** — DiscoveryGap trigger sources. Source-agnostic acceptance; no algorithm broadening; multiple parameterizations allowed. Graceful-idle by design when no producer is active.
+- **ADR-041** — Lens grammar conventions. Structural predicates endorsed as convention (not requirement) for discovery-oriented jobs; per-job, not per-app. Phenomenology-of-discovery held as hypothesis; composition-shape reasoning is independently load-bearing.
+- **ADR-042** — Dimension extensibility guidance. Documentation-only semantic guidance + syntactic validation at `load_spec`. Exclusive-allowlist behavior is conformance debt (WP-B).
 
-**Key builder evolution:** `PipelineBuilder::with_llm_client(client)` is the single method that wires SemanticAdapter onto the ExtractionCoordinator (so `extract-file` invokes llm-orc) AND stores the client on the pipeline so `load_spec` can propagate it to consumer declarative adapters with `ensemble:` fields. `default_pipeline` constructs a `SubprocessClient` by default.
+**ARCHITECT delta (system-design v1.3, 2026-04-22):** architectural drivers reshaped to name both embedding backends as first-class per deployment class (in-process under feature flag; consumer-declared external via adapter spec). New "Embedding Backend Deployment Classes" subsection enumerates the three deployment shapes. DiscoveryGap trigger-source contract named explicitly in Core Enrichment Algorithms. New fitness criterion: default binary does not break without llm-orc or consumer-authored spec. No new modules, no new dependency edges.
 
-**MCP surface:** 17 tools — 1 session (`set_context`), 1 ingest, 6 context management, 7 graph read (`evidence_trail`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`), 2 spec lifecycle (`load_spec`, `unload_spec`). All thin wrappers over `PlexusApi`.
+**BUILD scope (see [roadmap.md](roadmap.md)):** five WPs (A–E), no hard dependencies between them, recommended order A → C → B → D. WP-D's documentation deliverables (README lean-baseline framing, worked-example spec at `examples/specs/embedding-activation.yaml` crossing the tautology threshold, spec-author documentation, lens grammar convention) are load-bearing for ADR-038's "positive decision, not defect-by-omission" reframing. Weak deliverables reassert the defect-by-omission framing.
 
-Cycle artifacts:
-- ADRs 036 (MCP query surface), 037 (consumer spec loading; §4 superseded 2026-04-14 by WP-H.1)
-- Domain model invariants 60 (upfront spec validation), 61 (consumer owns spec; narrowed 2026-04-14 to programmatic-only), 62 (durable vocabulary + lens registration)
-- Domain-model terminology: extraction phases use descriptive names (registration / structural_analysis / semantic_extraction), not "Phase 1/2/3"
-- 38 ADRs total. **508 tests default-run** (425 lib + 82 acceptance + 1 doc). **511 tests with `PLEXUS_INTEGRATION=1`** (T6/T7/T8/T11 against real Ollama).
+**Prior cycle carried forward:** MCP consumer interaction surface cycle (2026-04-01 — 2026-04-17) is in the Completed Work Log. 17 MCP tools, runtime spec loading, persisted-spec rehydration at library construction time. Confirmed architectural follow-ups remain: background-phase + lens gap (T11 — semantic extraction output is not lens-translated; consumers wanting lens coverage over LLM-extracted structure use declarative `ensemble:` path), outbound event asymmetry on SemanticAdapter + GraphAnalysisAdapter, customizable outbound events in declarative specs, async event delivery for long-running ingest, MCP ingest response event shape.
 
-**Confirmed architectural follow-ups** (see [cycle-status.md](cycle-status.md) § Follow-ups):
-- Background-phase + lens gap (T11 pins current behavior): semantic extraction's output is not translated by registered lenses. Consumers wanting lens coverage over llm-orc-driven extraction must use a declarative adapter with `ensemble:` field (foreground path) instead.
-- Outbound event asymmetry (SemanticAdapter + GraphAnalysisAdapter still don't override `transform_events`)
-- Customizable outbound events in declarative specs
-- Async event delivery for long-running ingest (cursors cover GraphEvents but not OutboundEvents)
-- MCP ingest response should carry actual events, not just a count
+**Totals:** 43 ADRs (000–042). 508 tests default-run (425 lib + 82 acceptance + 1 doc); 511 with `PLEXUS_INTEGRATION=1` (T6/T7/T8/T11 real-Ollama gated).
 
-**To resume work:** invoke `/rdd-play` for experiential discovery (recommended next phase — inhabit stakeholder roles, exercise the live system, produce field notes), `/rdd-synthesize` for publishable insight extraction, or `/rdd-graduate` to fold cycle knowledge into native docs.
+**To resume work:** invoke `/rdd-build` to enter BUILD on this cycle's WPs, `/rdd-play` for optional second-stakeholder experiential discovery (non-builder inhabitation of Consumer Application Developer), or `/rdd-graduate` to fold cycle knowledge into native docs when the cycle closes.

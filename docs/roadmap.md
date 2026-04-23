@@ -1,19 +1,111 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-04-07 (ARCHITECT complete — MCP consumer interaction surface cycle)
-**Derived from:** System Design v1.2, ADR-036, ADR-037, Invariants 60–62, Reflection 003, product-discovery.md (2026-04-02), conformance scan 036-037
+**Last updated:** 2026-04-22 (ARCHITECT complete — Default-install experience and lens design principles cycle)
+**Derived from:** System Design v1.3, ADRs 038–042, conformance scan 038-042 (7 debt items, all Bug), DECIDE gate reflection (2026-04-21)
 
 ## Current State
 
-**Active cycle:** MCP consumer interaction surface — BUILD in progress. WP-A through WP-G.2 complete (see Completed Work Log for commit trail). **WP-H pending** — the cycle's e2e acceptance criterion (first real MCP consumer workflow) requires live MCP transport verification, which was not delivered by WP-A through WP-G.2. WP-H also folds in a scope-reductive design correction: remove file-based spec auto-loading in favor of intentional `load_spec` only.
+**Active cycle:** Default-install experience and lens design principles — BUILD pending (ARCHITECT complete 2026-04-22). Five ADRs landed in DECIDE (all Accepted as of gate close 2026-04-21): ADR-038 (release-binary feature profile), ADR-039 (`created_at` property contract), ADR-040 (DiscoveryGap trigger sources), ADR-041 (lens grammar conventions — structural predicates for discovery-oriented jobs, convention not requirement), ADR-042 (dimension extensibility guidance — documentation + syntactic validation). Light-touch ARCHITECT pass updated system-design.md to v1.3 (deployment-class framing for embedding backends + DiscoveryGap trigger-source contract + graceful-idle baseline fitness criterion).
 
-The cycle adds runtime spec loading (ADR-037) and exposes the full query surface via MCP (ADR-036). No new modules, no new dependency edges — all work flows through existing seams. The central new capability is that persisted lens enrichments rehydrate at library construction time, making vocabulary layers a durable property of the **context** rather than the **consumer process**. When any consumer holds the library against a context, it transiently runs every lens registered on that context — so cross-pollination between consumer domains happens automatically.
+**No new modules, no new dependency edges.** All BUILD work is code-level (property-contract producer/consumer alignment; resolve_dimension refactor; docstring drift cleanup) plus onboarding documentation (README lean-baseline framing, worked-example spec, spec-author dimension-choice guidance, lens grammar convention).
+
+**Central commitment:** the ADR-038 reframing ("positive decision, not defect-by-omission") is contingent on WP-D's documentation deliverables landing with substance. If those deliverables are weak or delayed, the defect-by-omission label reasserts — see Open Decision Points below.
 
 ## Work Packages
 
-### WP-A: Fix `register_specs_from_dir` (conformance debt)
+### WP-A: `created_at` property contract — coordinated four-site `fix:` (ADR-039)
 
-**Objective:** Close conformance scan Violation 3 — `register_specs_from_dir` currently calls `register_adapter()` only, silently dropping each spec's `enrichments()` and `lens()`. Any existing deployment using file-based spec auto-discovery has broken enrichment wiring today. This is a two-line fix that can ship independently, ahead of the rest of the cycle.
+**Objective:** Close conformance debt D-01 through D-04 as a single coherent fix. The bug is a full producer/consumer mismatch: three built-in adapters write `created_at` into `NodeMetadata` while `TemporalProximityEnrichment` reads `node.properties["created_at"]` and parses it as `u64` epoch milliseconds. After this WP, `TemporalProximityEnrichment` actually fires on adapter-created nodes with timestamps within the threshold — the silent-dead enrichment PLAY surfaced becomes live in the default build.
+
+**Changes:**
+- `src/adapter/adapters/content.rs` (fragment construction path) — write `PropertyValue::String(chrono::Utc::now().to_rfc3339())` to `node.properties["created_at"]` at fragment node construction; also at concept-node construction from fragment tags (via `concept_node()` helper in `src/adapter/types.rs`, or at each call site that creates concept nodes — BUILD decides where the write lives)
+- `src/adapter/adapters/extraction.rs` (`run_registration` path) — write `created_at` ISO-8601 UTC string to `node.properties` on both the file node and the `extraction-status` node
+- `src/adapter/adapters/declarative.rs` (`interpret_create_node` path) — after processing `cn.properties` map, insert `"created_at"` with current UTC ISO-8601 string if not already present in the rendered properties (ADR-039 §"Spec authors using TemporalProximityEnrichment must write the declared property" — spec-authored value wins when present)
+- `src/adapter/enrichments/temporal_proximity.rs` (`extract_timestamp`) — change string branch from `s.parse::<u64>().ok()` to `chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp_millis() as u64)`; graceful degradation on parse failure (node skipped, not errored)
+- Tests — update existing tests that use `PropertyValue::Int` for `created_at` to use ISO-8601 strings (they currently pass via the `Int` branch and do not catch the ISO-8601 gap)
+- At least one acceptance test: two nodes ingested within the threshold window both carry `created_at` written by ContentAdapter → `TemporalProximityEnrichment` emits a symmetric edge pair
+
+**Scenarios covered:** `docs/scenarios/038-042-default-install-lens-design.md` § TemporalProximity property-contract scenarios
+
+**Dependencies:** None. **Open choice.**
+
+**Risk:** low. Four coordinated sites but each change is mechanical. The coupling is the risk — writing ISO-8601 at the producer side without fixing the parser changes nothing observable; fixing the parser without fixing the producers also changes nothing. **Ship as a single `fix:` commit.** Partial landing is worse than no landing.
+
+---
+
+### WP-B: Dimension extensibility — `resolve_dimension` + `validate_spec` (ADR-042)
+
+**Objective:** Close conformance debt D-06 — the highest-consequence structural violation in the cycle. `resolve_dimension` in `DeclarativeAdapter` currently rejects any dimension string not in a hardcoded allowlist (`structure`, `semantic`, `provenance`, `relational`, `temporal`, `default`) with a `process()`-time error. This blocks ADR-042's extensibility commitment: a consumer authoring a spec declaring `dimension: "gesture"` or any novel dimension cannot use Plexus without modifying Rust. After this WP, syntactic validation is the gate, not semantic policy.
+
+**Changes:**
+- `src/adapter/adapters/declarative.rs` (`resolve_dimension`) — replace the exclusive `match` with a permissive well-formedness check: accept any string that is not empty, does not contain whitespace, and does not contain reserved characters (currently `:` and `\0`). Everything else passes.
+- Node/edge construction call sites — update to accept owned `String` instead of `&'static str` for the dimension field. Touches `interpret_create_node`, `interpret_create_edge`, and their callers in the spec interpreter.
+- `src/adapter/adapters/declarative.rs` (`validate_spec` path) — add the syntactic well-formedness check to spec validation so `load_spec` fails fast on malformed dimension values per Invariant 60. Previously, a spec with `dimension: ""` would deserialize successfully and fail only at `process()` time — the validation boundary moves forward to `load_spec`.
+- Tests — scenarios for: (a) a spec declaring `dimension: "gesture"` loads successfully and creates nodes in that dimension; (b) a spec declaring `dimension: ""` fails at `load_spec` with a clear validation error; (c) a spec declaring `dimension: "lens:trellis"` fails at `load_spec` with a clear validation error (reserved `:` character).
+
+**Scenarios covered:** `docs/scenarios/038-042-default-install-lens-design.md` § Dimension extensibility + dimension syntactic validation
+
+**Dependencies:** None. **Open choice.** Can ship in parallel with WP-A and WP-C.
+
+**Risk:** medium. The call-site touching (owned-string migration from `&'static str`) is the unknown. If the `&'static str` requirement is entrenched deeper than expected in the emit path — e.g., if dimension strings end up on the wire or in contribution keys where static-lifetime is assumed — this expands in scope. Recommend BUILD opens this WP by grepping all call sites of the dimension-typed field before committing to the signature change. If the grep surfaces load-bearing static-lifetime consumers, pause and escalate (likely ADR amendment rather than continued refactor).
+
+---
+
+### WP-C: Developer-facing documentation drift (`docs:` — D-05 + D-07)
+
+**Objective:** Close two small documentation debts surfaced by the conformance scan. Both are single-file edits, trivial per site, no code behavior change.
+
+**Changes:**
+- `src/adapter/enrichments/discovery_gap.rs` (module doc + struct doc) — expand to include the trigger-dependency statement ADR-040 mandates: that `DiscoveryGapEnrichment` fires only when some producer emits its configured trigger relationship; that in the default Homebrew build there is no built-in producer of `similar_to`; that silent-idle-by-design is expected behavior, not a bug; that activation paths are in-process (`features = ["embeddings"]`) or consumer-declared external enrichment (ADR-038).
+- `src/graph/node.rs` (dimension module doc at line 10; `dimension` field doc at line 157) — remove the incorrect "See ADR-009: Multi-Dimensional Knowledge Graph Architecture" reference (ADR-009 is "Automatic Tag-to-Concept Bridging," superseded). Replace with a generic reference or drop the ADR citation entirely. The dimension design predates the ADR-009 repurpose; the reference was never correct.
+
+**Scenarios covered:** None — documentation-only debt.
+
+**Dependencies:** None. **Open choice.**
+
+**Risk:** minimal.
+
+---
+
+### WP-D: ADR-038 onboarding deliverables — README, worked-example spec, spec-author documentation
+
+**Objective:** Land the documentation deliverables that make ADR-038's "positive decision, not defect-by-omission" framing substantive rather than nominal. This is the cycle's largest documentation WP — it spans README, a new worked-example spec file, onboarding material, and the spec-author documentation that ADR-042 requires. Without this WP, the ADR-038 reframing reasserts as defect-by-omission at the onboarding layer.
+
+**Deliverables (ordered by consumer reading path):**
+
+- **README updates.** Name the lean Homebrew/CLI baseline explicitly: two enrichments active by default (CoOccurrence always; TemporalProximity after WP-A lands the property contract); DiscoveryGap registered but idle (requires a `similar_to` producer); EmbeddingSimilarity not registered. Name the two activation paths per deployment class (in-process via `features = ["embeddings"]`; consumer-declared external enrichment via adapter spec + llm-orc ensemble). Point to the worked-example spec. **Capability-loss transparency is load-bearing alongside capability-present framing:** readers must see what functionality they do NOT get without llm-orc activation — DiscoveryGap stays idle (no latent-structural disagreement detection), EmbeddingSimilarity produces no signal (no semantic-similarity edges), any cross-domain lens translation of LLM-extracted structure is absent (because semantic extraction itself is llm-orc-dependent). Avoid apologetic framing ("unfortunately…") and avoid overclaim ("four core enrichments ship"). Direct, accurate: the lean baseline delivers CoOccurrence + TemporalProximity + graceful-idle; the llm-orc path unlocks DiscoveryGap + EmbeddingSimilarity + semantic-extraction-driven lens content.
+- **Worked-example spec at `examples/specs/embedding-activation.yaml`** (or equivalent path chosen by BUILD). Declares an llm-orc ensemble that computes embeddings and emits `similar_to` edges. **Quality bar: must cross the tautology threshold** — the example must demonstrate `similar_to` edges emerging over content the author did not pre-encode with overlapping tags. Embedding-over-untagged-prose is the target shape. A pre-tagged worked example would repeat the PLAY field-notes-flagged tautology failure mode.
+- **Onboarding material** (install guide, quickstart). "When to choose the in-process path" section: library consumers whose end-users cannot install llm-orc build with `features = ["embeddings"]`. Name the binary-weight and model-download cost explicitly. "How to activate embedding in the default build" section: install llm-orc, configure a provider (Ollama and OpenAI-compatible endpoints as two typical shapes, not prescribing either), author or adopt a declarative adapter spec, call `load_spec`. Reference the worked example.
+- **Spec-author documentation on dimension choice** (ADR-042 §Documentation-only semantic guidance). A dedicated section describing: what dimensions are (extensible string facets declared on nodes); why the choice is load-bearing (Invariant 50 enrichment filtering; `find_nodes` dimension filter); the shipped-adapter conventions (`structure` / `semantic` / `relational` / `temporal` / `provenance` with brief intent); guidance for consumers authoring novel dimensions. **Landing criterion:** a spec author authoring a spec for a node type colliding with a shipped-adapter node type (e.g., `fragment`) must encounter the dimension-choice guidance before declaring the node's dimension — in one navigation hop from the first spec-authoring reference.
+- **`create_node` primitive field-level docs** — name `dimension` as load-bearing and link to the dimension-choice section.
+- **Shipped-adapter convention notes in adapter-level docs** — ContentAdapter docs name that it places fragments in `structure`; ExtractionCoordinator docs name its dimension choices. Consumers writing a spec that will coexist with a shipped adapter can check adapter-level docs directly.
+- **Lens grammar convention documentation** (ADR-041 §Documented in product discovery, spec-author documentation, and interaction specs). Spec-author docs describe the structural-predicate convention for discovery-oriented jobs, backed by composition-shape reasoning, with phenomenology held as hypothesis not principle. The per-job (not per-app) framing is named. Interaction-specs updates already landed in DECIDE; spec-author docs reference them.
+- **"Minimum-useful-spec" pattern** (Product Debt row routed from DECIDE) — a worked example in interaction specs that makes deliberate dimension choices and names why; contrasts with "minimum-viable-spec" (valid grammar, no useful signal). Infrastructure preconditions for useful signal are called out.
+
+**Scenarios covered:** None — documentation deliverables. ADR-038, ADR-041, ADR-042 all rest on the documentation lever being substantive. The check at the end of BUILD is whether a reader can trace the activation path from README to worked example to ingest-and-query in one pass.
+
+**Dependencies:** **Implied logic** on WP-A (the README's lean-baseline description is more accurate once TemporalProximity actually fires — otherwise the README must hedge TemporalProximity's status). **Implied logic** on WP-B (the spec-author documentation on dimension-choice references a fail-fast syntactic validator; if the validator isn't live, the documentation describes behavior that doesn't yet match code). Not *hard* dependencies — docs can precede code, but the narrative is cleaner when code lands first.
+
+**Risk:** moderate — the quality bar is the risk. The worked-example spec crossing the tautology threshold is non-trivial: it needs real untagged prose, an llm-orc provider choice (or a clear "bring your own provider" framing), and reproducible output. BUILD may discover the worked example is harder than expected — if so, pause and escalate: a thin worked example is worse than no worked example for ADR-038's reframing, because it creates the *appearance* of a complete documentation lever while delivering tautological output. ADR-038 Consequences Negative names this risk explicitly.
+
+---
+
+### WP-E (Optional): Silent-idle debug instrumentation (ADR-042 empirical escalation signal)
+
+**Objective:** Convert ADR-042's escalation trigger from observational-only to detectable. ADR-042 rejected option (i) (warn-on-divergence for Plexus-known node types) in favor of documentation-only guidance, with the escalation path preserved. The escalation trigger as originally stated — "if repeated PLAY or user observation surfaces the failure mode" — depends on observational signal that may not arrive given Plexus's small user base and partial-fidelity PLAY inhabitation. Debug-level instrumentation of divergence events gives a future cycle evidence to mine.
+
+**Changes:**
+- In the spec-load path (`validate_spec` or immediately after): detect when a spec's `create_node` primitive has a `node_type` matching a shipped-adapter node type (e.g., `fragment`, `file`, `extraction-status`) but a `dimension` diverging from the shipped convention. Log at debug level — not warn, not error, just observable.
+- No warnings, no validation errors, no behavioral change. The spec loads successfully. This is purely observable signal.
+- Test: a spec declaring `node_type: fragment, dimension: semantic` triggers the debug log; a spec declaring `node_type: gesture_phrase, dimension: harmonic` does not.
+
+**Scenarios covered:** None — observability deliverable.
+
+**Dependencies:** None. **Open choice.** Independent of all other WPs in this cycle.
+
+**Risk:** minimal. Named in ADR-042 as a BUILD opportunity, not a requirement.
+
+**Decide at BUILD entry whether to include WP-E.** The cost of including is small; the cost of excluding is that ADR-042's escalation path stays observational-only. Recommendation: include if BUILD is already touching the spec validator path for WP-B (near-zero marginal cost); defer otherwise.
 
 **Changes:**
 - `adapter/pipeline/ingest.rs` (or wherever `register_specs_from_dir` lives) — replace the `register_adapter(Arc::new(adapter))` call with the equivalent of `register_integration`, extracting enrichments and lens from each `DeclarativeAdapter` before registering
@@ -27,284 +119,35 @@ The cycle adds runtime spec loading (ADR-037) and exposes the full query surface
 
 ---
 
-### WP-B: Specs persistence foundation + runtime registration
-
-**Objective:** Establish all the infrastructure for runtime spec loading without exposing any user-facing surface. After WP-B, the system behaves identically to before — but the machinery for WP-C/D is in place. This is the riskiest WP of the cycle because it introduces interior mutability into `IngestPipeline` for the first time.
-
-**Changes:**
-- `storage/sqlite.rs` — add `migrate_add_specs_table()` migration creating the `specs` table with composite PK `(context_id, adapter_id)` per ADR-037 §2 schema
-- `storage/traits.rs` — define `PersistedSpec` struct (fields: `context_id`, `adapter_id`, `spec_yaml`, `loaded_at`) as the return type for specs queries. **Use a struct, not a tuple** — this enables non-breaking evolution of the persisted-spec shape (additional fields can be added without breaking callers).
-- `storage/traits.rs` — add `persist_spec`, `query_specs_for_context(context_id) -> Vec<PersistedSpec>`, `delete_spec` methods to `GraphStore` trait, all with default no-op implementations (same extensibility pattern as `persist_event`)
-- `storage/sqlite.rs` — implement the three new methods on `SqliteStore`
-- `graph/engine.rs` — add `PlexusEngine::persist_spec`, `query_specs_for_context`, `delete_spec` methods that delegate to `GraphStore` (parallel to existing `persist_event`/`query_events_since`)
-- `adapter/pipeline/ingest.rs` — introduce interior mutability on the adapter vector and enrichment registry. **Tier 1 decision (BUILD-time, local):** `RwLock<Vec<Arc<dyn Adapter>>>` + `RwLock<EnrichmentRegistry>` is the leading candidate since registration is infrequent relative to reads. Alternative: `arc-swap::ArcSwap` if copy-on-write semantics fit the access pattern better. Both are interchangeable — can swap between them without touching callers. **Tier 2 restructuring (OUT OF SCOPE for this cycle):** moving adapter storage to a keyed collection (e.g., `DashMap<AdapterId, ...>`) is a structural change, not a concurrency-primitive swap, because it changes how adapters are indexed (Vec iteration order → hash-keyed lookup). If BUILD discovers a reason to want this, **pause and escalate** — it deserves its own architectural decision.
-- `adapter/pipeline/builder.rs` — add `PipelineBuilder::with_persisted_specs(specs: Vec<PersistedSpec>)` method that parses each spec, extracts the lens enrichment (via `DeclarativeAdapter::lens()`), and registers it on the pipeline being built. The adapter is NOT registered (lens-only rehydration per ADR-037 §2 startup path). Effect (a) is not re-run (vocabulary edges already persist). **The builder registers every spec passed in — no filtering logic, no selective loading.** The contract is: specs table is the context's lens registry, and holding a context means running all its lenses.
-- Boundary tests for every new seam: specs migration, trait default no-op, SqliteStore implementations, engine delegation, builder rehydration
-
-**Scenarios covered:** None directly — foundational infrastructure. Scenarios 037 are covered by WP-C and WP-D (rehydration path).
-
-**Dependencies:** None. **Open choice.** Can be built in parallel with WP-A.
-
-**Risk:** moderate. Interior mutability is a load-bearing concurrency change. The fitness criterion ("interior mutability scope confined to adapter vector and enrichment registry, no lock held across ingest()") is the discipline that keeps this safe. Recommend holding a review checkpoint between WP-B and WP-C specifically on the interior mutability choice.
-
----
-
-### WP-C: `load_spec` / `unload_spec` on PlexusApi
-
-**Objective:** Expose the three-effect model (Invariant 62) as a runtime API operation. This is the main functional payload of the cycle — after WP-C, embedded Rust consumers can load specs at runtime (MCP consumers still cannot until WP-F).
-
-**Changes:**
-- `api.rs` — add `load_spec(context_id: &str, spec_yaml: &str) -> Result<SpecLoadResult, SpecLoadError>`. Flow: validate spec YAML → parse `DeclarativeAdapter::from_yaml` → extract adapter + enrichments + lens → register on pipeline via WP-B's interior mutability path → write spec row to storage via WP-B's engine method → run lens enrichment over existing context content to produce initial vocabulary layer → return `SpecLoadResult` with adapter_id, registered enrichment IDs, lens namespace, vocabulary edges created count.
-- `api.rs` — add `unload_spec(context_id: &str, adapter_id: &str) -> Result<(), SpecUnloadError>`. Flow: remove adapter from routing → deregister lens enrichment → delete spec row from storage. Leaves vocabulary edges in the graph (Invariant 62).
-- `api.rs` — define `SpecLoadResult`, `SpecLoadError`, `SpecUnloadError` types
-- Validation: at minimum, YAML parses, `DeclarativeAdapter::from_yaml` succeeds, lens rules (if present) reference valid relationship type formats. Additional checks (e.g., lens rules reference existing relationship types in the graph) are a BUILD call — start conservative, expand if scenarios demand.
-- All-or-nothing error handling: if any step fails after validation, the earlier steps must roll back. The fitness criterion ("fail-fast atomicity") is the discipline here.
-- Acceptance tests exercising each scenario in scenarios/037
-
-**Scenarios covered:** scenarios/037 § Spec Validation (all 4), Complete Spec Wiring (both), Lens Enrichment Execution (all 3), Spec Persistence § "loaded spec persists in SQLite", Spec Unloading (both), Vocabulary Layer Discovery.
-
-**Dependencies:** **Hard** on WP-B (requires specs table, interior mutability, engine spec methods).
-
-**Risk:** moderate. Rollback-on-failure is the tricky part. Decide upfront whether rollback is manual (undo each successful step on error) or transactional (do everything in a SQLite transaction + in-memory staging). Manual is simpler but error-prone; transactional is cleaner but requires threading a transaction handle through pipeline registration. Recommend manual rollback with clear invariant tests.
-
----
-
-### WP-D: Startup spec re-instantiation via PipelineBuilder
-
-**Objective:** Close the multi-consumer cross-pollination story. After WP-D, when any library instance is constructed against a context that has persisted specs, those specs' lens enrichments are automatically registered on the new pipeline — so future ingests by any adapter on that context trigger all registered lenses.
-
-**Changes:**
-- MCP binary's `main.rs` (or equivalent host code) — before constructing `PlexusApi`, read the specs table via the store, and pass the resulting `Vec<(ContextId, String)>` to `PipelineBuilder::with_persisted_specs`. The builder (already delivered in WP-B) handles the rest.
-- Acceptance test: load spec via `PlexusApi::load_spec`, drop the api + pipeline + engine, reconstruct everything via the builder pointing at the same store, ingest via a different adapter, assert the persisted lens fires. This is the canonical test for Invariant 62 effect (b).
-- Documentation of the host-side ceremony in the field guide when it's regenerated.
-
-**Scenarios covered:** scenarios/037 § Spec Persistence § "persisted specs re-register on startup", "lens enrichment fires correctly after restart".
-
-**Dependencies:** **Hard** on WP-B (needs `with_persisted_specs`) and WP-C (needs something that can write to the specs table, so the test can exercise load-then-rehydrate).
-
-**Risk:** low. The builder already does the work; WP-D is just wiring the host and writing the acceptance test.
-
----
-
-### WP-E: MCP query tools (6 thin wrappers)
-
-**Objective:** Expose the existing `PlexusApi` query methods through MCP so LLM consumers can exercise the pull paradigm and composable filters. Six of the seven new MCP tools from ADR-036 §1 — the seventh (`load_spec`) is WP-F.
-
-**Changes:**
-- `mcp/mod.rs` — add `#[tool]` handlers for `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`. Each takes flat optional parameter fields (never nested objects) and delegates to the corresponding `PlexusApi` method. Parameter mapping:
-  - `find_nodes`: `node_type`, `dimension`, `contributor_ids`, `relationship_prefix`, `min_corroboration` → `FindQuery` + `QueryFilter`
-  - `traverse`: `origin`, `max_depth`, `direction`, `rank_by`, `contributor_ids`, `relationship_prefix`, `min_corroboration` → `TraverseQuery` + `QueryFilter` + `RankBy`
-  - `find_path`: `source`, `target`, `max_length`, `direction`, `contributor_ids`, `relationship_prefix`, `min_corroboration` → `PathQuery` + `QueryFilter`
-  - `changes_since`: `cursor`, `event_types`, `adapter_id`, `limit` → `CursorFilter`
-  - `list_tags`: no parameters beyond active context
-  - `shared_concepts`: `context_a`, `context_b`
-- Module header comment "Tools: 9 total" → "Tools: 16 total" (15 after WP-E, 16 after WP-F)
-- One boundary integration test per tool asserting delegation to `PlexusApi`
-
-**Scenarios covered:** scenarios/036 § Graph Query Tools, Event Cursor Tool, Discovery Tools, End-to-End Integration.
-
-**Dependencies:** None. **Open choice.** Can be built in parallel with WP-A/B/C/D since the underlying API methods already exist.
-
-**Risk:** low. Mechanical wrapping. Main risk is getting the flat-parameter-to-structured-type mapping right — mitigated by per-tool tests.
-
-**Commit structure:** may split into 2 commits (e.g., find_nodes + traverse + find_path in one, changes_since + list_tags + shared_concepts in another) for reviewability. Single commit is also acceptable if the author prefers.
-
----
-
-### WP-F: MCP `load_spec` tool
-
-**Objective:** The seventh and final new MCP tool — the one that's not a thin wrapper. Exposes `PlexusApi::load_spec` through MCP so consumers can declare their identity at interaction time.
-
-**Changes:**
-- `mcp/mod.rs` — add `#[tool]` handler for `load_spec` that takes a single `spec_yaml: String` parameter (the full spec content inline, per ADR-036 §2) and delegates to `PlexusApi::load_spec`. Result marshalling: `SpecLoadResult` → JSON response with adapter_id, lens_namespace, vocabulary_edges_created count. Error marshalling: `SpecLoadError` → MCP `ErrorData`.
-- Boundary test: real MCP handler invokes real `PlexusApi::load_spec` with a valid spec, asserts result shape; invokes with malformed YAML, asserts error shape.
-
-**Scenarios covered:** scenarios/036 § Spec Loading Tool (both scenarios).
-
-**Dependencies:** **Hard** on WP-C (needs `PlexusApi::load_spec` to exist).
-
-**Risk:** low. One tool, well-defined wrapping.
-
----
-
-### WP-G: `evidence_trail` + `QueryFilter` and `RankBy::NormalizedWeight`
-
-**Objective:** Close two unrelated conformance debts from the query surface cycle, both of which land in the `query` module. Two independently-revertible commits within one WP.
-
-**Sub-package G.1: evidence_trail gains optional QueryFilter (ADR-036 §5, Violation 2)**
-
-**Changes:**
-- `query/step.rs` — `StepQuery` accepts `filter: Option<QueryFilter>` (already present per ADR-034) threaded into the step-by-step traversal logic
-- `api.rs` — `PlexusApi::evidence_trail` signature gains `filter: Option<QueryFilter>` parameter, piped through to the underlying `StepQuery` construction
-- `mcp/mod.rs` — `evidence_trail` MCP tool gains flat optional filter fields (`contributor_ids`, `min_corroboration`; `relationship_prefix` included for API consistency but will typically return empty results for evidence trails — document this in tool description per ADR-036 §5)
-- Tests: `api::tests::evidence_trail_accepts_filter` and at least one scenario per filter field
-
-**Scenarios covered:** scenarios/036 § Evidence Trail Filter Conformance.
-
-**Commit:** own `feat:` commit.
-
-**Sub-package G.2: RankBy::NormalizedWeight wiring (ADR-034, Violation 1)**
-
-**Changes:**
-- `query/filter.rs` — add `RankBy::NormalizedWeight(Box<dyn NormalizationStrategy>)` variant
-- Resolve the `Clone`/`Debug`/`PartialEq` derivation wart on the enum (trait objects don't auto-derive). Most likely approach: manual `Debug` impl that prints "NormalizedWeight(<strategy>)", and drop `Clone`/`PartialEq` from `RankBy` if not already required. If `Clone` IS required elsewhere, require `NormalizationStrategy: Clone` or use a different container (e.g., `Arc<dyn NormalizationStrategy>`).
-- `query/types.rs` — `TraversalResult::rank_by()` handles the new variant by computing normalized weights via the injected strategy before sorting
-- Test: `traverse::tests::rank_by_normalized_weight_uses_outgoing_divisive`
-- If G.2's type-system wart turns out to be uglier than expected (e.g., it forces removing `Clone` from `RankBy` which cascades through downstream code), this sub-package can be reverted independently of G.1 without affecting the evidence_trail work.
-
-**Commit:** own `feat:` commit, separate from G.1.
-
-**Dependencies:** **Open choice.** G.1 and G.2 are independent of WP-A/B/C/D/E/F and of each other.
-
-**Risk:** G.1 is low (small signature change, well-understood). G.2 is the unknown — the type-system wart is the reason this was deferred in WP-C originally. If the wart proves intractable, reverting G.2 leaves the ADR-034 conformance debt open, in which case: amend the ADR text with a supersession note explaining why the third variant was never implemented (per the user's standing principle — update ADRs when necessary or when genuinely superseded, not casually).
-
----
-
-### WP-H: E2E verification + intentional-only spec loading
-
-**Objective:** Satisfy the cycle's own acceptance criterion at the MCP transport layer. Product discovery (2026-04-02) named "first real MCP consumer workflow" as the end-to-end acceptance definition; WP-A through WP-G.2 built the components but did not verify them through live MCP framing. WP-H delivers that verification via a subprocess-driven acceptance test exercising the two-consumer happy path. In the same WP, a scope-reductive design correction lands: file-based spec auto-loading is removed so the e2e semantics are unambiguous (state comes from `load_spec` only, never from directory scanning at construction time).
-
-This is the last WP in the cycle — it closes BUILD.
-
----
-
-**Sub-package H.1: Remove file-based spec auto-loading (design correction)**
-
-**Trigger:** Standing principle check during WP-G.2 reflection surfaced that file-based auto-discovery (`register_specs_from_dir`, `with_adapter_specs`) violates consumer-intent (Invariant 61) and creates latent double-registration with persisted specs. Loading a spec should be intentional.
-
-**ADR-037 supersession:**
-- Add a dated supersession note at the head of ADR-037 citing the removal and rationale
-- Strike or mark-as-superseded §4 ("Fix `register_specs_from_dir` to wire complete specs") and related lines in §2 (startup path) and the Consequences section
-- The standing principle (ADR-037 ARCHITECT phase) applies: this IS a genuine supersession — the decision has changed, not the implementation
-
-**Code removals:**
-- `src/adapter/pipeline/ingest.rs`: delete `register_specs_from_dir` method (~60 lines)
-- `src/adapter/pipeline/builder.rs`: delete `with_adapter_specs` builder method; remove its call from `default_pipeline` (~10 lines)
-- `src/adapter/integration_tests.rs:4350`: delete the test that exercises `register_specs_from_dir`
-- `tests/acceptance/spec.rs`: delete `register_specs_from_dir_wires_enrichments_and_lens` (tests removed code)
-
-**Doc updates:**
-- `docs/product-discovery.md` — remove "file on disk (auto-discovery at startup)" from spec ownership paragraph (line 11); remove/update the "File-based auto-discovery is one delivery path" assumption-inversion row (~line 161)
-- `docs/domain-model.md` — audit the "load spec" action description; if it lists file-based as a delivery mechanism, update
-- `docs/references/field-guide.md` — remove references to `with_adapter_specs` / `register_specs_from_dir` from the adapter/pipeline entry
-- `docs/system-design.md` — check if the MCP cycle's Amendment 5 lists file-based loading; update if so
-
-**Tests:**
-- Verify `PipelineBuilder::with_persisted_specs` rehydration still works (orthogonal path — unaffected by removal, but worth an explicit test-pass confirmation)
-- Verify `tests/acceptance/spec.rs::persisted_spec_rehydrates_across_restart` still passes — this is the canonical rehydration test
-- Verify `two_consumers_two_lenses_on_same_context` still passes at API level
-
-**Commit:** `refactor:` — scope reduction, no new behavior. ADR update included in same commit (the ADR lines the code implemented are removed together).
-
-**Dependencies:** None. Can ship independently of H.2.
-
-**Risk:** low. Code removal is localized. Main failure mode: a downstream crate/deployment relying on auto-discovery silently breaks. Plexus is pre-1.0 and the only known consumers are this workspace's own binary — no external breakage vector today.
-
----
-
-**Sub-package H.2: Live MCP e2e harness (acceptance verification)**
-
-**Trigger:** The cycle's product-discovery-defined acceptance criterion ("first real MCP consumer workflow") requires transport-level verification, not just API-level. Boundary tests at the MCP handler layer verify JSON delegation; they do not verify that the handler is reachable through actual MCP protocol framing (initialize handshake, JSON-RPC over stdio, tool dispatch by the rmcp framework).
-
-**Objective:** One acceptance test that drives the compiled `plexus mcp` binary as a subprocess, speaks MCP to it over stdin/stdout, and verifies the two-consumer vocabulary-layer cross-pollination story end-to-end.
-
-**Test architecture:**
-- `tests/acceptance/mcp_e2e.rs` — new file
-- Helper harness module (`tests/acceptance/mcp_harness.rs` or inlined) providing:
-  - `McpHarness::spawn(db_path)` — spawn subprocess via `Command::new(env!("CARGO_BIN_EXE_plexus")).args(["mcp", "--db", ...])` with stdin/stdout piped, stderr captured for failure diagnostics
-  - `send_initialize()` — MCP handshake (protocol version negotiation)
-  - `call_tool(name, arguments) -> JsonValue` — serialize JSON-RPC request, write with newline, read response
-  - `shutdown()` — close stdin, wait for exit with timeout (e.g., 5s), kill if timeout
-- Client approach: **raw JSON-RPC** over stdin/stdout, not rmcp client types. Rationale: raw JSON-RPC is a stable wire protocol that the test exercises directly — it won't drift with rmcp crate version changes. A ~100 LoC helper is a cheaper long-term maintenance burden than an rmcp client dependency dance. If future needs grow, revisit.
-
-**Hello-world scenario (the two-consumer cross-pollination story):**
-
-1. **Setup:** Create temp dir, spawn binary pointing at temp SQLite path. Verify startup by calling MCP `initialize`.
-
-2. **First consumer arrives:**
-   - `set_context "test"` (auto-create)
-   - `load_spec` with Consumer-1 YAML (adapter id `consumer-1-content`, input kind `consumer-1.fragment`, lens namespace `lens:consumer-1` with translation `may_be_related → thematic_connection`)
-   - Assert: response JSON carries `adapter_id: "consumer-1-content"`, `lens_namespace: "lens:consumer-1"`, `vocabulary_edges_created: 0` (empty context)
-
-3. **First consumer ingests:**
-   - `ingest` with content containing two tags that co-occur (triggers `CoOccurrenceEnrichment`, emits `may_be_related` edges, Consumer-1's lens translates to `lens:consumer-1:thematic_connection`)
-   - Assert: response JSON indicates event count > 0
-   - `find_nodes` with `relationship_prefix: "lens:consumer-1:"` — assert non-empty result, concepts present
-
-4. **Second consumer arrives on same context:**
-   - `load_spec` with Consumer-2 YAML (distinct adapter id, input kind, lens namespace `lens:consumer-2`)
-   - Assert: response JSON carries `lens_namespace: "lens:consumer-2"`, `vocabulary_edges_created > 0` (Consumer-2's lens sweeps existing edges from step 3)
-
-5. **Second consumer ingests:**
-   - `ingest` with its own content
-   - Assert: response JSON indicates event count > 0
-
-6. **Cross-pollination verification (THE cycle's point):**
-   - `find_nodes` with `relationship_prefix: "lens:consumer-1:"` — assert edges exist from content ingested by BOTH consumers (Consumer-1's lens is still registered and fired on Consumer-2's ingest)
-   - `find_nodes` with `relationship_prefix: "lens:consumer-2:"` — same assertion, mirrored
-   - `find_nodes` with `relationship_prefix: "lens:"` — assert both namespaces appear
-
-7. **Shutdown:** close stdin, wait for exit.
-
-**Adapter choice for ingest:** use the built-in content adapter (tag-based `FragmentInput`). Rationale: deterministic, Rust-only (no llm-orc dependency), test-friendly. Semantic extraction via llm-orc is out of scope for this test — verifying transport, not extraction.
-
-**Commit:** `test:` — test-only addition (after H.1's `refactor:` commit). No production code changes.
-
-**Dependencies:** Hard on H.1 (needs unambiguous "state comes from `load_spec` only" semantics). Hard on all prior WPs (test exercises the full surface).
-
-**Risk:** moderate — harness code has multiple failure modes.
-- Subprocess startup timing: binary may need compile + cold start. Mitigation: use debug-profile binary (fast compile), `initialize` handshake serves as readiness check.
-- Stdout framing: MCP responses are line-delimited JSON. Need a `BufReader` reading lines, with timeout per-read.
-- Log output on stderr: tracing logs go to stderr. Capture but don't parse; surface on failure for diagnostics.
-- Test flakiness risk: subprocess tests are historically flakier than in-process. Mitigation: use tokio timeout wrappers; ensure deterministic Consumer-1/Consumer-2 content; assert on SETS of node/edge IDs, not ordered lists.
-- CI cost: test compiles the binary. Acceptable for one test; if the harness grows to many tests, move to a dedicated binary target.
-
----
-
-## Open questions raised during WP-H planning
-
-These are decisions or investigations that WP-H implementation will need to resolve:
-
-**OQ-H1 — rmcp protocol version negotiation.** What protocol version does the current `rmcp` crate use by default, and what should the harness send in `initialize`? First step of WP-H.2 is to read the rmcp crate or run the binary manually and observe its initialize behavior.
-
-**OQ-H2 — default_pipeline semantics after H.1.** After removing `with_adapter_specs` from `default_pipeline`, the remaining pipeline construction is: default adapters + default enrichments + persisted-spec rehydration (from `with_persisted_specs`). Is there any gap where a consumer expected file-based specs but now gets nothing? The WP-D acceptance test establishes the answer: persisted specs still rehydrate at construction. But anything that dropped a YAML file into `adapter-specs/` and expected it to "just work" will silently do nothing after H.1. Document this in the ADR-037 supersession note as a deliberate behavior change.
-
-**OQ-H3 — cross-pollination visibility in the harness.** The canonical cross-pollination test requires Consumer-1's lens to fire on Consumer-2's ingest. Confirm that the `changes_since` event cursor (or `find_nodes` with `relationship_prefix`) reveals lens-created edges from the OTHER consumer's adapter. If the enrichment loop isn't persisting correctly to the event log after WP-C's fix (signal 46 in cycle status), this test could fail for reasons unrelated to WP-H. Include a quick check at the start of WP-H.2: `changes_since` from cursor 0 must return lens edges produced by the second ingest.
-
-**OQ-H4 — test timing budget.** What's a reasonable timeout for each MCP tool call? Handshake is fast (<100ms expected). `load_spec` with lens sweep over empty context is fast. Ingest with content adapter is fast. `find_nodes` is fast. Tentative: 5s per call, 30s for the whole test. Revisit if flaky.
-
-**OQ-H5 — integration_tests.rs impact.** `src/adapter/integration_tests.rs:4350` uses `register_specs_from_dir` in what appears to be an integration test path. Before deleting it, determine whether the test's intent is still covered elsewhere. If not, translate its intent to a `load_spec`-based test before removing the old one.
-
----
-
 ## Dependency Graph
 
 ```
-WP-A through WP-G.2 ──[complete — see Completed Work Log]──┐
-                                                           │
-WP-H.1 (remove file-based auto-load) ─[open choice]────────┤
-  │                                                        │
-  │ (hard)                                                 │
-  ▼                                                        │
-WP-H.2 (live MCP e2e harness) ─[hard on H.1 + A–G]─────────┘
+WP-A (created_at contract) ──[open choice]──┐
+WP-B (dimension extensibility) ─[open choice]┤
+WP-C (doc drift D-05 + D-07) ──[open choice]┤
+WP-E (debug instrumentation) ──[open choice]┤
+                                            │
+                              (implied logic)│
+                                            │
+                                            ▼
+WP-D (ADR-038 onboarding docs) ─[implied logic on WP-A + WP-B]
 ```
 
 **Classification key:**
-- **Hard dependency:** B cannot be built without A — structural necessity (the code literally won't compile or function without A's changes in place)
-- **Implied logic:** simpler to build A first, but not required
-- **Open choice:** genuinely independent — build any first
+- **Hard dependency:** B cannot be built without A — structural necessity (code literally won't compile or function without A).
+- **Implied logic:** simpler to build A first, but not required. B can proceed with A's changes stubbed or explicitly called out as "pending."
+- **Open choice:** genuinely independent — build any first.
 
-**Hard dependencies in this cycle (as-built):**
-- WP-C hard on WP-B, WP-D hard on WP-B + WP-C, WP-F hard on WP-C — all resolved
-- **WP-H.2 hard on WP-H.1** (harness needs unambiguous state-from-load_spec semantics)
-- **WP-H.2 hard on WP-A through WP-G.2** (harness exercises full surface)
+**No hard dependencies in this cycle.** Every WP can in principle ship independently. WP-D has implied-logic dependencies on WP-A and WP-B because the documentation describes behavior that those WPs make live — WP-D can proceed before them if the documentation explicitly notes which descriptions are pending-live. But the cleaner narrative is to land WP-A and WP-B first, then document against working code.
 
-**Open choices remaining:**
-- **WP-H.1** (scope-reductive design correction — can ship independently)
+**Recommended build order:** WP-A → WP-C → WP-B → WP-D. Rationale:
 
-**Recommended build order for WP-H:** H.1 first (small refactor + ADR supersession), then H.2 (harness + acceptance test). No parallelism in WP-H — H.2 depends on H.1's semantic clarification.
+- **WP-A first** because the `created_at` bug is the cycle's most observable defect (silent-dead TemporalProximity in every default-install build today). Shipping the fix early lets the rest of BUILD validate against a working enrichment.
+- **WP-C second** because it's trivial and clears the drift noise from the codebase before the larger refactor.
+- **WP-B third** because the call-site migration is the cycle's largest code-surface-area change. The grep-before-committing risk call-out (see WP-B Risk) is a pause-and-escalate point.
+- **WP-D last** because the README and worked example can describe all three preceding WPs as live.
 
-**As-shipped order for WP-A through WP-G.2:** A → B → C → WP-C UUID fix → D → pre-WP-F MCP ingest fix → E → F → F no-context test follow-up → G.1 → G.2. See Completed Work Log for commits.
+WP-E (optional) can slip into WP-B if BUILD is already touching the validator path, or ship as a separate `feat:` commit, or be deferred. Decide at BUILD entry.
 
 ---
 
@@ -312,77 +155,72 @@ WP-H.2 (live MCP e2e harness) ─[hard on H.1 + A–G]────────�
 
 Each transition state represents a coherent intermediate architecture where the system is functional, tests pass, and the build can be paused without leaving the codebase in a broken state.
 
-### TS-1: Conformance debt cleared (after WP-A)
+### TS-1: TemporalProximity actually fires (after WP-A)
 
-The silent enrichment/lens drops in `register_specs_from_dir` are fixed. Any existing deployment using file-based spec auto-discovery now wires enrichments and lens correctly. No new surface area, no new capability — corrective only. But shippable on its own.
+The `created_at` property contract is coherent end-to-end: ContentAdapter, ExtractionCoordinator, and DeclarativeAdapter write ISO-8601 UTC strings to `node.properties["created_at"]`; `TemporalProximityEnrichment` parses them correctly. For the first time since the enrichment was added, the default Homebrew build emits `temporal_proximity` edges on nodes with timestamps within the threshold window.
 
-**Capabilities:** Everything that worked before, but file-based specs now actually work as documented.
+**Capabilities:** CoOccurrence + TemporalProximity active by default on tagged content. DiscoveryGap still idle (no trigger producer in the default build — by design per ADR-040). EmbeddingSimilarity still absent from the default build (by design per ADR-038).
 
-### TS-2: Infrastructure in place, unused (after WP-A + WP-B)
+### TS-2: Dimension extensibility live (after WP-A + WP-B)
 
-The `specs` table exists (empty for new installations). `IngestPipeline` supports runtime registration via interior mutability. `PipelineBuilder::with_persisted_specs` exists but is not called by any host. No behavioral change — the machinery is wired but no one uses it.
+Consumers authoring specs with novel dimensions (`"gesture"`, `"harmonic"`, `"movement-phrase"`) are accepted by `load_spec`. Malformed dimensions (empty, whitespace, reserved characters) fail at `load_spec` with clear validation errors (Invariant 60). Shipped-adapter conventions remain documented but not enforced. The extensibility promise of ADR-042 is exercisable by real consumers without modifying Plexus Rust.
 
-**Capabilities:** Same as TS-1. Internal-only additions.
+**Capabilities:** TS-1 capabilities + declarative-spec dimension extensibility. ADR-042's documentation-only semantic guidance is the remaining lever; WP-D lands the documentation.
 
-**What a cautious reviewer can verify at TS-2:** that the interior mutability is scoped correctly (fitness criterion), that the new storage methods have default no-op implementations for non-SQLite backends, that no code path in the existing system accidentally uses the new registration methods yet.
+### TS-3: Documentation debt cleared (after WP-A + WP-B + WP-C)
 
-### TS-3: Rust-embedded load_spec working (after WP-A + WP-B + WP-C)
+Code-level docstrings reflect the ADR chain. `DiscoveryGapEnrichment` module/struct docs carry the trigger-source contract (ADR-040). `src/graph/node.rs` no longer cites the wrong ADR for dimension architecture. No user-facing behavior change — pure cleanup.
 
-Embedded Rust consumers can call `PlexusApi::load_spec` and `unload_spec` at runtime. The three-effect model works: spec persists, lens runs, vocabulary layer builds up. MCP consumers still cannot declare identity at interaction time — they depend on file-based auto-discovery as before.
+**Capabilities:** Same as TS-2. Internal signal-to-noise improves.
 
-**Capabilities:** Full embedded consumer lifecycle. The end-to-end workflow from product discovery is achievable in a Rust test or an embedded Trellis integration, but not yet through MCP.
+### TS-4: Default-install onboarding coherent (after WP-A + WP-B + WP-C + WP-D)
 
-### TS-4: Multi-session persistence working (after WP-A + WP-B + WP-C + WP-D)
+The full documentation lever lands. README describes the lean baseline honestly. The worked-example spec at `examples/specs/embedding-activation.yaml` demonstrates embedding activation over untagged prose (crosses the tautology threshold). Spec-author documentation on dimension choice is reachable in one navigation hop from the first spec-authoring reference. Lens grammar convention is documented. The "minimum-useful-spec" pattern is live in interaction specs.
 
-The critical transition: persisted specs survive library reconstruction. On Day 1, Trellis loads its spec via `load_spec`. On Day 2, Carrel constructs a fresh library instance against the same SQLite database — Carrel's `PipelineBuilder::with_persisted_specs` reads the specs table and registers Trellis's lens on Carrel's pipeline. When Carrel ingests, Trellis's lens fires, producing `lens:trellis:*` edges on Carrel's new content. This is the multi-consumer cross-pollination story working end-to-end.
+**Capabilities:** ADR-038's "positive decision, not defect-by-omission" reframing is fully grounded — a new consumer installing via Homebrew can read README, follow the activation path, and produce `similar_to` edges over their own content without reading Plexus source. The cycle's documentation commitments land in substance, not just declaration.
 
-**Capabilities:** Multi-session consumer workflows. The specs table is genuinely the context's lens registry. Consumer identity decouples from process identity.
-
-### TS-5: MCP query surface live (after TS-4 + WP-E + WP-G.1 + WP-G.2)
-
-LLM consumers can exercise the pull paradigm (`changes_since`) and composable filters (`find_nodes`, `traverse`, `find_path` with `relationship_prefix`, `contributor_ids`, `min_corroboration`) via MCP. `evidence_trail` accepts filters. `RankBy::NormalizedWeight` is available for consumers that want query-time normalized ranking. The only remaining gap is that MCP consumers still cannot declare identity at interaction time — they must rely on persisted specs from a prior embedded load.
-
-**Capabilities:** Full MCP read surface. Pull paradigm via MCP. Composable filters via MCP. This is the point where LLM agents can start doing meaningful query work against a Plexus context they didn't set up.
-
-### TS-6: First real MCP consumer workflow — capability-level (after TS-5 + WP-F)
-
-The full acceptance criterion from product discovery is **achievable in principle** via the MCP transport: create context → `load_spec` via MCP → ingest via the newly-loaded adapter → query through the lens → `load_spec` a second spec for a second consumer → query across both vocabulary layers. Each constituent tool is MCP-reachable and individually verified by boundary tests.
-
-**Capabilities:** End-to-end MCP consumer workflow is reachable. Invariant 62 holds across process boundaries. The MCP tool count reaches 16 and the query surface reaches parity with `PlexusApi` for reads.
-
-**Unverified at TS-6:** no live MCP round-trip has exercised the full workflow in a single subprocess — boundary tests verify handler logic and JSON marshalling but not the rmcp protocol framing layer under real consumer conditions. TS-7 closes that gap.
-
-### TS-7: End-to-end MCP workflow verified + intentional-only spec loading (after WP-H.1 + WP-H.2)
-
-The cycle's product-discovery-defined acceptance criterion is verified by a live MCP subprocess acceptance test exercising the two-consumer vocabulary-layer cross-pollination story in a single run. Spec loading is intentional-only (`load_spec`) — file-based auto-discovery is removed. ADR-037 carries a dated supersession note documenting the behavior change.
-
-**Capabilities:** All TS-6 capabilities, verified end-to-end under real MCP protocol framing. Spec loading semantics are unambiguous (one path, intentional). The harness is available as a foundation for real integration experiments beyond the test context. The cycle is complete.
+**What TS-4 does not deliver:** a validated observation that documentation-only guidance actually prevents the PLAY Finding 3 failure mode (spec author silently picks a diverging dimension for a colliding node type). That validation is empirical and requires real-author usage — see Open Decision Points.
 
 ---
 
 ## Open Decision Points
 
-These are decisions the architect phase deliberately deferred to BUILD, or principles the build phase should honor:
+These are decisions or open questions carried into BUILD from DECIDE's gate reflection and the susceptibility snapshot at the DECIDE → ARCHITECT boundary.
 
-- **Interior mutability mechanism for IngestPipeline adapter vector and enrichment registry** (ADR-037 §5). **Tier 1 (local BUILD decision, no ripple):** `RwLock<Vec<Arc<dyn Adapter>>>` + `RwLock<EnrichmentRegistry>` is the leading candidate — registration is infrequent, reads dominate, simple semantics. Alternative: `arc-swap::ArcSwap` if read-time copy-on-write fits the access pattern better. Both are interchangeable without touching callers. **Decide during WP-B.** **Tier 2 (NOT a local decision):** moving adapter storage to a keyed collection such as `DashMap<AdapterId, Arc<dyn Adapter>>` would restructure how adapters are indexed — changing from Vec iteration (order-preserving) to hash-keyed lookup (order-lost). That's a structural change, not a mechanism swap, and would require a separate architectural decision (likely a new ADR). **If BUILD discovers reason to want Tier 2, pause and escalate — do not silently restructure.** The fitness criterion in system-design.md makes this boundary explicit.
+**This cycle:**
 
-- **Rollback strategy for `load_spec` failures** (Invariant 60, all-or-nothing). Options: manual rollback (undo each successful step on error — simpler, more code, more chances to miss a cleanup path); transactional rollback (SQLite transaction + in-memory staging — cleaner, but requires threading a transaction through pipeline registration which currently doesn't expect one). **Decide during WP-C.** Lean toward manual rollback with exhaustive invariant tests — the steps are few and the cleanup is tractable.
+- **Worked-example provider choice (WP-D).** Settled at gate: **Ollama via llm-orc** is the provider the practitioner will use for empirical validation of the worked-example spec. Onboarding prose still names OpenAI-compatible endpoints as the other common shape (llm-orc handles provider routing; Plexus is provider-indifferent), but the tautology-threshold verification is done against the Ollama path.
 
-- **Validation extent for `load_spec`** (Invariant 60). Minimum: YAML parses, `DeclarativeAdapter::from_yaml` succeeds, lens rules (if present) reference valid relationship type formats. Additional checks (e.g., lens rules reference existing relationship types in the graph, spec adapter ID is unique within the context) are a judgment call. **Decide during WP-C.** Start conservative — add checks when scenarios demand.
+- **Embedding strategy within llm-orc (WP-D, BUILD exploration).** ADR-038 decided that embedding is reached via a consumer-declared external enrichment running through llm-orc. It did NOT decide which embedding model, which parameters, which threshold, or which ensemble shape to use. These are BUILD-phase choices to be explored empirically against the tautology-threshold bar. Candidate model families (nomic-embed-text, mxbai-embed-large, others available via Ollama) and parameter shapes (similarity threshold, batch size, output relationship name) are part of the worked-example spec's design. **Treat as exploratory:** BUILD may need to try multiple model/parameter combinations before finding one that crosses the tautology threshold on realistic untagged prose. Document the final choice and the rejected alternatives in the spec's inline comments or a companion note so readers understand the choice space, not just the landing point.
 
-- **Rehydration error handling** (ADR-037 §2 startup path). When `PipelineBuilder::with_persisted_specs` encounters a spec row that fails to parse or extract its lens, the current design says "log and continue" (non-fatal). Is that right? Alternative: fail the builder, force the host to diagnose. **Decide during WP-B.** Current recommendation (non-fatal) preserves availability — a broken persisted spec shouldn't prevent the library from starting up. But this is worth revisiting if operators need stronger guarantees.
+- **Worked-example tautology threshold (WP-D).** The worked example must demonstrate `similar_to` edges emerging over content the author did not pre-encode with overlapping tags. Embedding-over-untagged-prose is the shape. BUILD should verify this empirically before committing the example — run the spec against untagged prose, observe the emitted edges, confirm they reflect semantic similarity rather than mechanical tag coincidence. A pre-tagged example is a failure, not a deliverable. **Recursive-tautology awareness:** the challenge is not just "does this specific example cross a threshold" but "does the approach rise above what we're already experiencing to get away from tautology" — which includes not carrying pre-encoded practitioner assumptions about what emergent structure should look like into the worked example's prose selection or the ensemble's parameter shape. Our demonstration of how to escape tautology can itself be tautological. **Escalation path if the worked example cannot rise above tautology: escalate to the practitioner (user). The response shape may be a new research cycle on emergent-structure demonstration, not a WP-D patch.** Shipping a thin example is worse than shipping no example because it creates the *appearance* of a complete documentation lever while delivering tautological output — the exact failure mode ADR-038 Consequences Negative names.
 
-- **Whether `PipelineBuilder::with_persisted_specs` is per-context or multi-context.** Current design: takes `Vec<(ContextId, String)>`, so it can rehydrate multiple contexts in one call. An alternative is a per-context method (`with_persisted_specs_for_context(context_id)`). **Decide during WP-B.** Current design is more general; per-context variant can be added later as a helper if needed.
+- **Onboarding tone (WP-D).** ADR-038 reframed the lean default as honest-to-demo. README language should carry that stance without apology and without overclaim. BUILD should flag any onboarding text that reads as either: (a) apologetic for the lean baseline ("unfortunately, embedding isn't wired by default — you'll need to..."), or (b) overclaiming on the default binary ("four core enrichments ship out of the box"). Both fail the honest-to-demo test. Correct tone: "The default Homebrew binary ships with two active enrichments... to activate embedding-based discovery, authoring a declarative adapter spec..." — direct, accurate, no apologetic framing.
 
-- **`RankBy::NormalizedWeight` type-system fallout** (ADR-034 Violation 1, WP-G.2). The `Box<dyn NormalizationStrategy>` variant breaks auto-derived `Clone`/`Debug`/`PartialEq` on `RankBy`. If removing those derives cascades through downstream code, WP-G.2 may need to revert and take a different approach (e.g., `Arc<dyn NormalizationStrategy>`, or a concrete `NormalizationStrategyKind` enum instead of trait objects). **Decide during WP-G.2.** If WP-G.2 reverts, the conformance debt remains open — amend ADR-034 with a supersession note per the standing principle (ADRs updated only when necessary or genuinely superseded, never casually).
+- **Silent-idle debug instrumentation (WP-E — optional).** Named in ADR-042 as an empirical escalation opportunity for dimension-choice divergence. Convert ADR-042's escalation trigger from observational to detectable. **Include WP-E if BUILD is already touching the validator path (near-zero marginal cost); defer otherwise.** If deferred, ADR-042's escalation path stays observational-only — not a blocker, but named here so the choice is visible.
 
-- **ADR immutability principle (standing).** ADRs are authoritative records of decisions. Amend them only when a later decision genuinely supersedes them (not when "what shipped was slightly different from what the text said"). When an ADR is superseded, mark it explicitly in the ADR file. This principle was set during the ARCHITECT phase of this cycle and applies going forward.
+**Open questions carried from DECIDE gate:**
 
-- **Spec YAML grammar versioning (deferred, but discipline is active now).** The YAML grammar inside `spec_yaml` is currently unversioned. Until versioning is introduced, **any change to the declarative spec grammar must be forward-compatible (additive only)** — no renaming fields, no removing primitives, no restructuring sections. Breaking changes would cause existing spec rows in the specs table to fail parsing, and under the current "log and continue" rehydration error policy, consumers would silently lose all vocabulary layers. When the first breaking grammar change is proposed, pause and add: (1) `spec_version` field at the top of each YAML, (2) a migration path for old rows, (3) a **fail-loud** policy for unknown versions (not logged-and-continue — unknown version is operator-visible error, it should shout). Not in scope for this cycle; the discipline is "additive only" until versioning is added.
+- **Empirical escalation signal for ADR-042.** Whether BUILD instruments silent-idle detection is a BUILD-phase choice (see WP-E above). Not a blocking architectural decision.
 
-- **In-process spec cache vs specs table authority.** When two processes hold the library against the same context simultaneously and one process calls `load_spec` to update its spec, the specs table gets the new row (source of truth) but the other process's in-memory pipeline still has the old lens registered. The in-process pipeline is a cache that doesn't auto-refresh. Spec updates made by one process become visible to another only on that process's next restart. **Library mode assumes one-process-at-a-time workflows, so this is latent — not a bug today.** Becomes relevant when concurrent embedded consumers or Plexus-as-server arrive. Solutions at that point will involve some form of change notification (file-watcher on the SQLite file, version counter polled on each ingest, explicit `refresh()` API). Not in scope for this cycle; flagged so it doesn't get discovered under pressure.
+- **Phenomenology-of-discovery hypothesis (ADR-041) — split treatment.** ADR-041's convention rests on two arguments doing different work (per the ADR's own "Which argument carries which part" paragraph): composition-shape reasoning (analytical, load-bearing for the extensibility preference) and phenomenology-of-discovery (hypothesis-level, load-bearing for the per-job split). The validation opportunity splits with them:
+  - **Composition-shape — partially validatable in-cycle IF WP-D crosses tautology.** Once the worked example produces emergent `similar_to` edges over untagged prose, BUILD can run both grammar conventions (`lens:trellis:thematic_connection` vs `lens:trellis:latent_pair`) over the same emergent content and observe whether the analytical walk-through's claims about interpretive-location, query-shape, and composition-shape-on-extension actually obtain. This is an in-cycle observation, not a blocker — if the analytical claims hold up empirically, the convention's extensibility-preference argument is grounded; if they don't, ADR-041's composition-shape reasoning needs revision. **Add to BUILD stewardship at WP-D close if the worked example crosses tautology; skip silently if it does not (no emergent content → no test possible).**
+  - **Phenomenology — remains future-cycle.** The "noticing yourself vs being told" experiential difference needs a non-builder stakeholder observing emergent content; partial-fidelity inhabitation (builder inhabiting their own design) recurs if the practitioner self-tests. No second PLAY session this cycle; phenomenology validation carries forward as the legitimate future-cycle concern.
+  - If BUILD's composition-shape observation surfaces surprises — claims holding more strongly than expected, or failing against real content — record in a reflection and route to the next cycle's opening.
 
-- **Cross-cutting concern at commit boundary** (carried over from query surface cycle). Enrichment event persistence was missed because `emit_inner()` and `emit()` are separate commit paths. This cycle adds another pair of commit paths (`load_spec` write path, `unload_spec` delete path, rehydration read path). Consider pushing persistence-per-emission logic into a central place to prevent recurrence. **Deferred — revisit after the MCP cycle ships.**
+- **ADR-038 reframing is contingent on WP-D's deliverables.** Cycle-status §Feed-Forward names this explicitly: "positive decision, not defect-by-omission" holds only if BUILD lands the README updates, worked-example spec, and onboarding material with substance. Weak or delayed deliverables reassert the defect-by-omission framing. **BUILD stewardship checkpoint at WP-D close:** re-read ADR-038's Consequences Negative against what shipped. If the documentation lever is thin, the ADR's core claim becomes false — the correct response is either strengthen WP-D or amend ADR-038 with a supersession note acknowledging the reframing did not land.
+
+- **Second PLAY session (optional).** A non-builder stakeholder inhabiting the Consumer Application Developer role after BUILD lands would materially strengthen the validation of ADR-038's reframing and ADR-042's documentation lever. **Not happening this cycle** (user is the sole tester at present; methodologically valuable but not realistic in current resourcing — cycle-status §Phase Status). Carried forward as a recommended strengthening action for a follow-up cycle.
+
+**Standing principles (carry forward from prior cycles):**
+
+- **ADR immutability principle.** ADRs are authoritative records of decisions. Amend them only when a later decision genuinely supersedes them, not when "what shipped was slightly different from what the text said." When an ADR is superseded, mark it explicitly in the ADR file. Set during the MCP cycle's ARCHITECT phase; applies going forward.
+
+- **Spec YAML grammar versioning (discipline is active now).** The YAML grammar inside `spec_yaml` is currently unversioned. Until versioning is introduced, any change to the declarative spec grammar must be forward-compatible (additive only) — no renaming fields, no removing primitives, no restructuring sections. Breaking changes would cause existing spec rows in the specs table to fail parsing. When the first breaking grammar change is proposed, pause and add: (1) `spec_version` field at top of YAML, (2) a migration path for old rows, (3) a **fail-loud** policy for unknown versions. Not in scope for this cycle; discipline is "additive only."
+
+- **In-process spec cache vs specs table authority.** When two processes hold the library against the same context and one calls `load_spec`, the other process's in-memory pipeline still has the old lens registered until it restarts. Library mode assumes one-process-at-a-time; latent until concurrent embedded consumers or server mode arrive. Not in scope this cycle.
+
+- **Cross-cutting concern at commit boundary** (carried over from query surface cycle). `load_spec`, `unload_spec`, and rehydration all represent commit paths where persistence-per-emission-style logic could be centralized. **Deferred — revisit after ADRs accumulate enough commit paths to justify the abstraction.**
 
 ---
 
