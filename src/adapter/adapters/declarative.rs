@@ -691,6 +691,14 @@ fn validate_spec(spec: &DeclarativeSpec) -> Result<(), AdapterError> {
     // than deferring the failure to `process()`.
     validate_spec_dimensions(&spec.emit)?;
 
+    // ADR-042 empirical escalation signal (WP-E): observational-only
+    // debug-level log when a spec's `create_node` uses a shipped-
+    // convention `node_type` but diverges from the shipped dimension.
+    // Not a warning, not an error — feeds a future cycle's decision
+    // about whether to promote this to option (i) (warn-on-divergence)
+    // based on observed frequency rather than observational chance.
+    log_shipped_convention_divergence(&spec.adapter_id, &spec.emit);
+
     let has_provenance = has_primitive_recursive(&spec.emit, |p| {
         matches!(p, Primitive::CreateProvenance(_))
     });
@@ -714,6 +722,58 @@ fn validate_spec(spec: &DeclarativeSpec) -> Result<(), AdapterError> {
     }
 
     Ok(())
+}
+
+/// Shipped-adapter node-type → dimension conventions (ADR-042 empirical
+/// escalation signal). Deliberately small and observational; not a
+/// canonical list (ADR-042 rejected canonical-table-as-code). When the
+/// log frequency from this function accumulates in practice, a future
+/// cycle can decide whether to promote to option (i) (warn-on-divergence)
+/// based on evidence.
+///
+/// Entries mirror the convention tables in ContentAdapter's and
+/// ExtractionCoordinator's module docs. Keep those docs in sync when
+/// adding entries here.
+const SHIPPED_CONVENTIONS: &[(&str, &str)] = &[
+    ("fragment", "structure"),
+    ("file", "structure"),
+    ("extraction-status", "structure"),
+    ("concept", "semantic"),
+];
+
+/// Walk all `create_node` primitives (including inside `for_each`) and
+/// emit a debug-level log entry for each one whose `node_type` matches
+/// a shipped-adapter convention but whose `dimension` diverges from
+/// the shipped choice. No warnings, no errors, no behavior change —
+/// purely observational per ADR-042 §Neutral "Empirical escalation
+/// signal — BUILD-phase instrumentation opportunity."
+fn log_shipped_convention_divergence(adapter_id: &str, primitives: &[Primitive]) {
+    for p in primitives {
+        match p {
+            Primitive::CreateNode(cn) => {
+                if let Some(&(_, expected)) = SHIPPED_CONVENTIONS
+                    .iter()
+                    .find(|(t, _)| *t == cn.node_type.as_str())
+                {
+                    if cn.dimension != expected {
+                        tracing::debug!(
+                            adapter_id = adapter_id,
+                            node_type = %cn.node_type,
+                            declared_dimension = %cn.dimension,
+                            shipped_convention = expected,
+                            "spec declares shipped-convention node_type with \
+                             divergent dimension — see docs/references/spec-author-guide.md \
+                             §Shipped-adapter conventions for guidance"
+                        );
+                    }
+                }
+            }
+            Primitive::ForEach(fe) => {
+                log_shipped_convention_divergence(adapter_id, &fe.emit);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Walk all `create_node` and `create_edge` primitives (including inside
@@ -1942,6 +2002,128 @@ emit:
         let adapter = DeclarativeAdapter::from_yaml(yaml)
             .expect("shipped convention must load even with colliding node_type");
         assert_eq!(adapter.id(), "consumer-spec");
+    }
+
+    // --- Scenario (ADR-042 §Neutral — BUILD-phase empirical escalation):
+    //     WP-E silent-idle debug instrumentation ---
+    //
+    // The logging path is observational, not behavioral — these tests
+    // verify the shape of the table and the recursive walk, not log
+    // content (tracing assertions require subscriber setup out of
+    // proportion with what's being tested).
+
+    #[test]
+    fn shipped_conventions_table_contains_expected_mappings() {
+        // Pins the convention table. If the shipped adapters add or change
+        // conventions, update this test and the corresponding module docs
+        // in content.rs / extraction.rs.
+        let entries: std::collections::HashMap<&str, &str> =
+            SHIPPED_CONVENTIONS.iter().copied().collect();
+        assert_eq!(entries.get("fragment"), Some(&"structure"));
+        assert_eq!(entries.get("file"), Some(&"structure"));
+        assert_eq!(entries.get("extraction-status"), Some(&"structure"));
+        assert_eq!(entries.get("concept"), Some(&"semantic"));
+    }
+
+    #[test]
+    fn divergence_check_descends_into_for_each() {
+        // A divergent create_node nested inside a for_each must be
+        // reachable by log_shipped_convention_divergence. If the walk
+        // regressed to shallow, this spec's inner `fragment: semantic`
+        // would be invisible and the empirical signal would silently
+        // stop firing.
+        let yaml = r#"
+adapter_id: nested-divergent
+input_kind: test.batch
+emit:
+  - for_each:
+      collection: input.items
+      variable: item
+      emit:
+        - create_node:
+            id: "frag:{input.item.id}"
+            type: fragment
+            dimension: semantic
+"#;
+        // Parsing + validation must succeed — divergence is observational,
+        // not blocking. The presence of a log line is the empirical
+        // signal; its absence is the failure mode this test guards.
+        let adapter = DeclarativeAdapter::from_yaml(yaml)
+            .expect("divergent spec must still load (ADR-042 rejects policing)");
+        assert_eq!(adapter.id(), "nested-divergent");
+
+        // Re-walk through the public-by-module function; reaching the
+        // divergent node proves the recursion is wired.
+        let mut divergent_count = 0usize;
+        count_divergences(&adapter.spec.emit, &mut divergent_count);
+        assert_eq!(divergent_count, 1,
+            "walk must reach the nested divergent create_node");
+    }
+
+    /// Test-only helper mirroring log_shipped_convention_divergence's
+    /// traversal shape, but counting instead of logging. Ensures the
+    /// production walk covers nested for_each.
+    fn count_divergences(primitives: &[Primitive], counter: &mut usize) {
+        for p in primitives {
+            match p {
+                Primitive::CreateNode(cn) => {
+                    if let Some(&(_, expected)) = SHIPPED_CONVENTIONS
+                        .iter()
+                        .find(|(t, _)| *t == cn.node_type.as_str())
+                    {
+                        if cn.dimension != expected {
+                            *counter += 1;
+                        }
+                    }
+                }
+                Primitive::ForEach(fe) => {
+                    count_divergences(&fe.emit, counter);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn novel_node_type_does_not_trigger_divergence() {
+        // A consumer using a novel node_type (no shipped convention) must
+        // not trigger the divergence signal, even if the dimension looks
+        // unusual. Option (i) was rejected precisely so novel domains
+        // face no friction.
+        let yaml = r#"
+adapter_id: novel-domain
+input_kind: test.input
+emit:
+  - create_node:
+      id: "g:{input.id}"
+      type: gesture_phrase
+      dimension: harmonic
+"#;
+        let adapter = DeclarativeAdapter::from_yaml(yaml).expect("novel domain must load");
+        let mut count = 0usize;
+        count_divergences(&adapter.spec.emit, &mut count);
+        assert_eq!(count, 0,
+            "novel node_type with no shipped convention must not register as divergent");
+    }
+
+    #[test]
+    fn matching_shipped_convention_does_not_trigger_divergence() {
+        // The positive case: a consumer matching the shipped convention
+        // exactly must not register as divergent either.
+        let yaml = r#"
+adapter_id: convention-match
+input_kind: test.input
+emit:
+  - create_node:
+      id: "frag:{input.id}"
+      type: fragment
+      dimension: structure
+"#;
+        let adapter = DeclarativeAdapter::from_yaml(yaml).expect("matching spec must load");
+        let mut count = 0usize;
+        count_divergences(&adapter.spec.emit, &mut count);
+        assert_eq!(count, 0,
+            "matching shipped convention must not register as divergent");
     }
 
     // --- Scenario (ADR-042 §Dimension Extensibility, scenario 7):

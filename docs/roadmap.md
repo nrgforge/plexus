@@ -92,7 +92,7 @@
 
 ---
 
-### WP-E (Optional): Silent-idle debug instrumentation (ADR-042 empirical escalation signal)
+### WP-E (Optional): Silent-idle debug instrumentation (ADR-042 empirical escalation signal) ✅ Complete (2026-04-24, pending commit)
 
 **Objective:** Convert ADR-042's escalation trigger from observational-only to detectable. ADR-042 rejected option (i) (warn-on-divergence for Plexus-known node types) in favor of documentation-only guidance, with the escalation path preserved. The escalation trigger as originally stated — "if repeated PLAY or user observation surfaces the failure mode" — depends on observational signal that may not arrive given Plexus's small user base and partial-fidelity PLAY inhabitation. Debug-level instrumentation of divergence events gives a future cycle evidence to mine.
 
@@ -237,8 +237,8 @@ These are decisions or open questions carried into BUILD from DECIDE's gate refl
 | WP-A | `created_at` property contract (ADR-039) — coordinated four-site `fix:` | `f82bd76` | Done |
 | WP-C | Developer-facing documentation drift (D-05 + D-07) | `4c028aa` | Done |
 | WP-B | Dimension extensibility — `validate_dimension_syntax` + `validate_spec` (ADR-042) | `2cc25ee` | Done |
-| WP-D | ADR-038 onboarding deliverables — README, worked example, spec-author guide | (pending) | Done |
-| WP-E | Silent-idle debug instrumentation (optional) | — | Pending/optional |
+| WP-D | ADR-038 onboarding deliverables — README, worked example, spec-author guide | `67ed2c7`+`58cda46`+`d880159` | Done |
+| WP-E | Silent-idle debug instrumentation (ADR-042 empirical escalation) | (pending) | Done |
 
 **WP-D summary (2026-04-23):**
 - Worked-example spec at `examples/specs/embedding-activation.yaml` (declarative adapter + llm-orc ensemble) with inline activation flow, dimension-coexistence commentary, and lens-grammar hooks.
