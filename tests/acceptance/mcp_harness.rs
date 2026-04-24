@@ -28,13 +28,25 @@ pub struct McpHarness {
 
 impl McpHarness {
     pub async fn spawn(db_path: &std::path::Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_plexus"))
-            .args(["mcp", "--db", db_path.to_str().expect("db path is UTF-8")])
+        Self::spawn_with_env(db_path, &[]).await
+    }
+
+    /// Spawn with additional environment variables set on the subprocess.
+    /// Used by tests that need to configure the embedded script agent
+    /// (e.g. SIMILARITY_MIN for the embedding-similarity ensemble).
+    pub async fn spawn_with_env(
+        db_path: &std::path::Path,
+        env: &[(&str, &str)],
+    ) -> Self {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_plexus"));
+        cmd.args(["mcp", "--db", db_path.to_str().expect("db path is UTF-8")])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn plexus mcp subprocess");
+            .stderr(Stdio::piped());
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let mut child = cmd.spawn().expect("spawn plexus mcp subprocess");
 
         let stdin = child.stdin.take().expect("stdin piped");
         let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));

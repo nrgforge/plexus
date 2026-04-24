@@ -1,0 +1,109 @@
+# Embedding-activation declarative adapter spec — ADR-038 worked example.
+#
+# Purpose:
+#   Activates embedding-based `similar_to` edge production in a default
+#   Homebrew/CLI Plexus build. ADR-038 establishes that the lean baseline
+#   ships without EmbeddingSimilarityEnrichment (no ONNX Runtime, no
+#   sqlite-vec, no in-process fastembed-rs). This spec is the sanctioned
+#   activation path: a consumer declares an external enrichment via an
+#   llm-orc ensemble (ADR-024, ADR-025) whose output re-enters the graph
+#   as `similar_to` edges, entering the core enrichment loop
+#   (Invariant 49).
+#
+# Prerequisites:
+#   1. llm-orc installed and on PATH.
+#   2. Ollama running locally with `nomic-embed-text` pulled
+#      (`ollama pull nomic-embed-text`). llm-orc's provider
+#      configuration can be adjusted — this spec names only the
+#      ensemble, not a provider.
+#   3. Plexus binary (default features — no `embeddings` feature
+#      required).
+#
+# Activation:
+#
+#   # Load this spec into a context (via MCP tool or PlexusApi.load_spec):
+#   plexus load-spec --context demo --file examples/specs/embedding-activation.yaml
+#
+#   # Ingest a batch of documents. `docs` is an array of {id, text};
+#   # the ensemble embeds each, computes pairwise cosine similarity,
+#   # filters above SIMILARITY_MIN (default 0.72 in the script), and
+#   # the spec's emit creates nodes + `similar_to` edges.
+#   plexus ingest --context demo --kind embedding-activation.batch --data '...'
+#
+# The `test-corpora/collective-intelligence/` and
+# `test-corpora/public-domain-stories/` directories ship curated prose
+# fixtures for reproducible end-to-end validation; see the CURATION.md
+# in each for selection rationale.
+#
+# Quality bar (ADR-038 Consequences Negative):
+#   The example must demonstrate `similar_to` edges emerging over content
+#   the author did not pre-encode with overlapping tags. The fixtures
+#   ship untagged prose; crossing the tautology threshold is verified
+#   against the fixture corpora, and the similarity pattern is readable
+#   (within-corpus clustering exceeds cross-corpus similarity).
+
+adapter_id: embedding-activation
+input_kind: embedding-activation.batch
+
+# External enrichment hook: the named llm-orc ensemble runs once per
+# ingest call. Its response is available to emit primitives via the
+# `{ensemble.<path>}` template accessor (see ADR-025 §two-layer
+# architecture). The ensemble itself is defined at
+# .llm-orc/ensembles/embedding-similarity.yaml.
+ensemble: embedding-similarity
+
+input_schema:
+  - name: docs
+    type: array
+    required: true
+
+emit:
+  # Step 1 — materialize a node for each input document.
+  #
+  # Dimension note (ADR-042 §Dimension Extensibility Guidance):
+  #   `dimension: semantic` is the shipped-adapter convention for nodes
+  #   that will be subject to semantic enrichments. This deliberately
+  #   coexists with the content adapter's `fragment` in `structure`:
+  #   the ADR-042 scenario "Two adapters declaring different dimensions
+  #   for the same node_type coexist" is directly exercised here.
+  - for_each:
+      collection: input.docs
+      variable: doc
+      emit:
+        - create_node:
+            id: "{input.doc.id}"
+            type: fragment
+            dimension: semantic
+            properties:
+              text: "{input.doc.text}"
+
+  # Step 2 — materialize `similar_to` edges for each pair the ensemble
+  # returned above the similarity threshold. The script produces
+  # symmetric pairs (A→B and B→A) so the relationship is queryable
+  # from either endpoint.
+  #
+  # The edge's `weight` is 1.0 by default. Per-pair similarity is
+  # written into the `similarity` field of each pair but isn't
+  # currently reflected in the edge's numeric weight — the spec
+  # grammar's `weight:` field is a compile-time literal, not a
+  # template expression. A future grammar extension may allow
+  # `weight: "{input.pair.similarity}"`; for now the similarity score
+  # lives inside the pair object passed through by the ensemble.
+  #
+  # Downstream: once `similar_to` edges enter the graph,
+  # `DiscoveryGapEnrichment` (ADR-040) can detect node pairs that have
+  # `similar_to` but no other structural edge — which is the signal
+  # the default Homebrew build would otherwise remain idle on
+  # (ADR-038 §§"Default Homebrew build ingests content without an
+  # embedding provider" / "Consumer activates embedding via adapter
+  # spec in the default build").
+  - for_each:
+      collection: ensemble.pairs
+      variable: pair
+      emit:
+        - create_edge:
+            source: "{input.pair.source}"
+            target: "{input.pair.target}"
+            relationship: similar_to
+            source_dimension: semantic
+            target_dimension: semantic

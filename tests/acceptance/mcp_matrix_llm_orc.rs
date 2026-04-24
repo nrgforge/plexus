@@ -3,8 +3,10 @@
 //! Skipped by default. Set `PLEXUS_INTEGRATION=1` to run. Requires:
 //! - Ollama running locally
 //! - `llm-orc` on PATH
-//! - `mistral:7b` model available to Ollama
-//! - `analyst-mistral` profile in `.llm-orc/profiles/`
+//! - `mistral:7b` model available to Ollama (T6–T11)
+//! - `analyst-mistral` profile in `.llm-orc/profiles/` (T6–T11)
+//! - `nomic-embed-text` model available to Ollama (T12)
+//! - `embedding-similarity` ensemble in `.llm-orc/ensembles/` (T12)
 //!
 //! Coverage:
 //! - T6: Built-in semantic extraction via MCP — `extract-file` input
@@ -24,6 +26,11 @@
 //!   on edges from foreground adapter emissions + their enrichment loop.
 //!   Architectural probe — the answer shapes how consumers can use lenses
 //!   with llm-orc-backed extraction.
+//! - T12: ADR-038 worked-example end-to-end — loads the
+//!   `examples/specs/embedding-activation.yaml` spec, ingests a small
+//!   multi-corpus batch, and verifies `similar_to` edges emerge.
+//!   Requires `nomic-embed-text` pulled in Ollama (not `mistral:7b` —
+//!   embeddings are a separate model family).
 //!
 //! LLM output varies, so assertions are property-based (a concept
 //! appeared / an edge appeared / the lens translated at least once),
@@ -361,6 +368,122 @@ emit:
          or (b) an unexpected path now triggers the lens over background \
          emissions (investigate).",
         concepts, lens_count
+    );
+
+    h.shutdown().await;
+}
+
+// ── T12: ADR-038 worked-example end-to-end (gated) ─────────────────────
+
+/// Given the worked-example spec at examples/specs/embedding-activation.yaml,
+/// when a small multi-corpus batch is ingested through the spec's input_kind,
+/// then the llm-orc ensemble computes embeddings via Ollama's nomic-embed-text,
+/// the script returns cosine-similarity pairs above threshold, and the spec's
+/// emit primitives create `fragment` nodes plus `similar_to` edges between
+/// semantically related pairs.
+///
+/// This pins the worked example referenced from ADR-038's Consequences
+/// Negative (quality bar: "`similar_to` edges emerging over content the
+/// author did not pre-encode with overlapping tags"). The assertion is
+/// property-based — the test verifies the mechanism fires and produces
+/// the expected structure, not a specific similarity value (embedding
+/// output varies slightly across model versions).
+#[tokio::test]
+async fn t12_embedding_activation_worked_example() {
+    if !integration_enabled() {
+        return;
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("t12.db");
+    // Short fixture texts produce lower absolute similarity values than
+    // longer fixtures (~50-word inline texts vs ~200-word abstracts);
+    // lower the script's threshold so the within-corpus pattern crosses.
+    // Production consumers use longer prose and the default 0.72 threshold.
+    let mut h = McpHarness::spawn_with_env(&db, &[("SIMILARITY_MIN", "0.6")]).await;
+    h.initialize().await;
+    assert!(!is_error(&h.call_tool("set_context", json!({"name": "t12"})).await));
+
+    // Load the spec from disk — this is the same file shipped as the
+    // worked example. If its grammar regresses, this test catches it.
+    let spec_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/specs/embedding-activation.yaml");
+    let spec_yaml = std::fs::read_to_string(&spec_path)
+        .expect("worked-example spec must exist at examples/specs/embedding-activation.yaml");
+    assert!(
+        !is_error(&h.call_tool("load_spec", json!({"spec_yaml": spec_yaml})).await),
+        "load_spec on the worked example failed — spec grammar or validation regressed"
+    );
+
+    // Minimal multi-corpus batch: two topically-related abstracts from
+    // the collective-intelligence corpus and two narrative passages.
+    // Four docs = 6 pairs; enough for the pattern to appear, fast enough
+    // to not stall CI when the flag is on.
+    let batch = json!({
+        "docs": [
+            {
+                "id": "doc:ants",
+                "text": "Ant colonies allocate tasks through a decentralized process. \
+                         A minority of workers remain idle at any moment; this reserve \
+                         is drawn on when foragers encounter unusual loads. Idleness \
+                         therefore functions as responsive capacity, not inefficiency.",
+            },
+            {
+                "id": "doc:bees",
+                "text": "Honeybee swarms choose a new nest site through quorum sensing. \
+                         Scouts advertise candidate sites by waggle dance; recruitment \
+                         builds until one site crosses a threshold of committed scouts. \
+                         The colony then commits collectively and moves.",
+            },
+            {
+                "id": "doc:story-alpha",
+                "text": "The old clock struck midnight in the narrow apartment. \
+                         She stood at the window, fingers curled around a teacup, \
+                         wondering whether tomorrow would bring the letter she had \
+                         been waiting for through the long autumn.",
+            },
+            {
+                "id": "doc:story-beta",
+                "text": "He descended the creaking staircase at dawn, listening for \
+                         any movement from the rooms above. The house had been silent \
+                         for three days. He carried only a small bag and the letter \
+                         his mother had left for him.",
+            },
+        ],
+    });
+
+    let resp = h.call_tool_with_timeout(
+        "ingest",
+        json!({
+            "data": batch,
+            "input_kind": "embedding-activation.batch",
+        }),
+        LLM_CALL_TIMEOUT,
+    ).await;
+    assert!(!is_error(&resp), "embedding-activation ingest failed: {}", resp);
+
+    // Four fragment nodes must have been created.
+    let frag_resp = h.call_tool("find_nodes", json!({"node_type": "fragment"})).await;
+    assert!(
+        node_count(&frag_resp) >= 4,
+        "expected ≥4 fragment nodes (one per input doc), got {}",
+        node_count(&frag_resp)
+    );
+
+    // At least one `similar_to` edge must have been emitted. Use
+    // relationship_prefix filter to count nodes incident to any
+    // similar_to edge.
+    let sim_resp = h.call_tool(
+        "find_nodes",
+        json!({"relationship_prefix": "similar_to"}),
+    ).await;
+    let incident_nodes = node_count(&sim_resp);
+    assert!(
+        incident_nodes >= 2,
+        "expected ≥1 similar_to edge (≥2 incident nodes) — got {}. \
+         If 0, the nomic-embed-text model may not be pulled, or the ensemble \
+         is not returning pairs above SIMILARITY_MIN for these short fixtures.",
+        incident_nodes
     );
 
     h.shutdown().await;

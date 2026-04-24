@@ -1,0 +1,28 @@
+# Embedding-based pairwise similarity ensemble (ADR-038 worked example).
+#
+# Single script agent that computes embeddings via Ollama's /api/embeddings
+# and returns pairs above a cosine-similarity threshold. No LLM agents —
+# this is a mechanical-only ensemble wrapping a Python script.
+#
+# The agent is named "synthesizer" so DeclarativeAdapter's response
+# extraction (src/adapter/adapters/declarative.rs) picks it up on the
+# primary path rather than the last-agent fallback.
+#
+# Runs via: llm-orc invoke embedding-similarity --input '<json>'
+#
+# Invoked through the declarative adapter spec at
+# examples/specs/embedding-activation.yaml, which declares this ensemble
+# in its `ensemble:` field and consumes the returned `pairs` via
+# `for_each`.
+
+name: embedding-similarity
+description: >
+  Compute pairwise cosine similarity over a batch of documents using
+  Ollama-backed embeddings. Returns pairs whose similarity exceeds the
+  SIMILARITY_MIN threshold (default 0.72).
+
+max_concurrency: 1
+
+agents:
+  - name: synthesizer
+    script: scripts/embedding/embedding-similarity.py
