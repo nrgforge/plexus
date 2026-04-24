@@ -1,15 +1,15 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-04-22 (BUILD WP-A + WP-B + WP-C complete — Default-install experience and lens design principles cycle)
-**Derived from:** System Design v1.3, ADRs 038–042, conformance scan 038-042 (7 debt items, all Bug), DECIDE gate reflection (2026-04-21)
+**Last updated:** 2026-04-23 (BUILD WP-A/B/C/D all complete — Default-install experience and lens design principles cycle)
+**Derived from:** System Design v1.3, ADRs 038–042, conformance scan 038-042 (7 debt items, all Bug), DECIDE gate reflection (2026-04-21), WP-D stewardship (2026-04-23)
 
 ## Current State
 
-**Active cycle:** Default-install experience and lens design principles — BUILD pending (ARCHITECT complete 2026-04-22). Five ADRs landed in DECIDE (all Accepted as of gate close 2026-04-21): ADR-038 (release-binary feature profile), ADR-039 (`created_at` property contract), ADR-040 (DiscoveryGap trigger sources), ADR-041 (lens grammar conventions — structural predicates for discovery-oriented jobs, convention not requirement), ADR-042 (dimension extensibility guidance — documentation + syntactic validation). Light-touch ARCHITECT pass updated system-design.md to v1.3 (deployment-class framing for embedding backends + DiscoveryGap trigger-source contract + graceful-idle baseline fitness criterion).
+**Active cycle:** Default-install experience and lens design principles — BUILD substantively complete. Five ADRs landed in DECIDE (all Accepted as of gate close 2026-04-21): ADR-038 (release-binary feature profile), ADR-039 (`created_at` property contract), ADR-040 (DiscoveryGap trigger sources), ADR-041 (lens grammar conventions — structural predicates for discovery-oriented jobs, convention not requirement), ADR-042 (dimension extensibility guidance — documentation + syntactic validation). Light-touch ARCHITECT pass updated system-design.md to v1.3. WP-A/B/C/D all landed; only WP-E (optional silent-idle debug instrumentation) remains.
 
 **No new modules, no new dependency edges.** All BUILD work is code-level (property-contract producer/consumer alignment; resolve_dimension refactor; docstring drift cleanup) plus onboarding documentation (README lean-baseline framing, worked-example spec, spec-author dimension-choice guidance, lens grammar convention).
 
-**Central commitment:** the ADR-038 reframing ("positive decision, not defect-by-omission") is contingent on WP-D's documentation deliverables landing with substance. If those deliverables are weak or delayed, the defect-by-omission label reasserts — see Open Decision Points below.
+**Central commitment — validated:** the ADR-038 reframing ("positive decision, not defect-by-omission") holds. WP-D delivered substantive documentation: worked-example spec with empirical tautology-threshold crossing, honest README (lean baseline + capability-loss transparency + two activation paths), spec-author guide covering dimension/lens-grammar/minimum-useful-spec, and shipped-adapter convention notes inline with adapter source.
 
 ## Work Packages
 
@@ -69,7 +69,7 @@
 
 ---
 
-### WP-D: ADR-038 onboarding deliverables — README, worked-example spec, spec-author documentation
+### WP-D: ADR-038 onboarding deliverables — README, worked-example spec, spec-author documentation ✅ Complete (2026-04-23, pending commit)
 
 **Objective:** Land the documentation deliverables that make ADR-038's "positive decision, not defect-by-omission" framing substantive rather than nominal. This is the cycle's largest documentation WP — it spans README, a new worked-example spec file, onboarding material, and the spec-author documentation that ADR-042 requires. Without this WP, the ADR-038 reframing reasserts as defect-by-omission at the onboarding layer.
 
@@ -227,6 +227,41 @@ These are decisions or open questions carried into BUILD from DECIDE's gate refl
 ---
 
 ## Completed Work Log
+
+### Cycle: Default-Install Experience and Lens Design Principles (2026-04-17 — 2026-04-23, BUILD substantively complete)
+
+**Derived from:** System Design v1.3, ADRs 038–042, conformance scan 038-042 (7 debt items), BUILD stewardship (WP-A–WP-D).
+
+| WP | Title | Commits | Status |
+|----|-------|---------|--------|
+| WP-A | `created_at` property contract (ADR-039) — coordinated four-site `fix:` | `f82bd76` | Done |
+| WP-C | Developer-facing documentation drift (D-05 + D-07) | `4c028aa` | Done |
+| WP-B | Dimension extensibility — `validate_dimension_syntax` + `validate_spec` (ADR-042) | `2cc25ee` | Done |
+| WP-D | ADR-038 onboarding deliverables — README, worked example, spec-author guide | (pending) | Done |
+| WP-E | Silent-idle debug instrumentation (optional) | — | Pending/optional |
+
+**WP-D summary (2026-04-23):**
+- Worked-example spec at `examples/specs/embedding-activation.yaml` (declarative adapter + llm-orc ensemble) with inline activation flow, dimension-coexistence commentary, and lens-grammar hooks.
+- llm-orc ensemble config + Python script at `.llm-orc/ensembles/embedding-similarity.yaml` + `.llm-orc/scripts/embedding/embedding-similarity.py` — ~140-line stdlib-only script, no LLM agents, nomic-embed-text over Ollama HTTP embeddings API, truncation on context-exceed + graceful degradation.
+- Two reproducible fixture corpora: `test-corpora/collective-intelligence/` (8 arXiv abstracts spanning biology, human crowd, robotics, algorithmic, theoretical subfields) and `test-corpora/public-domain-stories/` (6 pre-1928 short stories by distinct authors with diverse motifs). Transparent CURATION README per corpus with selection criterion, observed embedding structure, and falsifiability invitation (swap fixture / swap model / add third corpus).
+- README rewrite: names lean baseline (2 active by default; DiscoveryGap idle; EmbeddingSimilarity absent), capability-loss transparency, two activation paths (in-process via `features = ["embeddings"]`; consumer-declared via adapter spec + llm-orc), library + MCP usage, 17-tool MCP inventory. Tone direct, not apologetic, not overclaiming.
+- Spec-author guide at `docs/references/spec-author-guide.md`: when-to-use decision, spec anatomy, dimension-choice (with shipped-adapter conventions table), lens grammar conventions (composition-shape load-bearing + phenomenology held as hypothesis + per-job framing), ensemble integration, minimum-useful-spec pattern cross-referenced to interaction-specs.
+- Inline module docs: `CreateNodePrimitive` field-level docs naming `dimension` as load-bearing with pointer to spec-author-guide; `ContentAdapter` + `ExtractionCoordinator` module docs carry shipped-adapter convention tables inline for grep-discoverability.
+- T12 acceptance test in `tests/acceptance/mcp_matrix_llm_orc.rs` — gated behind `PLEXUS_INTEGRATION=1`, loads worked example via MCP `load_spec`, ingests a four-doc batch through real llm-orc subprocess + Ollama, verifies `similar_to` edges emerge. 2.27s run; pins worked-example regression.
+- `McpHarness::spawn_with_env` helper in `tests/acceptance/mcp_harness.rs` — non-breaking addition allowing per-test env-var configuration of spawned subprocess (used by T12 to calibrate `SIMILARITY_MIN` for short inline fixtures).
+
+**Tautology threshold crossed empirically** — within-corpus similarity lands 0.72-0.90 (abstract pair `swarms-phase-transitions ↔ idle-ants-role` at 0.855; story pair `desirees-baby ↔ gift-of-the-magi` at 0.897). Cross-corpus similarity all falls below 0.72 — clean separation between narrative-prose register and scientific-abstract register. Legible within-abstract sub-clusters: biological (`honeybee ↔ idle-ants` 0.816), human-crowd (`mosh-pit ↔ autonomous-vehicles` 0.805), theoretical (`swarms-phase-transitions` is the hub). Within-story cluster is uniform (0.83-0.90) — an observation of `nomic-embed-text`'s register-over-content bias on narrative prose rather than a demo failure.
+
+**Final test state:** 444 lib + 86 acceptance + 1 doc = 531 default-run; PLEXUS_INTEGRATION=1 adds T6/T7/T8/T11/T12 real-Ollama gated tests.
+
+**Deferred / not done this cycle:**
+- WP-E silent-idle debug instrumentation — optional; near-zero marginal cost if ever added next to `validate_dimension_syntax`.
+- Composition-shape two-lens walkthrough over actual emergent graph — precondition (tautology crossed) was met, but the concrete comparison of `lens:trellis:thematic_connection` vs `lens:trellis:latent_pair` over WP-D's emergent `similar_to` edges was not done. The analytical comparison exists in ADR-041 against an illustrative case; repeating it against real emergent content would produce concrete evidence for composition-shape claims. Deferred to either WP-E scope or a follow-up cycle.
+- Second PLAY by a non-builder stakeholder — methodologically valuable but declined for this cycle (user is sole tester).
+
+**Standing principle established this cycle:** ADR-038's "lean baseline is a positive decision" reframing is contingent on sustained documentation quality. Future architectural changes that degrade the worked example, the spec-author guide, or the honest-to-demo README framing would re-surface the defect-by-omission framing; treat documentation-layer decay as first-class structural debt.
+
+---
 
 ### Cycle: MCP Consumer Interaction Surface (2026-04-01 — 2026-04-16) ✅
 
