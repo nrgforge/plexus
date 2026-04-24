@@ -10,6 +10,24 @@
 //!
 //! All node IDs are deterministic. Re-ingesting the same fragment produces the same
 //! nodes, triggering upsert rather than creating duplicates.
+//!
+//! ## Shipped-adapter dimension conventions
+//!
+//! Spec authors coexisting with ContentAdapter should consult these
+//! conventions when choosing dimensions for `create_node` primitives
+//! whose `type` collides with ContentAdapter's node types (ADR-042):
+//!
+//! | Node type | Dimension | Reason |
+//! |-----------|-----------|--------|
+//! | `fragment` | `structure` | A fragment is the structural unit of source content — a unit of extraction, not a semantic concept. |
+//! | `concept`  | `semantic`  | Concepts are semantic content — what the fragment is *about*. |
+//!
+//! A spec declaring `node_type: fragment, dimension: semantic`
+//! deliberately departs from this convention — valid, but the spec's
+//! fragments will live in a different dimension than ContentAdapter's
+//! fragments and will be invisible to each other's dimension-filtered
+//! queries and enrichments. See
+//! `docs/references/spec-author-guide.md` §"Shipped-adapter conventions".
 
 use crate::graph::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};

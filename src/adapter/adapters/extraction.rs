@@ -15,6 +15,21 @@
 //! Semantic extraction (slow, background, LLM):
 //!   Abstract concept extraction via llm-orc (ADR-021).
 //!   Receives vocabulary + sections from structural analysis (ADR-031).
+//!
+//! ## Shipped-adapter dimension conventions
+//!
+//! Spec authors coexisting with ExtractionCoordinator should consult
+//! these conventions when choosing dimensions for `create_node`
+//! primitives whose `type` collides with the coordinator's node types
+//! (ADR-042):
+//!
+//! | Node type | Dimension | Reason |
+//! |-----------|-----------|--------|
+//! | `file` | `structure` | A file is the structural container of extractable content. |
+//! | `extraction-status` | `structure` | Status tracking for the file's extraction lifecycle. |
+//! | `concept` (from YAML frontmatter) | `semantic` | Extracted concepts match ContentAdapter's concept convention. |
+//!
+//! See `docs/references/spec-author-guide.md` §"Shipped-adapter conventions".
 
 use crate::adapter::EngineSink;
 use crate::adapter::FrameworkContext;

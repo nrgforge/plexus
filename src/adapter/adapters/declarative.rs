@@ -284,6 +284,38 @@ pub enum IdStrategy {
 }
 
 /// Primitive: create a node in the graph.
+///
+/// YAML shape:
+/// ```yaml
+/// create_node:
+///   id: "concept:{input.name | lowercase}"
+///   type: concept
+///   dimension: semantic
+///   properties:
+///     label: "{input.display_name}"
+/// ```
+///
+/// Fields:
+/// - `id` — node identifier. Either a template string (`"prefix:{input.x}"`)
+///   or a content-hash strategy (`{ hash: [field_a, field_b] }`).
+/// - `type` — semantic node type. Convention is domain-owned
+///   (e.g. `fragment`, `concept`, `theme`, `gesture_phrase`). Plexus
+///   does not enforce a canonical list.
+/// - `dimension` — **load-bearing.** The named graph facet this node
+///   lives in. Enrichments filter by dimension (Invariant 50); queries
+///   can scope by dimension via `find_nodes`. Syntactically validated
+///   at `load_spec` (non-empty, no whitespace, no reserved chars like
+///   `:` and `\0`) but semantically permissive: any syntactically
+///   well-formed string is accepted (ADR-042). See
+///   `docs/references/spec-author-guide.md` §"Choosing a dimension"
+///   for guidance on when to match shipped-adapter conventions
+///   (ContentAdapter uses `structure` for fragments; SemanticAdapter
+///   uses `semantic` for concepts) and when to depart.
+/// - `properties` — optional string→string map. Values are template-
+///   interpolated. Property writes must match any enrichment's
+///   property reads (e.g. `TemporalProximityEnrichment` reads
+///   `created_at` per ADR-039); missing reads produce silent-idle
+///   enrichments, not errors.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateNodePrimitive {
     pub id: IdStrategy,
