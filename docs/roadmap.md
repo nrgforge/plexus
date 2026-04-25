@@ -1,11 +1,11 @@
 # Roadmap: Plexus
 
-**Last updated:** 2026-04-23 (BUILD WP-A/B/C/D all complete — Default-install experience and lens design principles cycle)
-**Derived from:** System Design v1.3, ADRs 038–042, conformance scan 038-042 (7 debt items, all Bug), DECIDE gate reflection (2026-04-21), WP-D stewardship (2026-04-23)
+**Last updated:** 2026-04-24 (BUILD WP-A/B/C/D/E all complete — Default-install experience and lens design principles cycle)
+**Derived from:** System Design v1.3, ADRs 038–042, conformance scan 038-042 (7 debt items, all Bug), DECIDE gate reflection (2026-04-21), WP-D stewardship (2026-04-23), WP-E close (2026-04-24)
 
 ## Current State
 
-**Active cycle:** Default-install experience and lens design principles — BUILD substantively complete. Five ADRs landed in DECIDE (all Accepted as of gate close 2026-04-21): ADR-038 (release-binary feature profile), ADR-039 (`created_at` property contract), ADR-040 (DiscoveryGap trigger sources), ADR-041 (lens grammar conventions — structural predicates for discovery-oriented jobs, convention not requirement), ADR-042 (dimension extensibility guidance — documentation + syntactic validation). Light-touch ARCHITECT pass updated system-design.md to v1.3. WP-A/B/C/D all landed; only WP-E (optional silent-idle debug instrumentation) remains.
+**Active cycle:** Default-install experience and lens design principles — BUILD complete (2026-04-24). Five ADRs landed in DECIDE (all Accepted as of gate close 2026-04-21): ADR-038 (release-binary feature profile), ADR-039 (`created_at` property contract), ADR-040 (DiscoveryGap trigger sources), ADR-041 (lens grammar conventions — structural predicates for discovery-oriented jobs, convention not requirement), ADR-042 (dimension extensibility guidance — documentation + syntactic validation). Light-touch ARCHITECT pass updated system-design.md to v1.3. WP-A/B/C/D/E all landed. PLAY pending; user has elected to do PLAY as practitioner (partial-fidelity inhabitation; non-builder PLAY remains a future-cycle strengthening action).
 
 **No new modules, no new dependency edges.** All BUILD work is code-level (property-contract producer/consumer alignment; resolve_dimension refactor; docstring drift cleanup) plus onboarding documentation (README lean-baseline framing, worked-example spec, spec-author dimension-choice guidance, lens grammar convention).
 
@@ -238,7 +238,7 @@ These are decisions or open questions carried into BUILD from DECIDE's gate refl
 | WP-C | Developer-facing documentation drift (D-05 + D-07) | `4c028aa` | Done |
 | WP-B | Dimension extensibility — `validate_dimension_syntax` + `validate_spec` (ADR-042) | `2cc25ee` | Done |
 | WP-D | ADR-038 onboarding deliverables — README, worked example, spec-author guide | `67ed2c7`+`58cda46`+`d880159` | Done |
-| WP-E | Silent-idle debug instrumentation (ADR-042 empirical escalation) | (pending) | Done |
+| WP-E | Silent-idle debug instrumentation (ADR-042 empirical escalation) | `56781fb` | Done |
 
 **WP-D summary (2026-04-23):**
 - Worked-example spec at `examples/specs/embedding-activation.yaml` (declarative adapter + llm-orc ensemble) with inline activation flow, dimension-coexistence commentary, and lens-grammar hooks.

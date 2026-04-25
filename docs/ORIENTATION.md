@@ -42,7 +42,7 @@ A content-agnostic knowledge graph engine that derives structure from unstructur
 
 ## Current State
 
-**Default-install experience and lens design principles cycle — BUILD substantively complete (2026-04-23).** DISCOVER (update), MODEL (light-touch), DECIDE, ARCHITECT, and BUILD WP-A/B/C/D all complete. Only WP-E (optional silent-idle debug instrumentation) remains. Five ADRs landed in DECIDE (all Accepted 2026-04-21):
+**Default-install experience and lens design principles cycle — BUILD complete (2026-04-24); PLAY pending.** DISCOVER (update), MODEL (light-touch), DECIDE, ARCHITECT, and BUILD all complete. WP-A/B/C/D/E landed. User has elected practitioner-as-builder PLAY as the next phase. Five ADRs landed in DECIDE (all Accepted 2026-04-21):
 
 - **ADR-038** — Release-binary feature profile. `default = []` stays; the Homebrew/CLI binary ships lean. No Rust code path to llm-orc for embedding. Consumers activate embedding via a declarative adapter spec declaring an llm-orc ensemble; library consumers under `features = ["embeddings"]` retain the in-process `FastEmbedEmbedder` path. **The "positive decision, not defect-by-omission" reframing holds** — WP-D's documentation deliverables validated it empirically.
 - **ADR-039** — `created_at` property contract. Authoritative on `node.properties["created_at"]` as ISO-8601 UTC string. Producer/consumer alignment shipped in WP-A (`f82bd76`).
@@ -58,6 +58,6 @@ A content-agnostic knowledge graph engine that derives structure from unstructur
 
 **Prior cycle carried forward:** MCP consumer interaction surface cycle (2026-04-01 — 2026-04-17) is in the Completed Work Log. 17 MCP tools, runtime spec loading, persisted-spec rehydration at library construction time. Confirmed architectural follow-ups remain: background-phase + lens gap (T11 — semantic extraction output is not lens-translated; consumers wanting lens coverage over LLM-extracted structure use declarative `ensemble:` path), outbound event asymmetry on SemanticAdapter + GraphAnalysisAdapter, customizable outbound events in declarative specs, async event delivery for long-running ingest, MCP ingest response event shape.
 
-**Totals:** 43 ADRs (000–042). 531 tests default-run (444 lib + 86 acceptance + 1 doc); PLEXUS_INTEGRATION=1 adds T6/T7/T8/T11/T12 real-Ollama gated tests.
+**Totals:** 43 ADRs (000–042). 535 tests default-run (448 lib + 86 acceptance + 1 doc); PLEXUS_INTEGRATION=1 adds T6/T7/T8/T11/T12 real-Ollama gated tests.
 
-**To resume work:** invoke `/rdd-build` for optional WP-E (silent-idle debug instrumentation — near-zero marginal cost if slotted next to `validate_dimension_syntax`), `/rdd-synthesize` to extract publishable insight from the artifact trail (the lean-baseline-as-honest-demo framing + composition-shape-vs-phenomenology argument-grounds split has novelty potential), or `/rdd-graduate` to fold cycle knowledge into native docs and archive the cycle-status.
+**To resume work:** invoke `/rdd-play` to inhabit the Consumer Application Developer role against the now-complete cycle (interrogates onboarding-path traversability, dimension-choice navigation hop, tautology-felt-vs-measured, lens grammar per-job usability — phenomenology hypothesis remains parked for a future non-builder PLAY); `/rdd-synthesize` to extract publishable insight (lean-baseline-as-honest-demo + composition-shape-vs-phenomenology argument-grounds split); or `/rdd-graduate` to fold cycle knowledge into native docs and archive the cycle-status.
