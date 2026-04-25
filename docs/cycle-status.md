@@ -120,23 +120,45 @@ This isn't a Grounding Reframe action per se, but a note for cycle sequencing �
 
 ## Context for Resumption
 
-**Current state (post-WP-D, 2026-04-23):** BUILD substantively complete. WP-A/B/C/D all landed; WP-E (optional silent-idle debug instrumentation) is the only remaining work package. A commit for WP-D is pending.
+**Current state (post-BUILD, 2026-04-24):** BUILD complete. WP-A/B/C/D/E all landed and committed (`f82bd76`, `2cc25ee`, `4c028aa`, `67ed2c7`+`58cda46`+`d880159`, `56781fb`). 535 tests default-run. PLAY is the user-elected next phase.
 
-**For the next session (WP-E optional, or cycle graduation):**
+### For the next session (PLAY — practitioner-as-builder, crawl → walk → run)
 
-1. Invoke `/rdd:rdd` or `/rdd:build` — orchestrator detects cycle state from this document.
+The earlier PLAY (2026-04-16, archived in `cycle-status-mcp-consumer-interaction.md`) found four substantive gaps in the default-install experience: three silently-inactive enrichments (Finding 1), dimension mismatch between adapters (Finding 3), untagged prose producing isolated nodes (Finding 4), and the tautology-threshold concept (Finding 5). This PLAY tests **whether this cycle's fixes close those gaps under inhabited use**, advancing through the three-step shape the prior PLAY laid out but did not complete:
 
-2. **WP-E decision point:** silent-idle debug instrumentation for dimension-choice divergence (ADR-042 empirical escalation signal). Near-zero marginal cost if added next to `validate_spec_dimensions` in `src/adapter/adapters/declarative.rs`. Scope: detect `create_node` with shipped-convention `node_type` (e.g. `fragment`) + divergent `dimension` (e.g. `semantic` instead of `structure`), log at debug level, no behavior change. One test.
+| Step | Prior PLAY status | What this PLAY does |
+|------|------------------|----------------------|
+| **Crawl** | Done in two passes — first ceremonial, second diagnostic (the productive one) | Verify the now-fixed lean baseline behaves as ADR-038 documents: CoOccurrence + TemporalProximity active by default; DiscoveryGap idle (no `similar_to` producer); EmbeddingSimilarity absent in default build; untagged content produces fragment nodes that DO carry `created_at` (ADR-039 fix). The README's "what does not deliver" section is the script — confirm each item from a fresh consumer's perspective. |
+| **Walk** | Not done — flagged as the deliberate-tautology-crossing step | Activate embedding via the worked-example spec (`examples/specs/embedding-activation.yaml`). Load via `load_spec`. Ingest one of the test corpora (`test-corpora/collective-intelligence/` or `test-corpora/public-domain-stories/`). Observe `similar_to` edges emerge over content the practitioner did not pre-tag. Test the dimension-choice navigation hop (ADR-042 landing criterion) by reading the spec-author guide cold and asking whether a real spec author would have reached the dimension guidance. |
+| **Run** | Not done | Compose multiple consumers over the same context. Author two lens specs over the worked example's emergent `similar_to` edges — one named (`lens:X:thematic_connection`) and one structural (`lens:Y:latent_pair`) — and walk through query-shape differences. This is the deferred composition-shape observation from ADR-041's split treatment, against real emergent content rather than the illustrative case in the ADR. Optionally extend with both fixture corpora ingested side-by-side to observe cross-pollination. |
 
-3. **Composition-shape observation (deferred as partial):** ADR-041 split treatment named an opportunity to run both lens grammar conventions over WP-D's emergent content. WP-D's worked example crossed tautology (within-corpus similarity 0.72+, cross-corpus below, legible sub-clusters), so the precondition is met. What was not done in WP-D close: authoring two alternative lens specs (`lens:trellis:thematic_connection` named vs `lens:trellis:latent_pair` structural) and walking through query-shape differences over the actual emergent graph. The analytical comparison is already captured in ADR-041 against an illustrative case; repeating it against real emergent content would produce concrete evidence for composition-shape claims (query-expression reach differs; extension-shape differs), but the phenomenology claim still requires a non-builder stakeholder and is parked for a future cycle's PLAY. **Recommended:** either slot the composition-shape walkthrough into WP-E, defer to a follow-up cycle, or close without it and record the deferral explicitly in the synthesis phase if the cycle proceeds to SYNTHESIZE.
+Phenomenology hypothesis (named vs structural lens experience) **stays parked** for a future non-builder PLAY. This PLAY is partial-fidelity inhabitation; the practitioner knows the curation, the design, the answers to their own probes. The composition-shape question is the most interrogatable target here.
 
-4. **No invariant changes landed in WP-A/B/C/D.** Domain model is unchanged; no backward propagation required.
+### Practical prerequisites — confirm before invoking `/rdd:play`
 
-5. **Graduation consideration:** once WP-E ships (or is declined), the cycle's tangible BUILD work is complete. Options: (a) close the cycle via `/rdd-graduate` — fold durable knowledge into native docs, archive this cycle-status to `docs/archive/`; (b) run SYNTHESIZE to extract publishable insight from the artifact trail (the lean-baseline-as-honest-demo framing plus the composition-shape-vs-phenomenology argument-grounds split has novelty potential); (c) pause and return when a concrete use arises.
+1. **Binary-version decision (required first move).** `.mcp.json` currently points at `plexus 0.2.0` from Homebrew (`/opt/homebrew/bin/plexus`). This cycle's WP-A/B/C/D/E commits are on local `main` and **not** in the v0.2.0 release. Two paths:
+   - **Path A — Cut v0.3.0 first.** Bump version, `dist generate`, tag, push, wait for the Homebrew tap, `brew upgrade plexus`. The PLAY then runs against shipping behavior — release fidelity. ~10-15 min including tap propagation.
+   - **Path B — Point `.mcp.json` at the local build.** `cargo build --release` and update `.mcp.json`'s `command` to `./target/release/plexus`. The PLAY runs against the newest code without release ceremony. Faster; lower fidelity to what consumers actually install.
+   - Path A matches the prior PLAY's release-fidelity stance and is the more honest test. Path B is acceptable if release isn't ready.
+2. **Ollama running with `nomic-embed-text` pulled.** ✅ Already pulled (verified 2026-04-24).
+3. **`llm-orc` on PATH.** ✅ At `/opt/homebrew/bin/llm-orc`.
+4. **Stale `./session/play.db` from prior PLAY** — recommend deleting before crawl (`rm session/play.db*`) so the new crawl runs against a clean context. Old DB had hand-tagged content from prior PLAY's tautology-threshold demonstration; conflating it with the new run would muddy the reading.
+5. **Fresh Claude Code restart** after the binary path is settled, so the MCP subprocess picks up the chosen plexus binary.
 
-**Optional second PLAY later in this cycle:** inhabited by a non-builder stakeholder to validate WP-D lands. Carried from DISCOVER; methodological strength, not a blocker. Declined for this cycle (user is the sole tester at present). Adding it later would materially strengthen ADR-038's reframing validation; logged as a recommended strengthening action.
+### Anchoring inputs the PLAY skill should pull
 
-**MCP session state:** `./session/play.db` from the prior PLAY session remains untouched. Not relevant to remaining WP-E work; will re-become relevant if a second PLAY session runs later.
+- `docs/essays/reflections/field-notes.md` — prior PLAY's findings; this PLAY appends to the same file unless the practitioner prefers a new section per session.
+- `docs/interaction-specs.md` §"Consumer Application Developer" — the playable surface; four new tasks added in DECIDE specifically for this cycle's deliverables (default-build baseline, minimum-useful spec, dimension choice, lens grammar).
+- `examples/specs/embedding-activation.yaml` — the worked-example spec; load this via the `load_spec` MCP tool to walk-step.
+- `test-corpora/collective-intelligence/` and `test-corpora/public-domain-stories/` — the fixture prose; CURATION READMEs in each subdirectory document the selection rationale and falsifiability invitation.
+- `docs/references/spec-author-guide.md` — the cold-read target for testing the ADR-042 navigation-hop landing criterion.
+- `README.md` — the cold-read target for testing ADR-038's onboarding-path traversability.
+
+### What the PLAY should produce
+
+Field notes appended to `docs/essays/reflections/field-notes.md`, categorized by feedback destination (per `/rdd:play`'s convention): findings routed to DISCOVER (value tensions, assumption inversions), DECIDE (candidate ADRs), MODEL (concept refinements), interaction-specs (workflow gaps), or carried forward as future-cycle hypotheses. The crawl→walk→run shape gives natural section headers.
+
+If the run-step composition-shape observation produces concrete evidence about ADR-041's per-job convention, that's high-value output — record it under "Run step" with explicit pointers to the analytical claims in ADR-041 §Analytical comparison so the next cycle can compare illustrative vs empirical.
 
 ---
 
