@@ -1,7 +1,7 @@
 [package]
 name = "plexus"
 description = "Network-aware knowledge graph engine with self-reinforcing edges"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/nrgforge/plexus"
