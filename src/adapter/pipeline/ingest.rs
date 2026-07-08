@@ -32,7 +32,7 @@ use std::sync::{Arc, RwLock};
 pub struct IngestPipeline {
     engine: Arc<PlexusEngine>,
     adapters: RwLock<Vec<Arc<dyn Adapter>>>,
-    enrichments: RwLock<Arc<EnrichmentRegistry>>,
+    enrichments: Arc<RwLock<Arc<EnrichmentRegistry>>>,
     /// Optional llm-orc client. When present, attached to declarative
     /// adapters (with `ensemble:` field) at `load_spec` time and shared
     /// with the built-in SemanticAdapter wired by `with_llm_client` on
@@ -52,7 +52,7 @@ impl IngestPipeline {
         Self {
             engine,
             adapters: RwLock::new(Vec::new()),
-            enrichments: RwLock::new(Arc::new(EnrichmentRegistry::empty())),
+            enrichments: Arc::new(RwLock::new(Arc::new(EnrichmentRegistry::empty()))),
             llm_client: None,
             synced_specs: RwLock::new(std::collections::HashSet::new()),
         }
@@ -193,6 +193,15 @@ impl IngestPipeline {
     /// Get the enrichment registry (for running enrichment loop outside ingest).
     pub fn enrichment_registry(&self) -> Arc<EnrichmentRegistry> {
         self.enrichments.read().expect("enrichments lock poisoned").clone()
+    }
+
+    /// Shared handle to the live enrichment registry cell. Handed to the
+    /// ExtractionCoordinator at build time (issue #5) so background
+    /// extraction phases run the enrichment loop with whatever
+    /// enrichments — including runtime-loaded and spec-synced lenses —
+    /// the pipeline holds at that moment.
+    pub(crate) fn enrichment_cell(&self) -> Arc<RwLock<Arc<EnrichmentRegistry>>> {
+        self.enrichments.clone()
     }
 
     /// List the input kinds handled by registered adapters.

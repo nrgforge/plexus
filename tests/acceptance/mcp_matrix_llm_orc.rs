@@ -359,14 +359,12 @@ emit:
     ).await;
     let lens_count = node_count(&lens_resp);
 
-    assert_eq!(
-        lens_count, 0,
-        "CURRENT BEHAVIOR PINNED: lens should NOT fire on background-phase \
-         emissions — concepts from semantic extraction: {}, lens coverage: {}. \
-         If this assertion fails, either (a) the architectural gap has been \
-         closed (great — flip to `lens_count > 0` and update cycle-status) \
-         or (b) an unexpected path now triggers the lens over background \
-         emissions (investigate).",
+    assert!(
+        lens_count > 0,
+        "lenses MUST fire on background-phase emissions (gap closed \
+         2026-07-07, issue #5: background phases run the enrichment loop \
+         with the pipeline's live registry) — concepts from semantic \
+         extraction: {}, lens coverage: {}",
         concepts, lens_count
     );
 

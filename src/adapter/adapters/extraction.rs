@@ -85,6 +85,12 @@ pub struct ExtractionCoordinator {
     semantic_semaphore: Arc<tokio::sync::Semaphore>,
     /// Background task handles (for testing / coordination)
     background_tasks: Arc<TokioMutex<Vec<tokio::task::JoinHandle<Result<(), AdapterError>>>>>,
+    /// Shared handle to the owning pipeline's enrichment registry
+    /// (issue #5): background phases run the enrichment loop over their
+    /// emissions with whatever enrichments — including consumer lenses —
+    /// the pipeline currently holds. None (direct construction, tests,
+    /// mutex path) preserves the old no-loop behavior.
+    enrichment_cell: Option<Arc<std::sync::RwLock<Arc<crate::adapter::enrichment::EnrichmentRegistry>>>>,
 }
 
 impl ExtractionCoordinator {
@@ -97,6 +103,7 @@ impl ExtractionCoordinator {
             analysis_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
             semantic_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
             background_tasks: Arc::new(TokioMutex::new(Vec::new())),
+            enrichment_cell: None,
         }
     }
 
@@ -158,6 +165,16 @@ impl ExtractionCoordinator {
     }
 
     /// Wait for all background tasks to complete. Used in tests.
+    /// Attach the pipeline's enrichment registry cell (issue #5).
+    /// Background phases will run the enrichment loop over their
+    /// emissions using whatever the cell holds at execution time.
+    pub(crate) fn set_enrichment_cell(
+        &mut self,
+        cell: Arc<std::sync::RwLock<Arc<crate::adapter::enrichment::EnrichmentRegistry>>>,
+    ) {
+        self.enrichment_cell = Some(cell);
+    }
+
     pub async fn wait_for_background(&self) -> Vec<Result<(), AdapterError>> {
         let mut tasks = self.background_tasks.lock().await;
         let mut results = Vec::new();
@@ -433,6 +450,41 @@ fn update_extraction_status_via_engine(
     });
 }
 
+/// Run the enrichment loop over background-phase emissions (issue #5).
+///
+/// Uses the pipeline's live registry cell so runtime-loaded and
+/// spec-synced lenses fire on background output. No-op on the mutex
+/// (test) path, with an empty registry, or with no events. Failures are
+/// logged, not propagated — enrichment is additive; the phase's primary
+/// emissions are already committed.
+fn run_background_enrichment(
+    engine: &Option<Arc<crate::graph::PlexusEngine>>,
+    context_id: &Option<crate::graph::ContextId>,
+    cell: &Option<Arc<std::sync::RwLock<Arc<crate::adapter::enrichment::EnrichmentRegistry>>>>,
+    events: &[crate::graph::events::GraphEvent],
+    phase: &str,
+) {
+    let (Some(engine), Some(ctx_id), Some(cell)) = (engine, context_id, cell) else {
+        return;
+    };
+    if events.is_empty() {
+        return;
+    }
+    let registry = cell.read().expect("enrichment cell lock poisoned").clone();
+    if registry.enrichments().is_empty() {
+        return;
+    }
+    match crate::adapter::enrichment::run_enrichment_loop(engine, ctx_id, &registry, events) {
+        Ok(result) => {
+            tracing::debug!(phase, rounds = result.rounds, quiesced = result.quiesced,
+                "background enrichment loop complete");
+        }
+        Err(e) => {
+            tracing::warn!(phase, error = %e, "background enrichment loop failed");
+        }
+    }
+}
+
 /// Create an EngineSink from either the engine path or the mutex path.
 ///
 /// Used by structural analysis and semantic extraction to avoid duplicating sink construction.
@@ -519,6 +571,7 @@ impl Adapter for ExtractionCoordinator {
                 let file_path_bg = file_path.clone();
                 let context_id_bg = context_id.clone();
                 let semantic_opt = self.semantic_adapter.clone();
+                let bg_cell = self.enrichment_cell.clone();
 
                 let handle = tokio::spawn(async move {
                     // Structural analysis: acquire analysis semaphore
@@ -539,6 +592,7 @@ impl Adapter for ExtractionCoordinator {
                             });
 
                         let mut merged = StructuralOutput::default();
+                        let mut structural_events: Vec<crate::graph::events::GraphEvent> = Vec::new();
                         for module in &modules {
                             let output = module.analyze(&file_path_bg, &content).await;
                             merged = merge_structural_outputs(merged, output);
@@ -559,8 +613,17 @@ impl Adapter for ExtractionCoordinator {
                             };
                             if !emission.is_empty() {
                                 module_sink.emit(emission).await?;
+                                structural_events.extend(module_sink.drain_events());
                             }
                         }
+
+                        // issue #5: background emissions pass through the
+                        // enrichment loop with the pipeline's live registry
+                        // (consumer lenses included).
+                        run_background_enrichment(
+                            &bg_engine, &bg_context_id, &bg_cell,
+                            &structural_events, "structural_analysis",
+                        );
 
                         merged
                     } else {
@@ -602,6 +665,14 @@ impl Adapter for ExtractionCoordinator {
                         );
 
                         let semantic_result = semantic.process(&semantic_input_wrapped, &semantic_sink).await;
+
+                        // issue #5: same enrichment pass over semantic-phase
+                        // emissions (this is what closes the T11 lens gap).
+                        let semantic_events = semantic_sink.drain_events();
+                        run_background_enrichment(
+                            &bg_engine, &bg_context_id, &bg_cell,
+                            &semantic_events, "semantic_extraction",
+                        );
 
                         let semantic_status_str = match &semantic_result {
                             Ok(()) => "complete".to_string(),
@@ -1520,6 +1591,105 @@ mod tests {
     // ================================================================
     // Engine persistence scenarios
     // ================================================================
+
+    #[tokio::test]
+    async fn background_emissions_run_enrichment_loop_with_lenses() {
+        // issue #5 / T11: background-phase emissions must pass through the
+        // enrichment loop, so consumer lenses translate them.
+        use crate::adapter::adapters::declarative::{LensSpec, TranslationRule};
+        use crate::adapter::enrichments::lens::LensEnrichment;
+        use crate::adapter::enrichment::EnrichmentRegistry;
+        use crate::graph::{ContextId, PlexusEngine};
+        use crate::storage::{OpenStore, SqliteStore};
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        let context_id = ContextId::from_string("test");
+        let mut ctx = Context::new("test");
+        ctx.id = context_id.clone();
+        engine.upsert_context(ctx).unwrap();
+
+        let mut coordinator = ExtractionCoordinator::new().with_engine(engine.clone());
+        let module: Arc<dyn StructuralModule> = Arc::new(PassthroughModule {
+            id: "passthrough", mime: "text/",
+        });
+        coordinator.register_structural_module(module);
+
+        // Semantic phase emits a fragment tagged with a concept
+        struct TaggingSemantic;
+        #[async_trait]
+        impl Adapter for TaggingSemantic {
+            fn id(&self) -> &str { "extract-semantic" }
+            fn input_kind(&self) -> &str { "extract-semantic" }
+            async fn process(&self, _: &AdapterInput, sink: &dyn AdapterSink) -> Result<(), AdapterError> {
+                let mut frag = Node::new_in_dimension("fragment", ContentType::Document, dimension::SEMANTIC);
+                frag.id = NodeId::from_string("frag:bg");
+                let mut concept = Node::new_in_dimension("concept", ContentType::Concept, dimension::SEMANTIC);
+                concept.id = NodeId::from_string("concept:bg");
+                let edge = Edge::new_in_dimension(
+                    NodeId::from_string("frag:bg"),
+                    NodeId::from_string("concept:bg"),
+                    "tagged_with",
+                    dimension::SEMANTIC,
+                );
+                sink.emit(
+                    Emission::new()
+                        .with_node(AnnotatedNode::new(frag))
+                        .with_node(AnnotatedNode::new(concept))
+                        .with_edge(AnnotatedEdge::new(edge)),
+                ).await?;
+                Ok(())
+            }
+        }
+        coordinator.register_semantic_extraction(Arc::new(TaggingSemantic));
+
+        // A consumer lens over tagged_with, held in the pipeline's registry cell
+        let lens = Arc::new(LensEnrichment::new(LensSpec {
+            consumer: "probe".into(),
+            translations: vec![TranslationRule {
+                from: vec!["tagged_with".into()],
+                to: "labeled".into(),
+                min_weight: None,
+                min_corroboration: None,
+                involving: None,
+            }],
+        }));
+        let cell = Arc::new(std::sync::RwLock::new(Arc::new(EnrichmentRegistry::new(vec![
+            lens as Arc<dyn crate::adapter::enrichment::Enrichment>,
+        ]))));
+        coordinator.set_enrichment_cell(cell);
+
+        let primary_sink = EngineSink::for_engine(engine.clone(), context_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: "extract-coordinator".to_string(),
+                context_id: "test".to_string(),
+                input_summary: None,
+            });
+        let dir = create_temp_file("bg-lens.md", "# Background lens test\n\nProse.");
+        let file_path = dir.path().join("bg-lens.md");
+        let input = AdapterInput::new(
+            "extract-file",
+            ExtractFileInput { file_path: file_path.to_str().unwrap().to_string() },
+            "test",
+        );
+
+        coordinator.process(&input, &primary_sink).await.unwrap();
+        let results = coordinator.wait_for_background().await;
+        assert!(results.iter().all(|r| r.is_ok()));
+
+        let ctx = engine.get_context(&context_id).unwrap();
+        let translated = ctx
+            .edges
+            .iter()
+            .filter(|e| e.relationship == "lens:probe:labeled")
+            .count();
+        assert!(
+            translated >= 1,
+            "background emissions must pass through the enrichment loop — \
+             lens should have translated tagged_with, relationships present: {:?}",
+            ctx.edges.iter().map(|e| e.relationship.as_str()).collect::<std::collections::HashSet<_>>()
+        );
+    }
 
     #[tokio::test]
     async fn structural_emissions_persist_through_engine() {

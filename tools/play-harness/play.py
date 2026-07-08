@@ -567,11 +567,10 @@ def scenario_extract_background(binary, db_path):
     ExtractionCoordinator → SemanticAdapter → extract-semantic ensemble
     (SpaCy + 8 LLM agents, multi-run union per Invariant 45).
 
-    Also pins the T11 architectural gap: a lens loaded BEFORE ingest,
-    with a from-list covering extract-semantic's entire relationship
-    vocabulary, translates nothing — lenses do not fire on
-    background-phase emissions. That check goes red when the gap closes;
-    flip it to a positive assertion then.
+    Also asserts the T11 behavior: a lens loaded before ingest, covering
+    extract-semantic's relationship vocabulary, translates background-
+    extracted edges (gap closed 2026-07-07, issue #5 — background phases
+    run the enrichment loop with the pipeline's live registry).
     """
     report = Report("extract-bg")
     if not ollama_preflight(report, model="mistral"):
@@ -629,9 +628,9 @@ def scenario_extract_background(binary, db_path):
 
         lens_count = sum(v for k, v in counts.items() if k.startswith("lens:bgprobe"))
         report.check(
-            "T11 gap pin: lens does NOT fire on background emissions (0 expected)",
-            lens_count == 0,
-            f"{lens_count}" + ("" if lens_count == 0 else " — gap seems CLOSED; flip this assertion"),
+            "lens fires on background emissions (T11 gap closed, issue #5)",
+            lens_count > 0,
+            lens_count,
         )
     finally:
         client.close()

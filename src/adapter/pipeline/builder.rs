@@ -190,7 +190,10 @@ impl PipelineBuilder {
     /// Consume the builder and return the configured `IngestPipeline`.
     pub fn build(mut self) -> IngestPipeline {
         // Register ExtractionCoordinator with its structural modules
-        if let Some(coordinator) = self.coordinator.take() {
+        if let Some(mut coordinator) = self.coordinator.take() {
+            // issue #5: background extraction phases run the enrichment
+            // loop with the pipeline's live registry (lenses included).
+            coordinator.set_enrichment_cell(self.pipeline.enrichment_cell());
             self.pipeline.register_adapter(Arc::new(coordinator));
         }
         // ProvenanceAdapter is the integration anchor — its enrichments
