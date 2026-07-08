@@ -94,7 +94,9 @@ enum ContextAction {
     },
 }
 
-/// Get the default database path (~/.local/share/plexus/plexus.db)
+/// Get the default database path: platform data dir + plexus/plexus.db
+/// (macOS: ~/Library/Application Support/plexus/plexus.db;
+///  Linux: ~/.local/share/plexus/plexus.db)
 fn default_db_path() -> PathBuf {
     let data_dir = dirs::data_dir()
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".local/share"));

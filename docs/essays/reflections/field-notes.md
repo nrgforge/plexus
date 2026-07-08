@@ -274,3 +274,23 @@ This is a real shape of the decision, not a flaw in the guide. But the guide cou
 
 **Feeds back to:** spec-author guide (a paragraph in the dimension section noting that the choice is essentially a future-query-routing commitment, with default-when-uncertain guidance).
 
+
+---
+
+## Addendum: review-sourced findings (2026-07-07)
+
+**Source:** Code/docs review during session resumption, not inhabited PLAY. Recorded here so DECIDE receives them through the same channel as inhabited findings, weighted accordingly.
+
+### The CLI predates all three RDD cycles and its surface was never decided
+
+`src/bin/plexus.rs` was last modified 2026-03-14 — before the query-surface, MCP-consumer-interaction, and default-install cycles. It exposes `mcp`, `analyze`, and `context` only. Three drift points:
+
+1. **Phantom commands in the worked example (fixed 2026-07-07):** `examples/specs/embedding-activation.yaml` documented activation via `plexus load-spec` and `plexus ingest` — commands that have never existed. A consumer copy-pasting the ADR-038 onboarding path hit `unrecognized subcommand` at step one. Comment block rewritten to MCP-tool phrasing.
+2. **`plexus analyze` defaults to a dead ensemble:** its default `--ensemble graph-analysis` exists only in `.llm-orc/ensembles/archive/`. Default invocation fails for a fresh consumer. The command wraps `GraphAnalysisAdapter` (which still emits no outbound events) and nothing in three cycles touched it. Left as-is pending a decision.
+3. **DB-path comment drift (fixed 2026-07-07):** `default_db_path()`'s comment claimed `~/.local/share/plexus/plexus.db`; `dirs::data_dir()` on macOS resolves to `~/Library/Application Support`. This is the root cause of the orphan-DB observation from the 2026-04-29 session.
+
+**Feeds back to:** DECIDE — candidate ADR: **CLI surface scope**. The CLI's role (thin ops shell vs. spec/ingest-capable consumer surface vs. paring `analyze`) has never been through a cycle; ADR-036 made MCP the consumer surface but the CLI was not swept against that decision. Batch with the cache-invalidation candidate from the 2026-04-29 session.
+
+### Lens-example drift fix applied (2026-07-07)
+
+The 2026-04-29 finding on spec-author-guide lens-example drift is addressed: silent-idle section now covers lens from-lists with a relationship→producer→precondition table; the anatomy example includes `temporal_proximity`. ADR-041 left untouched (ADRs are immutable; the guide is the living document).

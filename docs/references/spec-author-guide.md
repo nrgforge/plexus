@@ -38,7 +38,7 @@ ensemble: my-ensemble-name    # Optional — invoke an llm-orc ensemble per inge
 lens:                         # Optional — domain-vocabulary translation (ADR-033)
   consumer: my-app
   translations:
-    - from: [may_be_related]
+    - from: [may_be_related, temporal_proximity]
       to: latent_pair
 enrichments:                  # Optional — parameterize core enrichments (ADR-024)
   - type: CoOccurrence
@@ -135,6 +135,23 @@ Diagnose by inspecting the graph for expected edges; when absent, verify
 property writes match enrichment reads. Plexus does not surface this
 silent-idle state as an error — it is indistinguishable at the
 enrichment-loop level from "no pairs above threshold."
+
+**The same failure mode exists at the lens layer.** A lens translation
+whose `from` list names relationships that nothing in your deployment
+produces will register, fire, and translate zero edges — the spec
+validates and loads, queries by `lens:` prefix return nothing, and no
+error surfaces. Align each `from` list with what actually gets emitted:
+
+| Relationship | Producer | Active when |
+|--------------|----------|-------------|
+| `temporal_proximity` | TemporalProximityEnrichment | Default build; nodes carry `created_at` (shipped adapters write it per ADR-039) |
+| `may_be_related` | CoOccurrenceEnrichment | Default build; requires `tagged_with` edges (tagged content) |
+| `similar_to` | EmbeddingSimilarityEnrichment, or an external ensemble | `features = ["embeddings"]` build, or embedding activation via spec (see worked example) |
+| `discovery_gap` | DiscoveryGapEnrichment | Requires a `similar_to` producer — idle in the lean baseline |
+
+In the lean Homebrew baseline, `temporal_proximity` is the only
+relationship produced over untagged content. A lens that should show
+visible output there must include it in a `from` list.
 
 ## Lens grammar conventions
 

@@ -19,16 +19,19 @@
 #   3. Plexus binary (default features — no `embeddings` feature
 #      required).
 #
-# Activation:
+# Activation (via MCP tools — the CLI has no spec or ingest commands;
+# MCP is the consumer surface per ADR-036):
 #
-#   # Load this spec into a context (via MCP tool or PlexusApi.load_spec):
-#   plexus load-spec --context demo --file examples/specs/embedding-activation.yaml
+#   1. `set_context` — choose or create the target context.
+#   2. `load_spec` — pass this file's YAML content.
+#   3. `ingest` — kind "embedding-activation.batch". `docs` is an array
+#      of {id, text}; the ensemble embeds each, computes pairwise
+#      cosine similarity, filters above SIMILARITY_MIN (default 0.72
+#      in the script), and the spec's emit creates nodes +
+#      `similar_to` edges.
 #
-#   # Ingest a batch of documents. `docs` is an array of {id, text};
-#   # the ensemble embeds each, computes pairwise cosine similarity,
-#   # filters above SIMILARITY_MIN (default 0.72 in the script), and
-#   # the spec's emit creates nodes + `similar_to` edges.
-#   plexus ingest --context demo --kind embedding-activation.batch --data '...'
+# Programmatic equivalent: PlexusApi.load_spec(context, yaml), then
+# PlexusApi.ingest(context, "embedding-activation.batch", data).
 #
 # The `test-corpora/collective-intelligence/` and
 # `test-corpora/public-domain-stories/` directories ship curated prose
