@@ -202,6 +202,20 @@ def main():
 
     # llm-orc wraps input as {"input": ...}, standalone uses {"input_data": ...}
     text = payload.get("input", "") or payload.get("input_data", "")
+
+    # SemanticAdapter sends a structured JSON envelope (file_path,
+    # content, sections, vocabulary, existing_concepts). Extract the
+    # prose from its "content" field — running NER on the raw envelope
+    # produces JSON-syntax garbage concepts (plexus issue #3). Raw
+    # non-JSON text still works for standalone use.
+    if isinstance(text, str) and text.lstrip().startswith("{"):
+        try:
+            envelope = json.loads(text)
+            if isinstance(envelope, dict):
+                text = envelope.get("content", "") or ""
+        except json.JSONDecodeError:
+            pass  # not an envelope after all — treat as prose
+
     if not text.strip():
         print(json.dumps({
             "success": True,

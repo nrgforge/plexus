@@ -22,6 +22,11 @@ use std::sync::Arc;
 
 pub use super::structural::SectionBoundary;
 
+/// Cap on document content included in the ensemble payload. Local
+/// model context windows (mistral at num_ctx 8192) truncate anyway;
+/// the cap keeps the payload bounded and the truncation explicit.
+pub(crate) const MAX_CONTENT_CHARS: usize = 24_000;
+
 /// Input for the semantic adapter.
 ///
 /// Extends the basic file path with optional section boundaries and vocabulary
@@ -163,6 +168,37 @@ impl SemanticAdapter {
         let mut payload = serde_json::json!({
             "file_path": input.file_path,
         });
+
+        // The document text itself — what the extraction agents actually
+        // extract from (issue #3: without it, agents received only
+        // metadata and NER'd the envelope). Unreadable file: omit and
+        // continue — the phase degrades to metadata-only rather than
+        // failing (consistent with Invariant 47's graceful-degradation
+        // stance).
+        match std::fs::read_to_string(&input.file_path) {
+            Ok(text) => {
+                let content: String = if text.chars().count() > MAX_CONTENT_CHARS {
+                    tracing::warn!(
+                        file_path = %input.file_path,
+                        chars = text.chars().count(),
+                        cap = MAX_CONTENT_CHARS,
+                        "semantic extraction: content truncated to cap"
+                    );
+                    text.chars().take(MAX_CONTENT_CHARS).collect()
+                } else {
+                    text
+                };
+                payload["content"] = serde_json::Value::String(content);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    file_path = %input.file_path,
+                    error = %e,
+                    "semantic extraction: could not read file content; \
+                     proceeding with metadata-only payload"
+                );
+            }
+        }
 
         // Include section boundaries from structural analysis
         if !input.sections.is_empty() {
@@ -894,6 +930,64 @@ mod tests {
     }
 
     // --- Scenario: Long document chunking via structural analysis boundaries (ADR-021) ---
+
+    // --- Scenario: The document's text reaches the ensemble (issue #3) ---
+    // Without a content field, the extraction agents receive only
+    // metadata (path, sections, vocabulary) and NER the envelope itself.
+
+    #[test]
+    fn build_input_includes_document_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.md");
+        std::fs::write(&file, "Wild yeast ferments the dough slowly.").unwrap();
+
+        let client = Arc::new(MockClient::unavailable());
+        let adapter = SemanticAdapter::new(client, "semantic-extraction");
+        let input = SemanticInput::for_file(file.to_str().unwrap());
+
+        let payload = adapter.build_input(&input, None);
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+
+        assert_eq!(
+            parsed["content"], "Wild yeast ferments the dough slowly.",
+            "the document text must be in the payload — agents extract from \
+             text, not from metadata"
+        );
+    }
+
+    #[test]
+    fn build_input_truncates_oversized_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("big.md");
+        std::fs::write(&file, "x".repeat(100_000)).unwrap();
+
+        let client = Arc::new(MockClient::unavailable());
+        let adapter = SemanticAdapter::new(client, "semantic-extraction");
+        let input = SemanticInput::for_file(file.to_str().unwrap());
+
+        let payload = adapter.build_input(&input, None);
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let content = parsed["content"].as_str().unwrap();
+        assert!(
+            content.len() <= MAX_CONTENT_CHARS,
+            "content must be capped at MAX_CONTENT_CHARS, got {}",
+            content.len()
+        );
+    }
+
+    #[test]
+    fn build_input_omits_content_when_file_unreadable() {
+        let client = Arc::new(MockClient::unavailable());
+        let adapter = SemanticAdapter::new(client, "semantic-extraction");
+        let input = SemanticInput::for_file("/nonexistent/path.md");
+
+        let payload = adapter.build_input(&input, None);
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert!(
+            parsed.get("content").is_none(),
+            "unreadable file: omit content, don't fail the phase"
+        );
+    }
 
     #[test]
     fn build_input_includes_section_boundaries() {
