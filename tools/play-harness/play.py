@@ -353,6 +353,43 @@ def scenario_run(binary, db_path):
             f"thematic_connection={t_nodes} latent_pair={s_nodes}",
         )
         report.check("both vocabularies reach the same node population", t_nodes == s_nodes, f"{t_nodes} vs {s_nodes}")
+
+        # issue #4: per-rule min_corroboration cuts through saturation.
+        # temporal_proximity is full-bipartite under batch ingest, so an
+        # unthresholded merged from-list translates EVERY pair (182); the
+        # curator's threshold of 2 keeps only pairs also evidenced by
+        # similar_to.
+        curator_spec = """\
+adapter_id: lens-curator
+input_kind: lens-curator.noop
+input_schema:
+  - name: text
+    type: string
+    required: true
+emit:
+  - create_node:
+      id: "noop:curator"
+      type: fragment
+      dimension: structure
+      properties:
+        text: "{input.text}"
+lens:
+  consumer: curator
+  translations:
+    - from: [similar_to, temporal_proximity]
+      to: corroborated_pair
+      min_corroboration: 2
+"""
+        loaded = client.call("load_spec", {"spec_yaml": curator_spec})
+        report.observe("load_spec(lens-curator, min_corroboration=2) sweep", loaded)
+        counts = db_edge_counts(db_path, ctx_id)
+        curator_edges = counts.get("lens:curator:corroborated_pair", 0)
+        similar_edges = counts.get("similar_to", 0)
+        report.check(
+            "min_corroboration=2 emits exactly the doubly-evidenced pairs (== similar_to count)",
+            curator_edges == similar_edges and curator_edges > 0,
+            f"curator={curator_edges} similar_to={similar_edges} (unthresholded lenses={sum(trellis_edges.values())})",
+        )
     finally:
         client.close()
     return report.emit()

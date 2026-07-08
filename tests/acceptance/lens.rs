@@ -51,6 +51,7 @@ async fn lens_creates_translated_edges_from_matching_source_relationships() {
             from: vec!["may_be_related".into()],
             to: "thematic_connection".into(),
             min_weight: None,
+            min_corroboration: None,
             involving: None,
         }],
     };
@@ -137,6 +138,7 @@ async fn many_to_one_translation_produces_per_source_contribution_slots() {
             from: vec!["may_be_related".into(), "similar_to".into()],
             to: "thematic_connection".into(),
             min_weight: None,
+            min_corroboration: None,
             involving: None,
         }],
     };
@@ -214,6 +216,7 @@ async fn lens_respects_min_weight_threshold() {
             from: vec!["may_be_related".into()],
             to: "thematic_connection".into(),
             min_weight: Some(0.3),
+            min_corroboration: None,
             involving: None,
         }],
     };
@@ -284,6 +287,7 @@ async fn lens_is_idempotent_across_enrichment_rounds() {
             from: vec!["may_be_related".into()],
             to: "thematic_connection".into(),
             min_weight: None,
+            min_corroboration: None,
             involving: None,
         }],
     };
@@ -343,6 +347,7 @@ async fn untranslated_edges_remain_accessible() {
             from: vec!["may_be_related".into()],
             to: "thematic_connection".into(),
             min_weight: None,
+            min_corroboration: None,
             involving: None,
         }],
     };
@@ -524,6 +529,7 @@ async fn lens_in_real_pipeline_enrichment_loop() {
             from: vec!["may_be_related".into()],
             to: "thematic_connection".into(),
             min_weight: None,
+            min_corroboration: None,
             involving: None,
         }],
     };

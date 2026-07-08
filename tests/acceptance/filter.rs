@@ -443,6 +443,7 @@ async fn lens_created_edges_appear_in_cursor_event_log() {
             from: vec!["may_be_related".into()],
             to: "thematic_connection".into(),
             min_weight: None,
+            min_corroboration: None,
             involving: None,
         }],
     };
@@ -513,6 +514,7 @@ async fn query_filter_on_lens_edges_discovered_via_cursor() {
             from: vec!["may_be_related".into()],
             to: "thematic_connection".into(),
             min_weight: None,
+            min_corroboration: None,
             involving: None,
         }],
     };
@@ -597,6 +599,7 @@ async fn full_pull_workflow_ingest_cursor_filtered_query() {
             from: vec!["may_be_related".into()],
             to: "thematic_connection".into(),
             min_weight: None,
+            min_corroboration: None,
             involving: None,
         }],
     };

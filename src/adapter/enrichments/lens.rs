@@ -98,9 +98,29 @@ impl Enrichment for LensEnrichment {
             return None;
         }
 
+        // Per-rule corroboration threshold (issue #4): a merged pair emits
+        // only when at least N distinct from-relationships evidence it.
+        // Keyed by the full translated relationship so the filter pairs
+        // with the rule that produced the pending entry.
+        let thresholds: HashMap<String, usize> = self
+            .spec
+            .translations
+            .iter()
+            .map(|rule| {
+                (
+                    format!("lens:{}:{}", self.spec.consumer, rule.to),
+                    rule.min_corroboration.unwrap_or(1),
+                )
+            })
+            .collect();
+
         let mut emission = Emission::new();
 
         for ((source, target, relationship), contributions) in pending {
+            let needed = thresholds.get(&relationship).copied().unwrap_or(1);
+            if contributions.len() < needed {
+                continue;
+            }
             let mut translated_edge = Edge::new_in_dimension(
                 source,
                 target,
@@ -115,6 +135,12 @@ impl Enrichment for LensEnrichment {
             translated_edge.contributions = contributions;
 
             emission = emission.with_edge(AnnotatedEdge::new(translated_edge));
+        }
+
+        // All pending pairs may fall below their rule's corroboration
+        // threshold — that is quiescence, not an empty emission.
+        if emission.edges.is_empty() {
+            return None;
         }
 
         Some(emission)
@@ -149,6 +175,7 @@ mod tests {
                 from: vec!["may_be_related".into()],
                 to: "thematic_connection".into(),
                 min_weight: None,
+                min_corroboration: None,
                 involving: None,
             }],
         }
@@ -198,6 +225,90 @@ mod tests {
             edge.contributions["lens:trellis:thematic_connection:may_be_related"],
             0.6
         );
+    }
+
+    // --- Scenario: per-rule min_corroboration (issue #4) ---
+    // A from-list mixing a promiscuous relationship (temporal_proximity
+    // under batch ingest) with a selective one (similar_to) saturates the
+    // merged output. min_corroboration: 2 on the rule emits only pairs
+    // evidenced by >= 2 of the from-relationships.
+
+    fn two_source_context() -> Context {
+        let mut ctx = Context::new("test");
+        ctx.add_node(concept_node("a"));
+        ctx.add_node(concept_node("b"));
+        ctx.add_node(concept_node("c"));
+
+        // a—b: temporal only (promiscuous evidence)
+        let mut e1 = Edge::new_in_dimension(
+            NodeId::from_string("concept:a"),
+            NodeId::from_string("concept:b"),
+            "temporal_proximity",
+            dimension::SEMANTIC,
+        );
+        e1.combined_weight = 1.0;
+        ctx.add_edge(e1);
+
+        // a—c: temporal AND similar (doubly evidenced)
+        for rel in ["temporal_proximity", "similar_to"] {
+            let mut e = Edge::new_in_dimension(
+                NodeId::from_string("concept:a"),
+                NodeId::from_string("concept:c"),
+                rel,
+                dimension::SEMANTIC,
+            );
+            e.combined_weight = 0.8;
+            ctx.add_edge(e);
+        }
+        ctx
+    }
+
+    #[test]
+    fn min_corroboration_filters_singly_evidenced_pairs() {
+        let spec = LensSpec {
+            consumer: "curator".into(),
+            translations: vec![TranslationRule {
+                from: vec!["temporal_proximity".into(), "similar_to".into()],
+                to: "corroborated_pair".into(),
+                min_weight: None,
+                min_corroboration: Some(2),
+                involving: None,
+            }],
+        };
+        let lens = LensEnrichment::new(spec);
+        let ctx = two_source_context();
+
+        let emission = lens
+            .enrich(&[edges_added_event()], &ctx)
+            .expect("doubly-evidenced pair should emit");
+
+        assert_eq!(
+            emission.edges.len(),
+            1,
+            "only the a—c pair (2 source relationships) qualifies"
+        );
+        let edge = &emission.edges[0].edge;
+        assert_eq!(edge.target, NodeId::from_string("concept:c"));
+        assert_eq!(edge.contributions.len(), 2, "both source keys preserved");
+    }
+
+    #[test]
+    fn min_corroboration_default_translates_everything() {
+        let spec = LensSpec {
+            consumer: "curator".into(),
+            translations: vec![TranslationRule {
+                from: vec!["temporal_proximity".into(), "similar_to".into()],
+                to: "any_pair".into(),
+                min_weight: None,
+                min_corroboration: None,
+                involving: None,
+            }],
+        };
+        let lens = LensEnrichment::new(spec);
+        let ctx = two_source_context();
+
+        let emission = lens.enrich(&[edges_added_event()], &ctx).unwrap();
+        assert_eq!(emission.edges.len(), 2, "no threshold: both pairs translate");
     }
 
     #[test]

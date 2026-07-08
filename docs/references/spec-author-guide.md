@@ -211,6 +211,28 @@ lens:
 Plexus accepts any syntactically well-formed `to` string — the
 convention is documented here, not enforced at load time.
 
+### Corroboration thresholds (saturation control)
+
+A from-list mixing a promiscuous relationship with a selective one
+saturates the merged output: under batch ingest `temporal_proximity` is
+full-bipartite, so `from: [similar_to, temporal_proximity]` translates
+*every* pair and the discovery signal drowns. Per-rule
+`min_corroboration` emits a merged pair only when at least N distinct
+from-relationships evidence it:
+
+```yaml
+lens:
+  consumer: curator
+  translations:
+    - from: [similar_to, temporal_proximity]
+      to: corroborated_pair
+      min_corroboration: 2   # only pairs with BOTH kinds of evidence
+```
+
+Measured on a 14-doc batch-ingested context: unthresholded rules
+translate 182 pairs; `min_corroboration: 2` translates exactly the 70
+similarity-backed ones.
+
 ### Why structural predicates for discovery-oriented jobs?
 
 Two arguments carry different weight:

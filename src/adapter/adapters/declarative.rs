@@ -433,6 +433,12 @@ pub struct TranslationRule {
     /// Minimum raw weight on the source edge to trigger translation (default 0.0).
     #[serde(default)]
     pub min_weight: Option<f32>,
+    /// Minimum number of distinct from-relationships that must evidence a
+    /// node pair before the merged translation is emitted (issue #4 —
+    /// keeps a from-list mixing promiscuous and selective relationships
+    /// from saturating the lens output). Default: 1 (any evidence).
+    #[serde(default)]
+    pub min_corroboration: Option<usize>,
     /// Optional node predicate filtering which endpoints qualify.
     pub involving: Option<NodePredicate>,
 }
