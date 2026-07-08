@@ -287,18 +287,18 @@ impl Context {
         self.edges.len()
     }
 
-    /// Floor coefficient for dynamic epsilon in scale normalization (ADR-005).
-    /// The weakest real contribution maps to α/(1+α) ≈ 0.0099, not 0.0.
-    const FLOOR_ALPHA: f32 = 0.01;
 
-    /// Recompute combined_weight on all edges using scale normalization (ADR-003, ADR-005).
+    /// Recompute combined_weight on all edges using max-abs scale
+    /// normalization (ADR-003 Decision 2 as refined by ADR-043).
     ///
-    /// For each adapter, computes min and max contribution values across all edges.
-    /// Each contribution is scale-normalized with dynamic epsilon (ADR-005):
-    ///   `(value - min + α·range) / ((1 + α)·range)`
-    /// where α = 0.01 (floor coefficient). This maps minimum to ~0.0099, not 0.0.
-    /// Degenerate case (min == max) normalizes to 1.0.
-    /// combined_weight = sum of scale-normalized contributions across all adapters.
+    /// For each contributor, each value is divided by the contributor's
+    /// maximum absolute value across all edges: ratios and sign are
+    /// preserved, every contributor maps into [-1, 1] by its own
+    /// magnitude, and nonzero evidence can never normalize to 0 (which
+    /// dissolves ADR-005's floor concern — that ADR is superseded).
+    /// Degenerate cases: a single value normalizes to ±1.0; an all-zero
+    /// contributor contributes 0.
+    /// combined_weight = sum of normalized contributions across contributors.
     pub fn recompute_combined_weights(&mut self) {
         use std::collections::HashMap;
 
@@ -306,21 +306,16 @@ impl Context {
             return;
         }
 
-        // Collect per-adapter min/max across all edges
-        let mut adapter_ranges: HashMap<String, (f32, f32)> = HashMap::new();
+        // Collect per-contributor max |value| across all edges
+        let mut max_abs: HashMap<String, f32> = HashMap::new();
         for edge in &self.edges {
             for (adapter_id, value) in &edge.contributions {
-                let entry = adapter_ranges.entry(adapter_id.clone()).or_insert((*value, *value));
-                if *value < entry.0 {
-                    entry.0 = *value;
-                }
-                if *value > entry.1 {
-                    entry.1 = *value;
+                let entry = max_abs.entry(adapter_id.clone()).or_insert(0.0);
+                if value.abs() > *entry {
+                    *entry = value.abs();
                 }
             }
         }
-
-        let alpha = Self::FLOOR_ALPHA;
 
         // Recompute combined_weight for each edge
         for edge in &mut self.edges {
@@ -330,15 +325,11 @@ impl Context {
 
             let mut sum = 0.0f32;
             for (adapter_id, value) in &edge.contributions {
-                if let Some(&(min, max)) = adapter_ranges.get(adapter_id) {
-                    let range = max - min;
-                    let normalized = if range == 0.0 {
-                        1.0 // Degenerate case: single value → 1.0
-                    } else {
-                        // ADR-005: dynamic epsilon proportional to range
-                        (value - min + alpha * range) / ((1.0 + alpha) * range)
-                    };
-                    sum += normalized;
+                if let Some(&m) = max_abs.get(adapter_id) {
+                    if m > 0.0 {
+                        sum += value / m;
+                    }
+                    // m == 0.0: all-zero contributor asserts zero strength
                 }
             }
             edge.combined_weight = sum;
@@ -393,6 +384,57 @@ impl Context {
 
 #[cfg(test)]
 mod tests {
+
+    // === Scenario: max-abs normalization preserves ratios (ADR-043) ===
+    // Divide-by-range amplified a near-tie {0.8165, 0.7856, 0.7794} into
+    // {1.0, 0.175, 0.0099} (issue #13). Max-abs preserves proportion.
+    #[test]
+    fn scale_normalization_preserves_ratios_for_clustered_values() {
+        let mut ctx = Context::new("test");
+        for id in ["a", "b", "c", "d"] {
+            let mut n = Node::new("fragment", ContentType::Document);
+            n.id = NodeId::from_string(format!("n:{}", id));
+            ctx.add_node(n);
+        }
+        for (s, t, v) in [("a", "b", 0.8165f32), ("b", "c", 0.7856), ("c", "d", 0.7794)] {
+            let mut e = Edge::new(
+                NodeId::from_string(format!("n:{}", s)),
+                NodeId::from_string(format!("n:{}", t)),
+                "similar_to",
+            );
+            e.contributions.insert("embedding".into(), v);
+            ctx.add_edge(e);
+        }
+        ctx.recompute_combined_weights();
+
+        let w: Vec<f32> = ctx.edges.iter().map(|e| e.combined_weight).collect();
+        assert!((w[0] - 1.0).abs() < 1e-4, "max normalizes to 1.0, got {}", w[0]);
+        assert!((w[1] - 0.7856 / 0.8165).abs() < 1e-4, "ratio preserved, got {}", w[1]);
+        assert!((w[2] - 0.7794 / 0.8165).abs() < 1e-4, "ratio preserved, got {}", w[2]);
+    }
+
+    #[test]
+    fn scale_normalization_preserves_sign_for_signed_scales() {
+        let mut ctx = Context::new("test");
+        for id in ["a", "b", "c"] {
+            let mut n = Node::new("fragment", ContentType::Document);
+            n.id = NodeId::from_string(format!("n:{}", id));
+            ctx.add_node(n);
+        }
+        for (s, t, v) in [("a", "b", -0.5f32), ("b", "c", 1.0)] {
+            let mut e = Edge::new(
+                NodeId::from_string(format!("n:{}", s)),
+                NodeId::from_string(format!("n:{}", t)),
+                "sentiment",
+            );
+            e.contributions.insert("sentiment".into(), v);
+            ctx.add_edge(e);
+        }
+        ctx.recompute_combined_weights();
+        assert!((ctx.edges[0].combined_weight - (-0.5)).abs() < 1e-4, "sign preserved: {}", ctx.edges[0].combined_weight);
+        assert!((ctx.edges[1].combined_weight - 1.0).abs() < 1e-4);
+    }
+
     use super::*;
     use crate::graph::{ContentType, Edge, Node, PropertyValue};
 
@@ -684,9 +726,8 @@ mod tests {
 
         ctx.recompute_combined_weights();
 
-        // Alpha adapter: min=1.0, max=5.0, range=4.0
-        // A→B: (0 + 0.04) / 4.04 ≈ 0.00990 (floor)
-        // A→C: (4 + 0.04) / 4.04 = 1.0 (max)
+        // Alpha adapter max_abs=5.0 (ADR-043)
+        // A→B: 1/5 = 0.2, A→C: 5/5 = 1.0
         let ab = ctx.edges.iter()
             .find(|e| e.source == a && e.target == b)
             .expect("A→B edge");
@@ -694,11 +735,10 @@ mod tests {
             .find(|e| e.source == a && e.target == c)
             .expect("A→C edge");
 
-        let floor = 0.01 / 1.01;
         assert!(
-            (ab.combined_weight - floor).abs() < 1e-4,
-            "A→B should normalize to floor ~{:.4}, got {}",
-            floor, ab.combined_weight,
+            (ab.combined_weight - 0.2).abs() < 1e-4,
+            "A→B should normalize to 1/5, got {}",
+            ab.combined_weight,
         );
         assert!(
             (ac.combined_weight - 1.0).abs() < 1e-6,
@@ -716,12 +756,11 @@ mod tests {
             contains.combined_weight,
         );
 
-        // Key invariant: provenance edges don't distort alpha's range.
-        // If cross-contamination existed, alpha's range would include provenance's
-        // 1.0 and alpha's floor would shift. Verify alpha floor matches expected.
-        let expected_alpha_floor = 0.01 / 1.01; // α/(1+α) with per-adapter range
+        // Key invariant: provenance edges don't distort alpha's scale.
+        // If cross-contamination existed, alpha's max-abs would be shared
+        // with provenance's values. Verify alpha stays 1/5.
         assert!(
-            (ab.combined_weight - expected_alpha_floor).abs() < 1e-4,
+            (ab.combined_weight - 0.2).abs() < 1e-4,
             "alpha normalization should not be affected by provenance contributions",
         );
     }

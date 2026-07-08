@@ -1,6 +1,6 @@
 # ADR-005: Normalization Floor — Dynamic Epsilon in Scale Normalization
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-043](043-max-abs-scale-normalization.md)
 
 **Date:** 2026-02-08
 
