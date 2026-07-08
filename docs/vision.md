@@ -104,13 +104,29 @@ flywheel shows matters: lens coverage over background extraction, the
 extraction input contract (SpaCy envelope defect), similarity-into-weight
 plumbing, corroboration-aware lens translation.
 
-**M3 — Blinded-consumer vocabulary probes.** LLM agents as consumers,
-each given only its own domain vocabulary and the MCP query tools, tasked
-with domain questions over the populated cross-consumer graph. Instrument
-whether the lens surface suffices or agents fall back to raw graph
-vocabulary. This is the honest test of "without learning graph internals,"
-and the first non-builder evidence bearing on the parked phenomenology
-hypothesis (named vs. structural lens registers).
+**M3 — Blinded-consumer vocabulary probes. ✅ RUN 2026-07-08.** Two
+blinded LLM agents (trellis: structural register; carrel: named
+register), each knowing only its own spec and the query tools, worked
+three domain tasks over the populated cross-consumer graph. Convergent
+results:
+
+- **Vocabulary suffices for finding and ranking** — both completed
+  T1/T2 entirely on their `lens:` prefixes and found all three
+  cross-consumer connections.
+- **Vocabulary fails for explaining** — both manufactured the "why"
+  from three raw-internal queries; `evidence_trail` was empty
+  everywhere and speaks a provenance dialect consumers don't. Wanted
+  feature, named identically by both: "explain this edge" (#14).
+- **Phenomenology finding, register-independent:** both consumers —
+  named and structural alike — described connections as *invitations to
+  interpret, not assertions*. The interpretive experience is a property
+  of the surface's evidence-opacity, not the naming register. ADR-041's
+  per-job register convention stands for composition reasons, but the
+  phenomenology hypothesis as originally framed (register drives
+  experience) is **weakened by first non-builder evidence**.
+- Two defects only outside eyes would catch: unfiltered `traverse`
+  hides parallel edges (#12); lens raw weights distort near-tied
+  evidence into 100x spreads with a double-counted contributor (#13).
 
 ## Engineering queue
 
