@@ -135,6 +135,16 @@ pub struct SharedConceptsParams {
     pub context_b: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExplainEdgeParams {
+    #[schemars(description = "Source node ID of the pair")]
+    pub source: String,
+    #[schemars(description = "Target node ID of the pair")]
+    pub target: String,
+    #[schemars(description = "Optional: narrow to one relationship (e.g. \"lens:trellis:latent_pair\"). Omit to explain every edge between the pair, parallel edges included.")]
+    pub relationship: Option<String>,
+}
+
 // ── Spec loading (ADR-036 §2, ADR-037) — inline spec content ──────────
 
 #[derive(Debug, Deserialize, JsonSchema)]

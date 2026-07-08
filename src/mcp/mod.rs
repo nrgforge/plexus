@@ -1,6 +1,6 @@
 //! MCP server for Plexus — knowledge graph engine via the Model Context Protocol.
 //!
-//! Tools: 17 total (1 session + 1 ingest + 6 context + 7 graph read + 2 spec lifecycle: load + unload).
+//! Tools: 18 total (1 session + 1 ingest + 6 context + 8 graph read + 2 spec lifecycle: load + unload).
 //!
 //! The single graph-data write path is `ingest` (ADR-028), which routes to
 //! adapters by input_kind (explicit or auto-classified from JSON shape).
@@ -386,6 +386,18 @@ impl PlexusMcpServer {
     }
 
     // ── Spec loading (ADR-036 §1, ADR-037) ─────────────────────────────
+
+    #[tool(description = "Explain every piece of evidence between a node pair — 'why is this connection here?' in one call (issue #14). Returns both endpoints (with displayable text), and every edge between the pair including parallel edges, each with stored contributions, corroboration count, and lens contribution keys parsed into the source relationships the translation merged. Optional relationship narrows to one edge.")]
+    fn explain_edge(
+        &self,
+        Parameters(p): Parameters<ExplainEdgeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let ctx = self.context()?;
+        match self.api.explain_edge(&ctx, &p.source, &p.target, p.relationship.as_deref()) {
+            Ok(explanation) => ok_text(serde_json::to_string_pretty(&explanation).unwrap()),
+            Err(e) => err_text(format!("explain_edge failed: {}", e)),
+        }
+    }
 
     #[tool(description = "Load a declarative adapter spec (adapter + optional lens + optional enrichments) onto the active context (ADR-037). The spec_yaml argument is the full YAML content sent inline. Validation is upfront: malformed specs fail before any graph work (Invariant 60). On success, returns the adapter ID, lens namespace (if present), and the count of vocabulary edges created by the initial lens sweep over existing content.")]
     async fn load_spec(

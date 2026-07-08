@@ -4,6 +4,7 @@
 //! computing paths through the graph, and cursor-based change queries.
 
 mod cursor;
+mod explain;
 mod filter;
 mod find;
 mod normalize;
@@ -14,6 +15,7 @@ mod traverse;
 mod types;
 
 pub use cursor::{PersistedEvent, ChangeSet, CursorFilter};
+pub use explain::{EdgeExplanation, ExplainedEdge, ExplainedNode, explain_pair};
 pub use filter::{QueryFilter, RankBy};
 pub use find::FindQuery;
 pub use normalize::{NormalizationStrategy, NormalizedEdge, OutgoingDivisive, Softmax, normalized_weights};

@@ -726,6 +726,36 @@ impl PlexusApi {
             .ok_or_else(|| PlexusError::ContextNotFound(ContextId::from(name)))
     }
 
+    /// Explain every piece of evidence between a node pair (issue #14).
+    ///
+    /// One call answers "why is this connection here?": both endpoints
+    /// (with displayable text), every edge between the pair — parallel
+    /// edges included — each with stored contributions, corroboration,
+    /// and lens contribution keys parsed into source relationships.
+    /// `relationship` optionally narrows to a single relationship.
+    pub fn explain_edge(
+        &self,
+        context_id: &str,
+        source: &str,
+        target: &str,
+        relationship: Option<&str>,
+    ) -> PlexusResult<crate::query::EdgeExplanation> {
+        let ctx_id = self.resolve(context_id)?;
+        let ctx = self
+            .engine
+            .get_context(&ctx_id)
+            .ok_or_else(|| PlexusError::ContextNotFound(ctx_id.clone()))?;
+        crate::query::explain_pair(
+            &ctx,
+            &crate::graph::NodeId::from(source),
+            &crate::graph::NodeId::from(target),
+            relationship,
+        )
+        .ok_or_else(|| PlexusError::Other(format!(
+            "node pair not found: {} / {}", source, target
+        )))
+    }
+
     /// Discover concepts shared between two contexts via deterministic
     /// ID intersection (ADR-017 §4).
     ///
@@ -956,6 +986,54 @@ mod tests {
             1,
             "A's find_nodes must see B's committed node (ADR-017 §2)"
         );
+    }
+
+    // === Scenario: explain_edge answers "why is this here?" in one call ===
+    // (issue #14 — both M3 blinded probes had to manufacture the "why"
+    // from three separate raw-internal queries.)
+    #[tokio::test]
+    async fn explain_edge_returns_all_evidence_between_a_pair() {
+        let (engine, api) = setup();
+
+        let mut ctx = Context::new("studio");
+        let mut frag = Node::new_in_dimension("fragment", ContentType::Document, dimension::SEMANTIC);
+        frag.id = NodeId::from("frag:a");
+        frag.properties.insert("text".into(), PropertyValue::String("the mosh pit breathed".into()));
+        let mut note = Node::new_in_dimension("fragment", ContentType::Document, dimension::SEMANTIC);
+        note.id = NodeId::from("frag:b");
+        note.properties.insert("text".into(), PropertyValue::String("crowd dynamics paper".into()));
+        ctx.nodes.insert(frag.id.clone(), frag);
+        ctx.nodes.insert(note.id.clone(), note);
+
+        let mut sim = Edge::new_in_dimension(
+            NodeId::from("frag:a"), NodeId::from("frag:b"), "similar_to", dimension::SEMANTIC);
+        sim.contributions.insert("embedding-activation".into(), 0.8165);
+        ctx.edges.push(sim);
+        let mut lens = Edge::new_in_dimension(
+            NodeId::from("frag:a"), NodeId::from("frag:b"), "lens:carrel:related_material", dimension::SEMANTIC);
+        lens.contributions.insert("lens:carrel:related_material:similar_to".into(), 0.8165);
+        ctx.edges.push(lens);
+        engine.upsert_context(ctx).unwrap();
+
+        let explanation = api.explain_edge("studio", "frag:a", "frag:b", None).unwrap();
+
+        assert_eq!(explanation.source.id, "frag:a");
+        assert_eq!(explanation.source.text.as_deref(), Some("the mosh pit breathed"));
+        assert_eq!(explanation.edges.len(), 2, "ALL edges between the pair, parallel included");
+
+        let lens_edge = explanation.edges.iter()
+            .find(|e| e.relationship == "lens:carrel:related_material")
+            .expect("lens edge explained");
+        assert_eq!(
+            lens_edge.translated_from,
+            vec!["similar_to".to_string()],
+            "lens contribution keys parsed into source relationships"
+        );
+        let sim_edge = explanation.edges.iter()
+            .find(|e| e.relationship == "similar_to")
+            .expect("underlying edge explained");
+        assert_eq!(sim_edge.contributions.get("embedding-activation"), Some(&0.8165));
+        assert_eq!(sim_edge.corroboration, 1);
     }
 
     #[tokio::test]
