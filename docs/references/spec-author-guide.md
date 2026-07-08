@@ -266,7 +266,14 @@ emit:
             relationship: similar_to
             source_dimension: semantic
             target_dimension: semantic
+            weight: "{input.pair.similarity}"
 ```
+
+`weight:` accepts a numeric literal or a template expression. A template
+resolving to a finite number becomes the adapter's contribution on the
+edge (so ranking reflects the ensemble's actual scores); a template
+resolving to anything else logs a warning and degrades to 1.0 — the
+edge is kept rather than dropped.
 
 The worked example at
 [`examples/specs/embedding-activation.yaml`](../../examples/specs/embedding-activation.yaml)

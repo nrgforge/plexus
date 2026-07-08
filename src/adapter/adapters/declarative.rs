@@ -335,7 +335,19 @@ pub struct CreateEdgePrimitive {
     pub source_dimension: Option<String>,
     pub target_dimension: Option<String>,
     #[serde(alias = "contribution")]
-    pub weight: Option<f32>,
+    pub weight: Option<WeightSpec>,
+}
+
+/// Edge weight: a numeric literal, or a template expression resolved per
+/// emission (issue #7 — lets ensemble-computed values like similarity
+/// scores reach edge weights). Untagged so existing `weight: 1.0` specs
+/// parse unchanged — additive grammar evolution per the standing
+/// spec-YAML principle.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum WeightSpec {
+    Literal(f32),
+    Template(String),
 }
 
 /// Primitive: iterate over an array field.
@@ -1125,7 +1137,29 @@ fn interpret_create_edge(
     };
 
     let mut edge = edge;
-    edge.combined_weight = ce.weight.unwrap_or(1.0);
+    edge.combined_weight = match &ce.weight {
+        None => 1.0,
+        Some(WeightSpec::Literal(w)) => *w,
+        Some(WeightSpec::Template(template)) => {
+            let rendered = render_template(template, ctx)?;
+            match rendered.trim().parse::<f32>() {
+                Ok(w) if w.is_finite() => w,
+                _ => {
+                    // Degrade loudly to 1.0 rather than dropping the edge:
+                    // structure survives (no silent-idle), the weight is
+                    // wrong but visible in logs.
+                    tracing::warn!(
+                        template = %template,
+                        rendered = %rendered,
+                        relationship = %ce.relationship,
+                        "create_edge weight template did not resolve to a \
+                         finite number; defaulting to 1.0"
+                    );
+                    1.0
+                }
+            }
+        }
+    };
     Ok(edge)
 }
 
@@ -1447,7 +1481,7 @@ mod tests {
                             relationship: "tagged_with".to_string(),
                             source_dimension: Some("structure".to_string()),
                             target_dimension: Some("semantic".to_string()),
-                            weight: Some(1.0),
+                            weight: Some(WeightSpec::Literal(1.0)),
                         }),
                     ],
                 }),
@@ -1487,6 +1521,104 @@ mod tests {
             assert_eq!(edge.source, NodeId::from_string("item:source"));
             assert_eq!(edge.combined_weight, 1.0);
         }
+    }
+
+    // --- Scenario: weight as template expression (issue #7) ---
+    // Ensemble-computed values (similarity scores) must be able to reach
+    // edge weights; a compile-time literal cannot carry per-pair data.
+
+    #[tokio::test]
+    async fn create_edge_weight_accepts_template_expression() {
+        let yaml = r#"
+adapter_id: weight-probe
+input_kind: weight.input
+emit:
+  - create_node:
+      id: "frag:a"
+      type: fragment
+      dimension: semantic
+  - create_node:
+      id: "frag:b"
+      type: fragment
+      dimension: semantic
+  - create_edge:
+      source: "frag:a"
+      target: "frag:b"
+      relationship: similar_to
+      weight: "{input.similarity}"
+"#;
+        let adapter = DeclarativeAdapter::from_yaml(yaml)
+            .expect("weight template must be valid spec grammar");
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone());
+        let input = AdapterInput::new(
+            "weight.input",
+            serde_json::json!({"similarity": 0.85}),
+            "test",
+        );
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        let edge = snapshot
+            .edges()
+            .find(|e| e.relationship == "similar_to")
+            .expect("similar_to edge should exist");
+        // Assert the stored layer (contribution), not the engine-computed
+        // raw weight — a single contribution scale-normalizes to 1.0
+        // degenerately (Invariant 8's three-layer model).
+        let contribution = edge
+            .contributions
+            .get("test-declarative")
+            .expect("adapter contribution slot");
+        assert!(
+            (contribution - 0.85).abs() < 1e-6,
+            "contribution must carry the template-resolved weight, got {}",
+            contribution
+        );
+    }
+
+    #[tokio::test]
+    async fn create_edge_weight_template_nonnumeric_defaults_to_one() {
+        let yaml = r#"
+adapter_id: weight-probe
+input_kind: weight.input
+emit:
+  - create_node:
+      id: "frag:a"
+      type: fragment
+      dimension: semantic
+  - create_node:
+      id: "frag:b"
+      type: fragment
+      dimension: semantic
+  - create_edge:
+      source: "frag:a"
+      target: "frag:b"
+      relationship: similar_to
+      weight: "{input.similarity}"
+"#;
+        let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap();
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = test_sink(ctx.clone());
+        // similarity is a non-numeric string — degrade to 1.0 (with a
+        // warn log), preserving structure over dropping the edge
+        let input = AdapterInput::new(
+            "weight.input",
+            serde_json::json!({"similarity": "high"}),
+            "test",
+        );
+        adapter.process(&input, &sink).await.unwrap();
+
+        let snapshot = ctx.lock().unwrap();
+        let edge = snapshot
+            .edges()
+            .find(|e| e.relationship == "similar_to")
+            .expect("edge must still be created on weight parse failure");
+        assert_eq!(
+            edge.contributions.get("test-declarative").copied(),
+            Some(1.0),
+            "non-numeric template weight degrades to contribution 1.0"
+        );
     }
 
     // --- Scenario: DeclarativeAdapter interprets hash_id for deterministic node IDs ---

@@ -85,13 +85,10 @@ emit:
   # symmetric pairs (A→B and B→A) so the relationship is queryable
   # from either endpoint.
   #
-  # The edge's `weight` is 1.0 by default. Per-pair similarity is
-  # written into the `similarity` field of each pair but isn't
-  # currently reflected in the edge's numeric weight — the spec
-  # grammar's `weight:` field is a compile-time literal, not a
-  # template expression. A future grammar extension may allow
-  # `weight: "{input.pair.similarity}"`; for now the similarity score
-  # lives inside the pair object passed through by the ensemble.
+  # The edge's `weight` is a template expression: each pair's cosine
+  # similarity becomes the adapter's contribution on the edge, so
+  # ranking by weight reflects actual semantic proximity rather than
+  # a flat 1.0.
   #
   # Downstream: once `similar_to` edges enter the graph,
   # `DiscoveryGapEnrichment` (ADR-040) can detect node pairs that have
@@ -110,3 +107,4 @@ emit:
             relationship: similar_to
             source_dimension: semantic
             target_dimension: semantic
+            weight: "{input.pair.similarity}"
