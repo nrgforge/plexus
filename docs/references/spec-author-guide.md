@@ -331,6 +331,19 @@ each node's `created_at` (last-writer-wins upsert), so sweeps make
 `temporal_proximity` treat all swept content as contemporaneous —
 exclude `temporal_proximity` from lens from-lists on swept contexts.
 
+### Canonicalize labels in your extractor
+
+Concept identity is exact-string (deterministic IDs, Invariant 19:
+`concept:{lowercase_tag}`). Plexus lowercases — nothing else. Morphological
+variants fragment the concept space and silently degrade cross-consumer
+convergence: measured examples include `mosh_pit` vs `mosh_pits`
+(singular/plural) and `carbon dioxide` vs `carbon_dioxide`
+(space/underscore) landing as distinct concepts from different extraction
+agents. Canonicalize in your extractor before emitting: singular forms,
+single spaces (or a consistent separator), no punctuation. If your spec
+uses an ensemble, put the canonical form in the agent's output contract
+(system prompt / output schema), not in post-processing hope.
+
 ## Common patterns
 
 ### Minimum-viable vs. minimum-useful
