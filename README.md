@@ -267,13 +267,16 @@ plexus/
   is this system, who serves whom, what's the current state"
 - [`docs/system-design.md`](docs/system-design.md) — module decomposition,
   responsibility allocation, dependency graph, fitness criteria
-- [`docs/product-discovery.md`](docs/product-discovery.md) — stakeholders,
-  jobs, value tensions
+- [`docs/vision.md`](docs/vision.md) — the product vision, current
+  milestones, and standing tensions
+- [`docs/invariants.md`](docs/invariants.md) — vocabulary and binding
+  invariants (code cites these by number)
 - [`docs/decisions/`](docs/decisions/) — ADRs (43 at last count)
-- [`docs/scenarios/`](docs/scenarios/) — refutable behavior scenarios
-- [`docs/essays/`](docs/essays/) — research essays on subsystem design
 - [`docs/references/field-guide.md`](docs/references/field-guide.md) —
   module-to-code mapping for navigation
+- [`docs/archive/`](docs/archive/) — graduated RDD research corpus
+  (essays, scenarios, domain model, cycle records); see
+  [`docs/rdd-graduation.md`](docs/rdd-graduation.md)
 
 ## License
 

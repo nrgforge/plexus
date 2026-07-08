@@ -672,7 +672,7 @@ flowchart TD
 ### host → storage → adapter/pipeline (rehydration at construction, ADR-037)
 **Protocol:** The host (mcp binary, embedded consumer) opens a store, calls `GraphStore::query_specs_for_context(context_id)` to fetch persisted spec rows, then passes the resulting `Vec<PersistedSpec>` to `PipelineBuilder::with_persisted_specs(specs)`. The builder parses each spec, extracts the lens enrichment, and registers it on the pipeline being constructed. The original adapter is NOT registered (the loading consumer may not be present); the lens is NOT re-run over existing content (effect a is durable). **The host does not filter — every spec in the table for the context is rehydrated.** Runtime selectivity is forbidden by design: the specs table is the context's lens registry, and any library instance holding the context is bound to run every lens registered on it. Curation happens via `unload_spec` (durable, public) — not via startup filtering (transient, silent).
 **Shared types:** `PersistedSpec` struct (fields: `context_id`, `adapter_id`, `spec_yaml`, `loaded_at`; struct type rather than tuple to support non-breaking schema evolution)
-**Error handling:** A persisted spec that fails to **parse** or extract its lens is logged but does NOT block pipeline construction — the host gets a working pipeline minus the broken spec's lens. The broken spec remains in the table for diagnosis. This is the only place in the cycle where spec failures are non-fatal; at runtime via `load_spec`, validation errors abort the operation. **Caveat — grammar mismatch is a different failure class:** if a grammar change breaks every spec in the table, silent non-fatal behavior would cause every consumer to silently lose all vocabulary layers. This is why the "spec YAML grammar versioning" open decision point (see roadmap.md) matters — when versioning is introduced, unknown-version errors must be fail-loud, not logged-and-continue.
+**Error handling:** A persisted spec that fails to **parse** or extract its lens is logged but does NOT block pipeline construction — the host gets a working pipeline minus the broken spec's lens. The broken spec remains in the table for diagnosis. This is the only place in the cycle where spec failures are non-fatal; at runtime via `load_spec`, validation errors abort the operation. **Caveat — grammar mismatch is a different failure class:** if a grammar change breaks every spec in the table, silent non-fatal behavior would cause every consumer to silently lose all vocabulary layers. This is why the "spec YAML grammar versioning" open decision point (see `docs/archive/roadmap.md` §Open Decision Points) matters — when versioning is introduced, unknown-version errors must be fail-loud, not logged-and-continue.
 **Owned by:** adapter/pipeline (defines `with_persisted_specs` builder API), storage (defines `query_specs_for_context` trait method and `PersistedSpec` struct)
 
 ## Fitness Criteria
@@ -760,11 +760,11 @@ flowchart TD
 
 - **Unit:** Verify logic within a single module. Mocks acceptable for cross-module dependencies (e.g., mock LlmOrcClient in SemanticAdapter tests). Located in each module's `#[cfg(test)] mod tests`.
 - **Integration:** Verify real data flow across module boundaries. Real types on both sides. Located in `adapter/integration_tests.rs` (~55 test functions) and individual module test blocks with real PlexusEngine.
-- **Acceptance:** Verify end-to-end scenarios from `docs/scenarios.md`. Located in `tests/acceptance/` (25 tests across 8 contract areas: ingest, extraction, enrichment, provenance, contribution, persistence, degradation, query). Use `PlexusApi` public surface with in-memory SQLite.
+- **Acceptance:** Verify end-to-end scenarios (originally specified in the archived `docs/archive/scenarios/` corpus). Located in `tests/acceptance/` (25 tests across 8 contract areas: ingest, extraction, enrichment, provenance, contribution, persistence, degradation, query). Use `PlexusApi` public surface with in-memory SQLite.
 
 ## Roadmap
 
-See [`./docs/roadmap.md`](./docs/roadmap.md) for the current roadmap — work packages, classified dependencies, transition states, and open decision points.
+Current direction lives in [`docs/vision.md`](./vision.md) (milestones M0–M3 + engineering queue, tracked as GitHub issues). The final RDD-cycle roadmap is archived at [`docs/archive/roadmap.md`](./archive/roadmap.md).
 
 ## Design Amendment Log
 

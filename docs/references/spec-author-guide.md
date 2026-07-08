@@ -302,8 +302,9 @@ produces edges — not just that it validates and loads. Running the
 spec against representative input and verifying structure emerges is
 the acceptance check.
 
-See the interaction-specs document's Consumer Application Developer
-section for the full decomposition: [`docs/interaction-specs.md`](../interaction-specs.md)
+See the archived interaction-specs document's Consumer Application
+Developer section for the full decomposition:
+[`docs/archive/interaction-specs.md`](../archive/interaction-specs.md)
 §"Choose a minimum-useful spec rather than a minimum-viable one".
 
 ## Where to read next
@@ -315,5 +316,5 @@ section for the full decomposition: [`docs/interaction-specs.md`](../interaction
 - [ADR-033](../decisions/033-lens-declaration.md) — lens mechanics
 - [ADR-041](../decisions/041-lens-grammar-conventions.md) — lens grammar conventions
 - [ADR-042](../decisions/042-dimension-extensibility-guidance.md) — dimension extensibility
-- [`docs/interaction-specs.md`](../interaction-specs.md) — task-level
-  workflows for the Consumer Application Developer
+- [`docs/archive/interaction-specs.md`](../archive/interaction-specs.md) —
+  task-level workflows for the Consumer Application Developer (archived)
