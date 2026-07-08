@@ -77,18 +77,20 @@ all 18 matrix cells now LIVE. **The runtime model is: shared SQLite,
 library rule intact, per-read data_version coherence — no daemon.**
 Long-lived multi-process consumers are now legal, which unblocks M1.
 
-**M1 — Prove the flywheel.** Engineer an overlap corpus (content with
-deliberate latent bridges — the existing fixture corpora were curated for
-*separability*). Then two validations:
-
-- *Flywheel scenario:* two consumers, one shared context, own lenses;
-  assert (via `evidence_trail` + `contributor_ids`) that consumer A
-  receives a signal in A's vocabulary about content B ingested. Exercise
-  both cross-pollination mechanisms separately — embedding proximity and
-  concept-identity convergence via extraction.
-- *Solo-vs-shared differential:* run consumer A's corpus alone, then
-  A+B shared; diff A's lens-query results. The delta is the marginal
-  value of cohabitation — the closest thing the vision has to a KPI.
+**M1 — Prove the flywheel. ✅ PROVEN 2026-07-07** (concept-identity
+mechanism; `play.py flywheel`). Two live consumer processes on one
+shared context, engineered-overlap corpus: concepts converged across
+consumers (`ants`, `starlings` — deterministic IDs, Invariant 19);
+**trellis received carrel-only material in trellis vocabulary**
+(`latent_pair` involving `antcolonyoptimization`, `crowd_dynamics`) and
+vice versa; lens coverage over `may_be_related` complete for both
+consumers. **Differential KPI, first reading: solo=2, shared=4,
+delta=2** — cohabitation doubled trellis's signal. Caveats routed to
+issues: convergence is exact-string, so morphological variants fragment
+the concept space (#8, the crowd pair missed on `mosh_pit` vs
+`mosh_pits`); the embedding mechanism is batch-local and structurally
+cannot bridge consumers in the default build (#9), so the flywheel's
+second mechanism remains unproven pending #9's resolution.
 
 **M2 — Close the gaps M1 exposes.** Candidates, ordered by what the
 flywheel shows matters: lens coverage over background extraction, the
