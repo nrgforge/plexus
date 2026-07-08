@@ -323,3 +323,27 @@ Two lens consumers (`lens:trellis:thematic_connection` named-register, `lens:sco
 ### Stale — bug pinned deterministically
 
 Long-lived process A sees 1 of 3 fragments on disk after process B's writes; re-calling `set_context` does not invalidate the cache. Scenario is expected-fail-inverted in the harness: it goes red the day a cache-invalidation contract fixes it. **Feeds back to:** DECIDE (cache-invalidation candidate ADR, already routed 2026-04-29 — now with an executable repro).
+
+---
+
+## Harness-run results: extraction scenarios (2026-07-07)
+
+**Instrument:** `play.py extract-fg` / `extract-bg`, same discipline as the crawl/walk/run runs (shipped v0.3.0 binary, fresh DB, dual MCP/disk reads). Coverage the original crawl→walk→run plan never had: semantic extraction, both routes.
+
+### Foreground extraction: the minimum-useful chain is real, end to end
+
+Two untagged prose notes → `test-theme-extractor` extracts theme/keyword per ingest → `tagged_with` edges → CoOccurrence produces 4 `may_be_related` over machine-extracted tags → lens translates 4 `lens:probe:latent_pair`. Zero consumer-supplied tags anywhere. This is stronger anti-tautology evidence than the embedding walk because the intermediate vocabulary is inspectable (`baking`, `sourdough`, `dough`) — and note-2's theme converged with note-1's, so cross-fragment concept identity holds. The spec-author guide's route 3 ("ensemble that performs semantic extraction, producing tagged concept nodes CoOccurrence operates on") is now executable fact.
+
+### Background extraction: alive, reinforcement observable, T11 pinned — and one real defect
+
+A 5-sentence fixture through `extract-file` produced 16 concepts in ~5 min. Invariant 45 is observable: max 4 distinct contributions on a single edge (multi-run union reinforcing). The T11 gap pinned airtight: a lens loaded *before* ingest with a from-list covering extract-semantic's entire 19-relationship vocabulary translated **zero** edges.
+
+**Refinement to T11's framing:** core enrichments DO fire on background emissions — CoOccurrence produced 20 `may_be_related` over the background-phase `tagged_with` edges. The gap is lens-specific, not enrichment-loop-general. Consumers get derived structure from background extraction; they don't get their vocabulary over it.
+
+**Defect: SpaCy vocabulary bootstrap parses the input envelope, not the prose.** `spacy-extract.py:204` takes `input_data` as raw text; `SemanticAdapter::build_input` sends the serialized structural-analysis JSON payload. Result: extracted "concepts" include `" start_line`, `{ " end_line " : 7 , " label`, and the temp file path. The LLM agents partially recover (themes `baking process`, `bread ingredients` are sensible) but the polluted SpaCy output primes three entity-primed agents downstream. Typed relationships came out as heading-derived trivia (`bread describes notes`), not content relations (`fermentation produces carbon dioxide` was in the fixture verbatim and was not extracted). T6 never caught this: its property-based assertion ("≥1 concept appears") is satisfied by garbage. Liveness assertions verify the pipeline runs; only label inspection verifies it extracts sense. **Feeds back to:** BUILD (fix the script to parse the payload and extract the text field, or fix the contract on the adapter side — the script's own docstring says it expects "the source text"); DECIDE if the input contract deserves an ADR given the llm-orc schema evolution underway.
+
+**Open observation (unexplained):** background-extracted concepts carry `created_at` (16/16) yet produced no `temporal_proximity` pairs among themselves — the only temporal pair is file↔extraction-status from the registration phase. In foreground (crawl), concepts pair freely. Which enrichments run in which phase, over which events, needs a precise map. Routes to the same investigation as the T11 refinement above.
+
+### llm-orc forward-compatibility notes (survey of in-flight agentic-serving branch, 2026-07-07)
+
+Installed llm-orc ≈ v0.17.0 (branch merge-base); the in-flight branch is 396 commits ahead. When it ships: plexus's `InvokeResponse` deserializer survives the new `{results, deliverable, status}` shape (unknown fields ignored, status vocabulary unchanged on the stdio path). The `synthesizer` agent-name convention is superseded by a `deliverable` contract (terminal DAG node's response); DeclarativeAdapter's name-convention extraction keeps working but should migrate to reading `deliverable`. Ensemble-level `max_concurrency` is now silently ignored (dead config in both project ensembles). Agent-level schema is `extra="forbid"`: unknown agent fields fail the whole ensemble at load — current project ensembles pass. **Feeds back to:** the post-graduation refactor (DeclarativeAdapter response extraction), operational hygiene (drop dead `max_concurrency` keys when convenient).
