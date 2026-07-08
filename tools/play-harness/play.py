@@ -23,6 +23,12 @@ Scenario ↔ PLAY-plan mapping (docs/cycle-status.md §Context for Resumption):
           the same emergent edges; query-shape diff recorded.
   stale — multi-process cache staleness (2026-04-29 field note),
           expected to fail until a cache-invalidation contract lands.
+
+Extraction scenarios (beyond the original PLAY plan — semantic depth):
+  extract-fg — foreground declarative path: LLM extracts theme/keyword,
+          CoOccurrence fires over machine tags, lens translates.
+  extract-bg — background deep path (SpaCy + 8 LLM agents); pins the
+          T11 gap: lenses do not fire on background emissions.
 """
 
 import argparse
@@ -177,8 +183,8 @@ def load_corpus_docs():
     return docs
 
 
-def ollama_preflight(report):
-    """Walk/run need Ollama + nomic-embed-text + llm-orc. Skip loudly if absent."""
+def ollama_preflight(report, model="nomic-embed-text"):
+    """llm-orc scenarios need Ollama + a specific model + llm-orc. Skip loudly if absent."""
     if not shutil.which("llm-orc"):
         report.skip("preflight", "llm-orc not on PATH")
         return False
@@ -188,8 +194,8 @@ def ollama_preflight(report):
     except Exception as e:
         report.skip("preflight", f"Ollama unreachable: {e}")
         return False
-    if not any(m.startswith("nomic-embed-text") for m in models):
-        report.skip("preflight", f"nomic-embed-text not pulled (have: {models})")
+    if not any(m.startswith(model) for m in models):
+        report.skip("preflight", f"{model} not pulled (have: {models})")
         return False
     return True
 
@@ -393,11 +399,216 @@ def scenario_stale(binary, db_path):
     return report.emit()
 
 
+EXTRACTION_RELATIONSHIPS = [
+    # extract-semantic's full relationship vocabulary — used as a lens
+    # from-list so the T11 gap pin is airtight: if lenses fired on
+    # background emissions, ANY extracted edge would be translated.
+    "caused_by", "remedies", "exemplifies", "describes", "mechanism_of",
+    "distinct_from", "eroded_by", "accelerates", "instance_of",
+    "component_of", "enables", "constrains", "produces", "requires",
+    "implements", "uses", "depends_on", "part_of", "related_to",
+]
+
+FOREGROUND_EXTRACT_SPEC = """\
+adapter_id: play-extract-fg
+input_kind: play-extract.text
+ensemble: test-theme-extractor
+lens:
+  consumer: probe
+  translations:
+    - from: [may_be_related]
+      to: latent_pair
+emit:
+  - create_node:
+      id: "frag:{input.id}"
+      type: fragment
+      dimension: semantic
+      properties:
+        text: "{input.text}"
+  - create_node:
+      id: "concept:{ensemble.theme}"
+      type: concept
+      dimension: semantic
+  - create_node:
+      id: "concept:{ensemble.keyword}"
+      type: concept
+      dimension: semantic
+  - create_edge:
+      source: "frag:{input.id}"
+      target: "concept:{ensemble.theme}"
+      relationship: tagged_with
+  - create_edge:
+      source: "frag:{input.id}"
+      target: "concept:{ensemble.keyword}"
+      relationship: tagged_with
+"""
+
+BG_LENS_SPEC = """\
+adapter_id: play-extract-bg-lens
+input_kind: play-extract-bg.noop
+input_schema:
+  - name: text
+    type: string
+    required: true
+emit:
+  - create_node:
+      id: "noop:bg"
+      type: fragment
+      dimension: structure
+      properties:
+        text: "{input.text}"
+lens:
+  consumer: bgprobe
+  translations:
+    - from: [%s]
+      to: extracted_link
+""" % ", ".join(EXTRACTION_RELATIONSHIPS)
+
+BG_FIXTURE = """\
+# Bread notes
+
+Wild yeast ferments the dough slowly. Fermentation produces carbon
+dioxide, and the trapped gas leavens the loaf. A sourdough starter
+requires regular feeding with flour and water. Gluten development
+depends on kneading, and a hot oven enables the final rise that
+bakers call oven spring.
+"""
+
+
+def scenario_extract_foreground(binary, db_path):
+    """Semantic extraction via the foreground declarative path (spec-author
+    guide's 'minimum-useful' route 3): unstructured prose → LLM extracts
+    theme/keyword → tagged_with edges → CoOccurrence over machine-extracted
+    tags → lens translation. The full chain, no consumer-supplied tags.
+
+    Assertions are property-based (T7/T8 convention): existence and
+    structure, never specific extracted labels — LLM output varies.
+    """
+    report = Report("extract-fg")
+    if not ollama_preflight(report, model="mistral"):
+        report.emit()
+        return True
+
+    ctx = "play-extract-fg"
+    client = spawn(binary, db_path, "extract-fg")
+    try:
+        client.call("set_context", {"name": ctx})
+        loaded = client.call("load_spec", {"spec_yaml": FOREGROUND_EXTRACT_SPEC})
+        report.observe("load_spec(extract-fg)", loaded)
+
+        texts = [
+            {"id": "note-1", "text": "The sourdough starter bubbled overnight, and by morning the kitchen smelled of ripe fermentation."},
+            {"id": "note-2", "text": "Kneading the dough develops gluten, which traps the gas that makes bread rise in the oven."},
+        ]
+        for t in texts:
+            result = client.call(
+                "ingest",
+                {"input_kind": "play-extract.text", "data": t},
+                timeout=300,  # synchronous llm-orc ensemble call per ingest
+            )
+            report.observe(f"ingest({t['id']})", str(result)[:120])
+
+        ctx_id = db_context_id(db_path, ctx)
+        counts = db_edge_counts(db_path, ctx_id)
+        report.observe("edge relationships", counts)
+
+        concepts = db_nodes(db_path, ctx_id, node_type="concept")
+        report.check("machine-extracted concept nodes exist (consumer supplied no tags)", len(concepts) >= 1, [c["id"] for c in concepts])
+        report.check("tagged_with edges from fragments to extracted concepts", counts.get("tagged_with", 0) >= 2, counts.get("tagged_with", 0))
+        report.check("CoOccurrence fires over machine-extracted tags (may_be_related)", counts.get("may_be_related", 0) >= 1, counts.get("may_be_related", 0))
+        report.check(
+            "lens translates machine-derived structure (lens:probe:latent_pair)",
+            counts.get("lens:probe:latent_pair", 0) >= 1,
+            counts.get("lens:probe:latent_pair", 0),
+        )
+    finally:
+        client.close()
+    return report.emit()
+
+
+def scenario_extract_background(binary, db_path):
+    """Deep semantic extraction via the background path: extract-file →
+    ExtractionCoordinator → SemanticAdapter → extract-semantic ensemble
+    (SpaCy + 8 LLM agents, multi-run union per Invariant 45).
+
+    Also pins the T11 architectural gap: a lens loaded BEFORE ingest,
+    with a from-list covering extract-semantic's entire relationship
+    vocabulary, translates nothing — lenses do not fire on
+    background-phase emissions. That check goes red when the gap closes;
+    flip it to a positive assertion then.
+    """
+    report = Report("extract-bg")
+    if not ollama_preflight(report, model="mistral"):
+        report.emit()
+        return True
+
+    import time
+
+    ctx = "play-extract-bg"
+    fixture = os.path.join(os.path.dirname(db_path), "bread-notes.md")
+    with open(fixture, "w") as f:
+        f.write(BG_FIXTURE)
+
+    client = spawn(binary, db_path, "extract-bg")
+    try:
+        client.call("set_context", {"name": ctx})
+        # Lens registered before ingest so it WOULD translate if the
+        # background phase reached the enrichment loop.
+        loaded = client.call("load_spec", {"spec_yaml": BG_LENS_SPEC})
+        report.observe("load_spec(bg lens, full extraction vocabulary)", loaded)
+
+        result = client.call("ingest", {"input_kind": "extract-file", "data": {"file_path": fixture}})
+        report.observe("ingest(extract-file) returned (background continues)", str(result)[:120])
+
+        # Poll for background extraction (T6 pattern): registration returns
+        # immediately; SpaCy + 8 LLM agents take minutes.
+        deadline = time.time() + 600
+        concepts = 0
+        while time.time() < deadline:
+            concepts = node_count(client.call("find_nodes", {"node_type": "concept"}))
+            if concepts > 0:
+                break
+            time.sleep(3)
+        report.check("background extraction produced concept nodes (≤10min)", concepts > 0, concepts)
+
+        # Give the remaining agents a moment to land after first concepts,
+        # then read final state from disk.
+        time.sleep(30)
+        ctx_id = db_context_id(db_path, ctx)
+        counts = db_edge_counts(db_path, ctx_id)
+        report.observe("edge relationships", counts)
+
+        semantic_edges = {k: v for k, v in counts.items() if k in EXTRACTION_RELATIONSHIPS}
+        report.check("typed relationships extracted (extract-semantic vocabulary)", sum(semantic_edges.values()) >= 1, semantic_edges)
+
+        # Invariant 45 (multi-run union): observe corroboration, don't assert —
+        # whether two agents agree on the same edge is run-dependent.
+        rows = db_query(
+            db_path,
+            "SELECT relationship, contributions_json FROM edges WHERE context_id = ?",
+            (ctx_id,),
+        )
+        max_contrib = max((len(json.loads(c or "{}")) for _, c in rows), default=0)
+        report.observe("max distinct contributions on any edge (Inv 45 reinforcement)", max_contrib)
+
+        lens_count = sum(v for k, v in counts.items() if k.startswith("lens:bgprobe"))
+        report.check(
+            "T11 gap pin: lens does NOT fire on background emissions (0 expected)",
+            lens_count == 0,
+            f"{lens_count}" + ("" if lens_count == 0 else " — gap seems CLOSED; flip this assertion"),
+        )
+    finally:
+        client.close()
+    return report.emit()
+
+
 SCENARIOS = {
     "crawl": scenario_crawl,
     "walk": scenario_walk,
     "run": scenario_run,
     "stale": scenario_stale,
+    "extract-fg": scenario_extract_foreground,
+    "extract-bg": scenario_extract_background,
 }
 
 
