@@ -1088,16 +1088,23 @@ def scenario_latent(binary, db_path):
                 sorted(cross_trellis) or "none",
             )
 
-            # Carrel's lens lives in B's pipeline (A's predates carrel's
-            # load_spec). One further B-side event triggers the full-scan
-            # lens over the sweep's edges — the self-heal observed in M1.
+            # Cross-process lens reactivity (issue #10 fix): A's pipeline
+            # syncs the specs table before ingesting, so carrel's lens —
+            # loaded in B's process — fires during A's sweep immediately.
+            # Pre-fix this was 0 until a B-side event triggered the
+            # full-scan self-heal.
             carrel_before = len(lens_pairs(db_path, ctx_id, "lens:carrel:related_material"))
+            report.check(
+                "carrel lens fired during A's sweep (Inv 62 across processes, issue #10)",
+                carrel_before > 0,
+                carrel_before,
+            )
             b.call("ingest", {"input_kind": "carrel.item", "data": {"id": "late-note", "text": "A late note about granular flows in dense crowds."}})
             carrel_after = lens_pairs(db_path, ctx_id, "lens:carrel:related_material")
             cross_carrel = [p for p in carrel_after if ("frag:carrel:" in p[0]) != ("frag:carrel:" in p[1])]
             report.observe("carrel lens coverage before/after B-side event", f"{carrel_before} -> {len(carrel_after)}")
             report.check(
-                "carrel lens covers the sweep's bridges after its next event (cross-process self-heal)",
+                "carrel lens covers the cross-consumer bridges",
                 len(cross_carrel) > 0,
                 sorted(cross_carrel) or "none",
             )
