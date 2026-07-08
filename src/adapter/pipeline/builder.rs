@@ -87,11 +87,21 @@ impl PipelineBuilder {
             "similar_to",
             "discovery_gap",
         )));
-        self.enrichments.push(Arc::new(TemporalProximityEnrichment::new(
-            "created_at",
-            86_400_000, // 24 hours in ms
-            "temporal_proximity",
-        )));
+        // Scoped to fragments (issue #6): concept nodes also carry
+        // created_at (ADR-039), and unscoped pairing was degenerate —
+        // every batch paired everything. Consumers wanting broader
+        // pairing declare their own parameterization via `enrichments:`.
+        // NOTE (release notes): behavior change vs <= v0.3.0, and the
+        // enrichment ID changes, so prior contributions are orphaned
+        // per Invariant 13.
+        self.enrichments.push(Arc::new(
+            TemporalProximityEnrichment::new(
+                "created_at",
+                86_400_000, // 24 hours in ms
+                "temporal_proximity",
+            )
+            .with_node_types(vec!["fragment".to_string()]),
+        ));
 
         #[cfg(feature = "embeddings")]
         {

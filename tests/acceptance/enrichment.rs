@@ -134,6 +134,41 @@ async fn temporal_proximity_fires_on_content_adapter_output_within_window() {
 }
 
 #[tokio::test]
+async fn default_temporal_proximity_scopes_to_fragments() {
+    // issue #6: the DEFAULT temporal enrichment pairs fragments only.
+    // Concept nodes also carry created_at (ADR-039), and unscoped pairing
+    // made the signal degenerate — every tag batch paired with everything.
+    let env = TestEnv::new();
+
+    env.api
+        .ingest(
+            env.ctx_name(),
+            "content",
+            Box::new(FragmentInput::new(
+                "tagged fragment",
+                vec!["alpha".into(), "beta".into()],
+            )),
+        )
+        .await
+        .expect("ingest should succeed");
+
+    let ctx = env.engine.get_context(&env.context_id).expect("context exists");
+    let concept_temporal = ctx
+        .edges
+        .iter()
+        .filter(|e| {
+            e.relationship == "temporal_proximity"
+                && (e.source.to_string().starts_with("concept:")
+                    || e.target.to_string().starts_with("concept:"))
+        })
+        .count();
+    assert_eq!(
+        concept_temporal, 0,
+        "default temporal enrichment must not pair concept nodes (issue #6)"
+    );
+}
+
+#[tokio::test]
 async fn enrichment_loop_quiesces() {
     let env = TestEnv::new();
     let input = FragmentInput::new(
