@@ -49,9 +49,9 @@ data model was built for the vision and holds up under test: shared
 contexts, namespaced vocabulary layers, provenance-attributed evidence,
 corroboration, event cursors. The runtime story is where the gaps live:
 
-- Two long-lived processes on the same SQLite do not see each other's
-  writes (in-memory cache, no read invalidation; pinned by
-  `tools/play-harness/play.py stale`).
+- ~~Two long-lived processes on the same SQLite do not see each other's
+  writes~~ **Fixed 2026-07-07** (ADR-017 §2 conformance, see M0 below;
+  `play.py stale` is now the positive regression test).
 - Lenses do not fire on background-phase emissions (deep semantic
   extraction), while core enrichments do.
 - Cross-pollination itself — the central claim — has never been
@@ -65,14 +65,17 @@ delivered it. The runtime model simply never had its turn. It has it now.
 
 ## Milestones
 
-**M0 — Decide the runtime model.** Build the consistency matrix: process
-topologies (same process / one-shot processes / long-lived processes) ×
-read surfaces (node reads, edge reads, `shared_concepts`,
-`changes_since`). The `changes_since` cell is pivotal: if the event log
-reads from disk, the cursor surface is already the sanctioned
-cross-process sync channel; if not, choose between a cache-invalidation
-contract and a daemon/server mode. Everything downstream waits on this
-answer.
+**M0 — Decide the runtime model. ✅ RESOLVED 2026-07-07.** The
+consistency matrix (`play.py matrix`, issue #1) showed: restart topology
+fully correct, writes already concurrency-safe (incremental upsert,
+ADR-017 §3), `changes_since` already store-direct — and every
+cache-backed read STALE in the concurrent topology. Root cause was
+ADR-017 §2 non-conformance: `reload_if_changed()` (data_version check)
+existed, unit-tested, but was never called from consumer-facing paths.
+Fixed by wiring it into `PlexusApi` name resolution (commit `d97e5de`);
+all 18 matrix cells now LIVE. **The runtime model is: shared SQLite,
+library rule intact, per-read data_version coherence — no daemon.**
+Long-lived multi-process consumers are now legal, which unblocks M1.
 
 **M1 — Prove the flywheel.** Engineer an overlap corpus (content with
 deliberate latent bridges — the existing fixture corpora were curated for
