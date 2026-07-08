@@ -803,6 +803,205 @@ def scenario_matrix(binary, db_path):
     return report.emit()
 
 
+# ── M1: flywheel + differential (vision.md, GitHub issue tracking) ──────
+#
+# Engineered-overlap corpus, inline by design (CURATION): each trellis
+# fragment shares one deliberately dominant noun with one carrel note
+# (starlings / ants / crowd), so single-word theme/keyword extraction
+# has a fair chance of converging on shared concept IDs across
+# consumers. The overlap is planted; what is NOT planted is any edge —
+# all structure must emerge from extraction + co-occurrence + lens.
+
+TRELLIS_FRAGMENTS = [
+    {"id": "murmuration-dusk", "text": "The murmuration turned as one mind, ten thousand starlings folding the dusk into a single gesture. No bird leads; the starlings decide together."},
+    {"id": "scent-city", "text": "The ants wrote their city in scent, each trail a sentence revised by a thousand small authors until the shortest path read like truth. Ants argue in pheromones."},
+    {"id": "pit-physics", "text": "The crowd in the mosh pit breathed like a fluid, strangers colliding into brief constellations, the crowd discovering physics it never studied."},
+]
+
+CARREL_NOTES = [
+    {"id": "note-starlings", "text": "Field notes on starlings: murmuration dynamics suggest local rules produce global coordination without central control. Starlings turn in cascades faster than any individual reaction time."},
+    {"id": "note-ants", "text": "Reading on ant colony optimization: pheromone trails let ants converge on shortest paths. The ants compute collectively without any central computer."},
+    {"id": "note-crowd", "text": "Crowd dynamics paper: mosh pits exhibit gas-like particle motion; the crowd behaves like a granular fluid under density changes."},
+]
+
+CONSUMER_SPEC_TEMPLATE = """\
+adapter_id: {consumer}
+input_kind: {consumer}.item
+ensemble: test-theme-extractor
+lens:
+  consumer: {consumer}
+  translations:
+    - from: [may_be_related]
+      to: {to}
+emit:
+  - create_node:
+      id: "frag:{consumer}:{{input.id}}"
+      type: fragment
+      dimension: semantic
+      properties:
+        text: "{{input.text}}"
+  - create_node:
+      id: "concept:{{ensemble.theme}}"
+      type: concept
+      dimension: semantic
+  - create_node:
+      id: "concept:{{ensemble.keyword}}"
+      type: concept
+      dimension: semantic
+  - create_edge:
+      source: "frag:{consumer}:{{input.id}}"
+      target: "concept:{{ensemble.theme}}"
+      relationship: tagged_with
+  - create_edge:
+      source: "frag:{consumer}:{{input.id}}"
+      target: "concept:{{ensemble.keyword}}"
+      relationship: tagged_with
+"""
+
+
+def concept_contributors(db_path, ctx_id):
+    """Map concept node id -> set of adapter ids that tagged it."""
+    rows = db_query(
+        db_path,
+        "SELECT target_id, contributions_json FROM edges "
+        "WHERE context_id = ? AND relationship = 'tagged_with'",
+        (ctx_id,),
+    )
+    owners = {}
+    for target, contrib in rows:
+        for key in json.loads(contrib or "{}"):
+            owners.setdefault(target, set()).add(key)
+    return owners
+
+
+def lens_pairs(db_path, ctx_id, relationship):
+    return {tuple(sorted(p)) for p in db_edges(db_path, ctx_id, relationship)}
+
+
+def ingest_items(client, kind, items, report, label):
+    for item in items:
+        client.call("ingest", {"input_kind": kind, "data": item}, timeout=300)
+    report.observe(f"ingested {label}", f"{len(items)} items via {kind}")
+
+
+def scenario_flywheel(binary, db_path):
+    """M1: cross-pollination flywheel + solo-vs-shared differential.
+
+    Two live consumer processes (trellis: structural register; carrel:
+    named register) share one context. The claim under test is the
+    vision's central sentence: consumer A receives, in A's own
+    vocabulary, a provenance-attributed signal about content B ingested.
+    The differential then measures what cohabitation bought: A's lens
+    pairs in the shared context minus A's pairs from an identical solo
+    run. Both runs use the concept-identity cross-pollination mechanism
+    (extraction -> shared concept IDs -> co-occurrence -> lens).
+    """
+    report = Report("flywheel")
+    if not ollama_preflight(report, model="mistral"):
+        report.emit()
+        return True
+
+    trellis_spec = CONSUMER_SPEC_TEMPLATE.format(consumer="trellis", to="latent_pair")
+    carrel_spec = CONSUMER_SPEC_TEMPLATE.format(consumer="carrel", to="related_material")
+
+    # ── Solo baseline: trellis alone in its own context ──────────────
+    a_solo = spawn(binary, db_path, "fw-solo")
+    try:
+        a_solo.call("set_context", {"name": "solo"})
+        a_solo.call("load_spec", {"spec_yaml": trellis_spec})
+        ingest_items(a_solo, "trellis.item", TRELLIS_FRAGMENTS, report, "solo trellis fragments")
+    finally:
+        a_solo.close()
+    solo_ctx = db_context_id(db_path, "solo")
+    solo_pairs = lens_pairs(db_path, solo_ctx, "lens:trellis:latent_pair")
+    report.observe("solo lens:trellis:latent_pair pairs", sorted(solo_pairs) or 0)
+
+    # ── Shared context: two live consumer processes ───────────────────
+    a = spawn(binary, db_path, "fw-trellis")
+    try:
+        a.call("set_context", {"name": "studio"})
+        a.call("load_spec", {"spec_yaml": trellis_spec})
+
+        b = spawn(binary, db_path, "fw-carrel")  # constructed after trellis spec persisted
+        try:
+            b.call("set_context", {"name": "studio"})
+            b.call("load_spec", {"spec_yaml": carrel_spec})
+
+            ingest_items(a, "trellis.item", TRELLIS_FRAGMENTS, report, "trellis fragments (process A)")
+            ingest_items(b, "carrel.item", CARREL_NOTES, report, "carrel notes (process B)")
+
+            # Coherence fix in action: A sees B's writes live, no restart
+            ctx_id = db_context_id(db_path, "studio")
+            disk_frags = len(db_nodes(db_path, ctx_id, node_type="fragment"))
+            a_sees = node_count(a.call("find_nodes", {"node_type": "fragment"}))
+            report.check(
+                "concurrent liveness: A sees B's ingests without restart (ADR-017 §2)",
+                a_sees == disk_frags,
+                f"A sees {a_sees}/{disk_frags}",
+            )
+
+            # A queries in A's own vocabulary, through the live MCP surface
+            a_latent = node_count(a.call("find_nodes", {"relationship_prefix": "lens:trellis:latent_pair"}))
+            report.check("A's vocabulary query returns nodes (lens:trellis:latent_pair)", a_latent > 0, a_latent)
+        finally:
+            b.close()
+    finally:
+        a.close()
+
+    # ── Cross-pollination analysis (disk ground truth) ────────────────
+    ctx_id = db_context_id(db_path, "studio")
+    owners = concept_contributors(db_path, ctx_id)
+    both = sorted(c for c, o in owners.items() if {"trellis", "carrel"} <= o)
+    trellis_only = {c for c, o in owners.items() if o == {"trellis"}}
+    carrel_only = {c for c, o in owners.items() if o == {"carrel"}}
+    report.observe("concepts tagged by BOTH consumers (identity convergence)", both or "none")
+    report.observe("consumer-exclusive concepts", f"trellis-only={sorted(trellis_only)} carrel-only={sorted(carrel_only)}")
+    report.check("concept-identity convergence across consumers", len(both) > 0, len(both))
+
+    shared_pairs = lens_pairs(db_path, ctx_id, "lens:trellis:latent_pair")
+    carrel_pairs = lens_pairs(db_path, ctx_id, "lens:carrel:related_material")
+    report.observe("shared-context lens:trellis:latent_pair pairs", sorted(shared_pairs))
+    report.observe("shared-context lens:carrel:related_material pairs", sorted(carrel_pairs))
+
+    # The flywheel claim: a signal in A's vocabulary about B's material —
+    # a trellis lens pair with an endpoint concept only carrel produced.
+    cross_a = [p for p in shared_pairs if any(n in carrel_only for n in p)]
+    cross_b = [p for p in carrel_pairs if any(n in trellis_only for n in p)]
+    report.check(
+        "FLYWHEEL: trellis receives signal about carrel-only material, in trellis vocabulary",
+        len(cross_a) > 0,
+        cross_a or "none",
+    )
+    report.check(
+        "FLYWHEEL (reverse): carrel receives signal about trellis-only material",
+        len(cross_b) > 0,
+        cross_b or "none",
+    )
+
+    # ── Differential: what did cohabitation buy trellis? ─────────────
+    # Compare by concept-pair identity; solo pair set uses the same
+    # corpus and spec, so any new pair is attributable to cohabitation.
+    delta = shared_pairs - solo_pairs
+    report.observe(
+        "DIFFERENTIAL (marginal value of the shared context)",
+        f"solo={len(solo_pairs)} shared={len(shared_pairs)} delta={len(delta)}: {sorted(delta)}",
+    )
+    report.check("differential: cohabitation produced pairs solo could not", len(delta) > 0, len(delta))
+
+    # Translation-coverage observation (spec-registry staleness probe):
+    # may_be_related edges lacking a lens translation reveal whether a
+    # process whose pipeline predates the other consumer's load_spec
+    # left edges untranslated.
+    mbr = lens_pairs(db_path, ctx_id, "may_be_related")
+    untranslated_trellis = mbr - shared_pairs
+    untranslated_carrel = mbr - carrel_pairs
+    report.observe(
+        "lens coverage over may_be_related",
+        f"mbr={len(mbr)} untranslated-by-trellis={len(untranslated_trellis)} untranslated-by-carrel={len(untranslated_carrel)}",
+    )
+    return report.emit()
+
+
 SCENARIOS = {
     "crawl": scenario_crawl,
     "walk": scenario_walk,
@@ -811,6 +1010,7 @@ SCENARIOS = {
     "extract-fg": scenario_extract_foreground,
     "extract-bg": scenario_extract_background,
     "matrix": scenario_matrix,
+    "flywheel": scenario_flywheel,
 }
 
 
