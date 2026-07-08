@@ -1002,6 +1002,116 @@ def scenario_flywheel(binary, db_path):
     return report.emit()
 
 
+LEAN_CONSUMER_SPEC = """\
+adapter_id: {consumer}
+input_kind: {consumer}.item
+lens:
+  consumer: {consumer}
+  translations:
+    - from: [similar_to]
+      to: {to}
+emit:
+  - create_node:
+      id: "frag:{consumer}:{{input.id}}"
+      type: fragment
+      dimension: semantic
+      properties:
+        text: "{{input.text}}"
+"""
+
+
+def scenario_latent(binary, db_path):
+    """M2 / issue #9: cross-consumer latent bridging via a re-embed sweep.
+
+    The worked-example embedding spec is batch-local, so two consumers
+    ingesting separately never get cross-consumer similar_to edges from
+    it directly. This scenario proves the consumer-side resolution: any
+    consumer can assemble a batch FROM THE WHOLE CONTEXT (MCP find_nodes
+    returns node text), re-ingest it through the embedding-activation
+    spec, and the resulting similar_to edges bridge consumers. Upserts
+    make the re-ingest idempotent at the node level; lenses then
+    translate the latent bridges into each consumer's vocabulary.
+    No engine changes — existing machinery composed.
+    """
+    report = Report("latent")
+    if not ollama_preflight(report, model="nomic-embed-text"):
+        report.emit()
+        return True
+
+    ctx = "latent"
+    a = spawn(binary, db_path, "lat-trellis")
+    try:
+        a.call("set_context", {"name": ctx})
+        a.call("load_spec", {"spec_yaml": LEAN_CONSUMER_SPEC.format(consumer="trellis", to="latent_pair")})
+
+        b = spawn(binary, db_path, "lat-carrel")
+        try:
+            b.call("set_context", {"name": ctx})
+            b.call("load_spec", {"spec_yaml": LEAN_CONSUMER_SPEC.format(consumer="carrel", to="related_material")})
+
+            ingest_items(a, "trellis.item", TRELLIS_FRAGMENTS, report, "trellis fragments (A)")
+            ingest_items(b, "carrel.item", CARREL_NOTES, report, "carrel notes (B)")
+
+            # ── The re-embed sweep, performed by consumer A through MCP ──
+            found = a.call("find_nodes", {"node_type": "fragment"})
+            docs = [
+                {"id": n["id"], "text": n["properties"]["text"]}
+                for n in found.get("nodes", [])
+                if n.get("properties", {}).get("text")
+            ]
+            report.check("sweep read: A assembled whole-context batch via MCP", len(docs) == 6, len(docs))
+
+            with open(WORKED_EXAMPLE) as f:
+                a.call("load_spec", {"spec_yaml": f.read()})
+            result = a.call(
+                "ingest",
+                {"input_kind": "embedding-activation.batch", "data": {"docs": docs}},
+                timeout=600,
+            )
+            report.observe("re-embed sweep ingest", str(result)[:120])
+
+            ctx_id = db_context_id(db_path, ctx)
+            sim = db_edges(db_path, ctx_id, "similar_to")
+            cross_sim = {tuple(sorted(p)) for p in sim if ("frag:trellis:" in p[0]) != ("frag:trellis:" in p[1])}
+            report.check(
+                "cross-consumer similar_to edges exist (latent bridge across consumers)",
+                len(cross_sim) > 0,
+                sorted(cross_sim) or "none",
+            )
+
+            # Trellis lens fires in A's process (loaded there) on the new edges
+            trellis_pairs = lens_pairs(db_path, ctx_id, "lens:trellis:latent_pair")
+            cross_trellis = [p for p in trellis_pairs if ("frag:trellis:" in p[0]) != ("frag:trellis:" in p[1])]
+            report.check(
+                "LATENT FLYWHEEL: trellis receives latent bridge to carrel material, in trellis vocabulary",
+                len(cross_trellis) > 0,
+                sorted(cross_trellis) or "none",
+            )
+
+            # Carrel's lens lives in B's pipeline (A's predates carrel's
+            # load_spec). One further B-side event triggers the full-scan
+            # lens over the sweep's edges — the self-heal observed in M1.
+            carrel_before = len(lens_pairs(db_path, ctx_id, "lens:carrel:related_material"))
+            b.call("ingest", {"input_kind": "carrel.item", "data": {"id": "late-note", "text": "A late note about granular flows in dense crowds."}})
+            carrel_after = lens_pairs(db_path, ctx_id, "lens:carrel:related_material")
+            cross_carrel = [p for p in carrel_after if ("frag:carrel:" in p[0]) != ("frag:carrel:" in p[1])]
+            report.observe("carrel lens coverage before/after B-side event", f"{carrel_before} -> {len(carrel_after)}")
+            report.check(
+                "carrel lens covers the sweep's bridges after its next event (cross-process self-heal)",
+                len(cross_carrel) > 0,
+                sorted(cross_carrel) or "none",
+            )
+
+            # A sees everything live — coherence fix inside the loop again
+            a_pairs = node_count(a.call("find_nodes", {"relationship_prefix": "lens:trellis:latent_pair"}))
+            report.check("A queries its latent bridges live via MCP", a_pairs > 0, a_pairs)
+        finally:
+            b.close()
+    finally:
+        a.close()
+    return report.emit()
+
+
 SCENARIOS = {
     "crawl": scenario_crawl,
     "walk": scenario_walk,
@@ -1011,6 +1121,7 @@ SCENARIOS = {
     "extract-bg": scenario_extract_background,
     "matrix": scenario_matrix,
     "flywheel": scenario_flywheel,
+    "latent": scenario_latent,
 }
 
 
