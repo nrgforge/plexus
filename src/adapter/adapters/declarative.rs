@@ -399,6 +399,9 @@ pub struct EnrichmentDeclaration {
     pub trigger_relationship: Option<String>,
     pub timestamp_property: Option<String>,
     pub threshold_ms: Option<u64>,
+    /// Optional node-type scoping for temporal_proximity (issue #6).
+    #[serde(default)]
+    pub node_types: Option<Vec<String>>,
     /// Model name for embedding_similarity enrichment (ADR-026).
     pub model_name: Option<String>,
     /// Similarity threshold for embedding_similarity enrichment (ADR-026).
@@ -662,7 +665,11 @@ impl DeclarativeAdapter {
                     let output = decl.output_relationship.as_deref().ok_or_else(|| {
                         AdapterError::Internal("temporal_proximity enrichment requires output_relationship".into())
                     })?;
-                    Arc::new(crate::adapter::temporal_proximity::TemporalProximityEnrichment::new(ts_prop, threshold, output))
+                    let mut enrichment = crate::adapter::temporal_proximity::TemporalProximityEnrichment::new(ts_prop, threshold, output);
+                    if let Some(ref types) = decl.node_types {
+                        enrichment = enrichment.with_node_types(types.clone());
+                    }
+                    Arc::new(enrichment)
                 }
                 "embedding_similarity" => {
                     let model_name = decl.model_name.as_deref().ok_or_else(|| {

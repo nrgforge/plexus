@@ -25,6 +25,11 @@ pub struct TemporalProximityEnrichment {
     timestamp_property: String,
     threshold_ms: u64,
     output_relationship: String,
+    /// When set, only nodes whose `node_type` is in this list pair
+    /// (issue #6 — without scoping, concepts pair with fragments and
+    /// batch ingests pair everything carrying the timestamp property).
+    /// None preserves the original any-node behavior.
+    node_types: Option<Vec<String>>,
     id: String,
 }
 
@@ -35,7 +40,15 @@ impl TemporalProximityEnrichment {
             timestamp_property: timestamp_property.to_string(),
             threshold_ms,
             output_relationship: output_relationship.to_string(),
+            node_types: None,
         }
+    }
+
+    /// Restrict pairing to nodes of the given types (issue #6).
+    pub fn with_node_types(mut self, node_types: Vec<String>) -> Self {
+        self.id = format!("{}:{}", self.id, node_types.join("+"));
+        self.node_types = Some(node_types);
+        self
     }
 }
 
@@ -52,9 +65,15 @@ impl Enrichment for TemporalProximityEnrichment {
 
         let mut emission = Emission::new();
 
-        // Collect all nodes with the timestamp property
+        // Collect all nodes with the timestamp property (scoped by
+        // node_type when configured — issue #6)
         let timestamped: Vec<_> = context
             .nodes()
+            .filter(|n| {
+                self.node_types
+                    .as_ref()
+                    .is_none_or(|types| types.iter().any(|t| t == &n.node_type))
+            })
             .filter_map(|n| {
                 extract_timestamp(&n.properties, &self.timestamp_property)
                     .map(|ts| (n.id.clone(), ts))
@@ -160,6 +179,48 @@ mod tests {
             node_ids: ids.into_iter().map(NodeId::from_string).collect(),
             adapter_id: "test".to_string(),
             context_id: "test".to_string(),
+        }
+    }
+
+    // === Scenario: node-type scoping (issue #6) ===
+    // Unscoped, any nodes carrying the timestamp property pair — concept
+    // nodes pair with fragments, and batch ingests pair everything.
+    // with_node_types restricts pairing to the named types.
+
+    #[test]
+    fn node_type_scoping_pairs_only_named_types() {
+        let enrichment =
+            TemporalProximityEnrichment::new("created_at", 500, "temporal_proximity")
+                .with_node_types(vec!["fragment".to_string()]);
+
+        let mut ctx = Context::new("test");
+        let mut frag_a = node_with_timestamp("frag:a", "created_at", "2026-04-20T12:00:00.000Z");
+        frag_a.node_type = "fragment".to_string();
+        let mut frag_b = node_with_timestamp("frag:b", "created_at", "2026-04-20T12:00:00.100Z");
+        frag_b.node_type = "fragment".to_string();
+        let mut concept = node_with_timestamp("concept:x", "created_at", "2026-04-20T12:00:00.200Z");
+        concept.node_type = "concept".to_string();
+        ctx.add_node(frag_a);
+        ctx.add_node(frag_b);
+        ctx.add_node(concept);
+
+        let emission = enrichment
+            .enrich(&[nodes_added_event(vec!["frag:a", "frag:b", "concept:x"])], &ctx)
+            .expect("fragment pair should emit");
+
+        assert_eq!(
+            emission.edges.len(),
+            2,
+            "only frag:a<->frag:b (symmetric pair); the concept is out of scope"
+        );
+        for ae in &emission.edges {
+            assert!(
+                !ae.edge.source.to_string().starts_with("concept")
+                    && !ae.edge.target.to_string().starts_with("concept"),
+                "concept must not participate: {} -> {}",
+                ae.edge.source,
+                ae.edge.target
+            );
         }
     }
 
