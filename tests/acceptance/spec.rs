@@ -61,7 +61,7 @@ emit:
         .collect();
 
     assert!(
-        enrichment_ids.iter().any(|id| *id == "lens:trellis"),
+        enrichment_ids.contains(&"lens:trellis"),
         "persisted lens should be rehydrated, got: {:?}",
         enrichment_ids
     );
@@ -130,7 +130,7 @@ emit:
         .collect();
 
     assert!(
-        enrichment_ids.iter().any(|id| *id == "lens:carrel"),
+        enrichment_ids.contains(&"lens:carrel"),
         "good spec's lens should be rehydrated despite bad spec, got: {:?}",
         enrichment_ids
     );
@@ -273,7 +273,7 @@ emit:
 async fn load_spec_lens_runs_on_existing_content() {
     use plexus::adapter::{PipelineBuilder, FragmentInput};
     use plexus::storage::{OpenStore, SqliteStore};
-    use plexus::{Context, NodeId, PlexusApi, PlexusEngine};
+    use plexus::{Context, PlexusApi, PlexusEngine};
     use std::sync::Arc;
 
     let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite"));

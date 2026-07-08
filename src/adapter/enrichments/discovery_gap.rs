@@ -301,7 +301,7 @@ mod tests {
         // Round 2: quiescent
         let round2_events = vec![GraphEvent::EdgesAdded {
             edge_ids: emission.edges.iter().map(|ae| {
-                EdgeId::from_string(&format!("{}->{}",
+                EdgeId::from_string(format!("{}->{}",
                     ae.edge.source.as_str(), ae.edge.target.as_str()))
             }).collect(),
             adapter_id: "discovery_gap:similar_to:discovery_gap".to_string(),

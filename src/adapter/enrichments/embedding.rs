@@ -69,6 +69,12 @@ pub struct InMemoryVectorStore {
     vectors: RwLock<HashMap<String, HashMap<String, Vec<f32>>>>,
 }
 
+impl Default for InMemoryVectorStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryVectorStore {
     /// Create a new empty in-memory vector store.
     pub fn new() -> Self {
@@ -93,7 +99,7 @@ impl VectorStore for InMemoryVectorStore {
             .read()
             .unwrap()
             .get(context_id)
-            .map_or(false, |ctx| ctx.contains_key(node_id.as_str()))
+            .is_some_and(|ctx| ctx.contains_key(node_id.as_str()))
     }
 
     fn find_similar(&self, context_id: &str, query: &[f32], threshold: f32) -> Vec<(NodeId, f32)> {

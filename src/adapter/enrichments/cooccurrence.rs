@@ -14,7 +14,7 @@
 use crate::adapter::enrichment::Enrichment;
 use crate::graph::events::GraphEvent;
 use crate::adapter::types::{AnnotatedEdge, Emission};
-use crate::graph::{dimension, ContentType, Context, Edge, NodeId};
+use crate::graph::{dimension, Context, Edge, NodeId};
 use std::collections::{HashMap, HashSet};
 
 /// Enrichment that detects co-occurrence via shared source nodes.
@@ -31,6 +31,12 @@ pub struct CoOccurrenceEnrichment {
     source_relationship: String,
     output_relationship: String,
     id: String,
+}
+
+impl Default for CoOccurrenceEnrichment {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CoOccurrenceEnrichment {
@@ -159,6 +165,7 @@ fn output_edge_exists(context: &Context, source: &NodeId, target: &NodeId, relat
 
 #[cfg(test)]
 mod tests {
+    use crate::graph::ContentType;
     use super::*;
     use crate::adapter::EngineSink;
     use crate::adapter::content::{ContentAdapter, FragmentInput};
@@ -483,7 +490,7 @@ mod tests {
         // not target node content type (Invariant 50).
         for tag in &["alpha", "bravo", "charlie"] {
             let mut target = Node::new("section", ContentType::Document);
-            target.id = NodeId::from_string(&format!("section:{}", tag));
+            target.id = NodeId::from_string(format!("section:{}", tag));
             target.dimension = dimension::SEMANTIC.to_string();
             ctx.add_node(target);
         }
@@ -582,7 +589,7 @@ mod tests {
         // Shared concept nodes in semantic dimension
         for tag in &["concurrency", "async", "performance"] {
             let mut concept = Node::new("concept", ContentType::Concept);
-            concept.id = NodeId::from_string(&format!("concept:{}", tag));
+            concept.id = NodeId::from_string(format!("concept:{}", tag));
             concept.dimension = dimension::SEMANTIC.to_string();
             ctx.add_node(concept);
         }
@@ -641,7 +648,7 @@ mod tests {
             edge_ids: emission_r1
                 .edges
                 .iter()
-                .map(|ae| crate::graph::EdgeId::from_string(&format!(
+                .map(|ae| crate::graph::EdgeId::from_string(format!(
                     "{}->{}",
                     ae.edge.source.as_str(),
                     ae.edge.target.as_str()

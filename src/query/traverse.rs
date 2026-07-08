@@ -242,7 +242,7 @@ mod tests {
             .execute(&ctx);
 
         // Origin + 1 neighbor
-        assert!(result.levels.len() >= 1);
+        assert!(!result.levels.is_empty());
     }
 
     #[test]
@@ -259,7 +259,7 @@ mod tests {
             .execute(&ctx);
 
         // Should have levels for origin, depth 1, depth 2
-        assert!(result.levels.len() >= 1);
+        assert!(!result.levels.is_empty());
     }
 
     #[test]
@@ -276,7 +276,7 @@ mod tests {
             .execute(&ctx);
 
         // Should find neighbors in both directions
-        assert!(result.levels.len() >= 1);
+        assert!(!result.levels.is_empty());
     }
 
     #[test]

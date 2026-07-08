@@ -208,6 +208,12 @@ pub struct SubprocessClient {
     service: Mutex<Option<RunningService<RoleClient, ()>>>,
 }
 
+impl Default for SubprocessClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubprocessClient {
     /// Create a new subprocess client using the default `llm-orc` command.
     pub fn new() -> Self {
@@ -317,10 +323,7 @@ fn extract_text_content(content: &[Content]) -> String {
 impl LlmOrcClient for SubprocessClient {
     async fn is_available(&self) -> bool {
         // Try to connect and list tools — if it works, llm-orc is available
-        match self.get_peer().await {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        (self.get_peer().await).is_ok()
     }
 
     async fn invoke(

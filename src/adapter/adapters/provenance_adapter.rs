@@ -6,7 +6,7 @@ use crate::graph::events::GraphEvent;
 use crate::adapter::sink::{AdapterError, AdapterSink};
 use crate::adapter::traits::{Adapter, AdapterInput};
 use crate::adapter::types::{EdgeRemoval, Emission, OutboundEvent};
-use crate::graph::{dimension, ContentType, Context, Edge, Node, NodeId, PropertyValue};
+use crate::graph::{dimension, Context, Edge, Node, NodeId, PropertyValue};
 use async_trait::async_trait;
 
 /// Input data for the ProvenanceAdapter.
@@ -71,6 +71,12 @@ pub enum ProvenanceInput {
 /// responsibility. The adapter trusts pre-validated input and focuses
 /// purely on graph mutations.
 pub struct ProvenanceAdapter;
+
+impl Default for ProvenanceAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ProvenanceAdapter {
     pub fn new() -> Self {
@@ -278,6 +284,7 @@ impl Adapter for ProvenanceAdapter {
 
 #[cfg(test)]
 mod tests {
+    use crate::graph::ContentType;
     use super::*;
     use crate::adapter::EngineSink;
     use crate::adapter::FrameworkContext;

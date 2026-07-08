@@ -89,6 +89,12 @@ pub struct ModuleEmission {
 /// MIME affinity: `text/markdown` — does not match `text/plain` or other text types.
 pub struct MarkdownStructureModule;
 
+impl Default for MarkdownStructureModule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MarkdownStructureModule {
     pub fn new() -> Self {
         Self

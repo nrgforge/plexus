@@ -86,7 +86,7 @@ impl Enrichment for TemporalProximityEnrichment {
                 let (ref id_a, ts_a) = timestamped[i];
                 let (ref id_b, ts_b) = timestamped[j];
 
-                let diff = if ts_a > ts_b { ts_a - ts_b } else { ts_b - ts_a };
+                let diff = ts_a.abs_diff(ts_b);
 
                 if diff > self.threshold_ms {
                     continue;

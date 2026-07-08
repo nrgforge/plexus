@@ -93,6 +93,12 @@ pub struct ExtractionCoordinator {
     enrichment_cell: Option<Arc<std::sync::RwLock<Arc<crate::adapter::enrichment::EnrichmentRegistry>>>>,
 }
 
+impl Default for ExtractionCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExtractionCoordinator {
     pub fn new() -> Self {
         Self {
@@ -255,10 +261,7 @@ fn parse_frontmatter(content: &str) -> Option<Result<Value, String>> {
     // Find the closing ---
     let after_first = &trimmed[3..];
     let end_pos = after_first.find("\n---");
-    let end_pos = match end_pos {
-        Some(pos) => pos,
-        None => return None,
-    };
+    let end_pos = end_pos?;
 
     let frontmatter_str = &after_first[..end_pos];
 

@@ -773,7 +773,7 @@ impl PlexusApi {
         })
     }
 
-    fn prov(&self, context_name: &str) -> PlexusResult<ProvenanceApi> {
+    fn prov(&self, context_name: &str) -> PlexusResult<ProvenanceApi<'_>> {
         let cid = self.resolve(context_name)?;
         Ok(ProvenanceApi::new(&self.engine, cid))
     }
@@ -1282,7 +1282,7 @@ emit:
     #[tokio::test]
     async fn ingest_accepts_context_name_like_other_api_methods() {
         let engine = Arc::new(PlexusEngine::new());
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
         engine.upsert_context(Context::new("named-context")).unwrap();
@@ -1304,7 +1304,7 @@ emit:
 
     fn setup_with_provenance() -> (Arc<PlexusEngine>, PlexusApi) {
         let engine = Arc::new(PlexusEngine::new());
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
         pipeline.register_adapter(Arc::new(ProvenanceAdapter::new()));
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
@@ -1480,7 +1480,7 @@ emit:
         let cid = "research";
 
         // Set up pipeline with adapters and enrichments
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),

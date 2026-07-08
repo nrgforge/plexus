@@ -261,7 +261,7 @@ pub async fn run_analysis(
     }
 
     parse_analysis_response(&response)
-        .map_err(|e| LlmOrcError::ParseError(e))
+        .map_err(LlmOrcError::ParseError)
 }
 
 #[cfg(test)]

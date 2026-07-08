@@ -58,7 +58,7 @@ impl<'a> ProvenanceApi<'a> {
                     None => true,
                 }
             })
-            .map(|n| node_to_chain_view(n))
+            .map(node_to_chain_view)
             .collect();
 
         Ok(chains)
@@ -105,16 +105,16 @@ impl<'a> ProvenanceApi<'a> {
         let marks: Vec<MarkView> = context.nodes()
             .filter(|n| n.node_type == "mark" && n.dimension == dimension::PROVENANCE)
             .filter(|n| {
-                let cid_match = chain_id.map_or(true, |cid| {
+                let cid_match = chain_id.is_none_or(|cid| {
                     prop_str(&n.properties, "chain_id") == Some(cid)
                 });
-                let file_match = file.map_or(true, |f| {
+                let file_match = file.is_none_or(|f| {
                     prop_str(&n.properties, "file") == Some(f)
                 });
-                let type_match = mark_type.map_or(true, |t| {
+                let type_match = mark_type.is_none_or(|t| {
                     prop_str(&n.properties, "type") == Some(t)
                 });
-                let tag_match = tag.map_or(true, |tg| {
+                let tag_match = tag.is_none_or(|tg| {
                     prop_tags(&n.properties).iter().any(|t| t == tg)
                 });
                 cid_match && file_match && type_match && tag_match

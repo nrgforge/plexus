@@ -155,7 +155,7 @@ mod tests {
 
     fn concept_node(label: &str) -> Node {
         let mut n = Node::new("concept", ContentType::Concept);
-        n.id = NodeId::from_string(&format!("concept:{}", label));
+        n.id = NodeId::from_string(format!("concept:{}", label));
         n.dimension = dimension::SEMANTIC.to_string();
         n
     }

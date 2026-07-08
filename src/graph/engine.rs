@@ -728,7 +728,7 @@ mod tests {
         let ctx_id = engine.upsert_context(ctx).unwrap();
 
         let result = engine.traverse(&ctx_id, TraverseQuery::from(id_a).depth(1)).unwrap();
-        assert!(result.levels.len() >= 1);
+        assert!(!result.levels.is_empty());
     }
 
     #[test]

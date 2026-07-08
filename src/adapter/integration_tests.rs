@@ -441,7 +441,7 @@ mod tests {
         }
 
         // Step 2: Create provenance chain and add mark with tags through ingest pipeline
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             vec![
@@ -1270,7 +1270,7 @@ mod tests {
             .unwrap();
 
         let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(adapter);
 
         let data: Box<dyn std::any::Any + Send + Sync> =
@@ -1336,7 +1336,7 @@ mod tests {
         ]));
 
         let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
-        let mut pipeline = IngestPipeline::new(engine.clone())
+        let pipeline = IngestPipeline::new(engine.clone())
             .with_enrichments(registry);
         pipeline.register_adapter(adapter);
 
@@ -1388,7 +1388,7 @@ mod tests {
             enrichment.clone() as Arc<dyn Enrichment>,
         ]));
 
-        let mut pipeline = IngestPipeline::new(engine.clone())
+        let pipeline = IngestPipeline::new(engine.clone())
             .with_enrichments(registry);
         pipeline.register_adapter(adapter_a);
         pipeline.register_adapter(adapter_b);
@@ -1434,7 +1434,7 @@ mod tests {
             "concept:avignon",
         ));
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             adapter,
             vec![enrichment as Arc<dyn Enrichment>],
@@ -1475,7 +1475,7 @@ mod tests {
         let adapter_b = Arc::new(EmittingAdapter::new("adapter-b", "other"));
         let enrichment_b = Arc::new(RecordingEnrichment::new("tag-bridger"));
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             adapter_a,
             vec![enrichment_a.clone() as Arc<dyn Enrichment>],
@@ -1508,7 +1508,7 @@ mod tests {
             .unwrap();
 
         let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(adapter);
 
         let data: Box<dyn std::any::Any + Send + Sync> =
@@ -1598,7 +1598,7 @@ mod tests {
         ]));
 
         let adapter = Arc::new(EmittingAdapter::new("fragment-adapter", "fragment"));
-        let mut pipeline = IngestPipeline::new(engine.clone())
+        let pipeline = IngestPipeline::new(engine.clone())
             .with_enrichments(registry);
         pipeline.register_adapter(adapter);
 
@@ -1645,7 +1645,7 @@ mod tests {
             .unwrap();
 
         let adapter = Arc::new(ProvenanceAdapter::new());
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(adapter);
 
         let data: Box<dyn std::any::Any + Send + Sync> =
@@ -1683,7 +1683,7 @@ mod tests {
             enrichment as Arc<dyn Enrichment>,
         ]));
 
-        let mut pipeline = IngestPipeline::new(engine.clone())
+        let pipeline = IngestPipeline::new(engine.clone())
             .with_enrichments(registry);
         pipeline.register_adapter(fragment_adapter);
 
@@ -1743,7 +1743,7 @@ mod tests {
             .upsert_context(Context::with_id(ctx_id.clone(), "provenance-spike"))
             .unwrap();
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             Arc::new(ContentAdapter::new("journal")),
             vec![
@@ -1830,13 +1830,13 @@ mod tests {
             Arc::new(CoOccurrenceEnrichment::new()),
         ];
 
-        let mut manual_pipeline = IngestPipeline::new(engine.clone());
+        let manual_pipeline = IngestPipeline::new(engine.clone());
         manual_pipeline.register_integration(
             Arc::new(ContentAdapter::new("manual-journal")),
             enrichments.clone(),
         );
 
-        let mut llm_pipeline = IngestPipeline::new(engine.clone());
+        let llm_pipeline = IngestPipeline::new(engine.clone());
         llm_pipeline.register_integration(
             Arc::new(ContentAdapter::new("llm-extract")),
             enrichments,
@@ -1943,19 +1943,19 @@ mod tests {
         ];
 
         // Three separate pipelines (one per consumer) sharing the same engine
-        let mut trellis_pipeline = IngestPipeline::new(engine.clone());
+        let trellis_pipeline = IngestPipeline::new(engine.clone());
         trellis_pipeline.register_integration(
             Arc::new(ContentAdapter::new("trellis-fragment")),
             enrichments.clone(),
         );
 
-        let mut carrel_llm_pipeline = IngestPipeline::new(engine.clone());
+        let carrel_llm_pipeline = IngestPipeline::new(engine.clone());
         carrel_llm_pipeline.register_integration(
             Arc::new(ContentAdapter::new("carrel-llm")),
             enrichments.clone(),
         );
 
-        let mut carrel_prov_pipeline = IngestPipeline::new(engine.clone());
+        let carrel_prov_pipeline = IngestPipeline::new(engine.clone());
         carrel_prov_pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             enrichments,
@@ -2602,19 +2602,19 @@ mod tests {
             Arc::new(CoOccurrenceEnrichment::new()),
         ];
 
-        let mut trellis = IngestPipeline::new(engine.clone());
+        let trellis = IngestPipeline::new(engine.clone());
         trellis.register_integration(
             Arc::new(ContentAdapter::new("trellis")),
             enrichments.clone(),
         );
 
-        let mut carrel_llm = IngestPipeline::new(engine.clone());
+        let carrel_llm = IngestPipeline::new(engine.clone());
         carrel_llm.register_integration(
             Arc::new(ContentAdapter::new("carrel-llm")),
             enrichments.clone(),
         );
 
-        let mut carrel_prov = IngestPipeline::new(engine.clone());
+        let carrel_prov = IngestPipeline::new(engine.clone());
         carrel_prov.register_integration(
             Arc::new(ProvenanceAdapter::new()),
             enrichments,
@@ -3276,7 +3276,7 @@ mod tests {
             Box::new(MockEmbedder::with_test_vectors()),
         ));
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             fragment_adapter,
             vec![
@@ -3402,7 +3402,7 @@ mod tests {
             Box::new(MockEmbedder { vectors: vectors_b }),
         ));
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             Arc::new(ContentAdapter::new("multi-model")),
             vec![
@@ -3467,7 +3467,7 @@ mod tests {
             .upsert_context(Context::with_id(ctx_id.clone(), "embed-gap"))
             .unwrap();
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             Arc::new(ContentAdapter::new("embed-gap")),
             vec![
@@ -3557,7 +3557,7 @@ mod tests {
             .upsert_context(Context::with_id(ctx_id.clone(), "retract-gap"))
             .unwrap();
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(
             Arc::new(ContentAdapter::new("retract-gap")),
             vec![
@@ -3664,7 +3664,7 @@ mod tests {
             Box::new(MockEmbedder::with_test_vectors()),
         ));
 
-        let mut pipeline_v1 = IngestPipeline::new(engine.clone());
+        let pipeline_v1 = IngestPipeline::new(engine.clone());
         pipeline_v1.register_integration(
             Arc::new(ContentAdapter::new("model-replace")),
             vec![
@@ -3726,7 +3726,7 @@ mod tests {
             Box::new(MockEmbedder { vectors: vectors_v2 }),
         ));
 
-        let mut pipeline_v2 = IngestPipeline::new(engine.clone());
+        let pipeline_v2 = IngestPipeline::new(engine.clone());
         pipeline_v2.register_integration(
             Arc::new(ContentAdapter::new("model-replace")),
             vec![
@@ -3856,7 +3856,7 @@ mod tests {
         let ctx_id = engine.upsert_context(Context::new("research")).unwrap();
         let cid = "research";
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("annotate")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
@@ -3865,7 +3865,7 @@ mod tests {
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
         // Step 1: Ingest fragment with #-stripped tags (caller responsibility)
-        let stripped_tags: Vec<String> = vec!["#travel", "#avignon"]
+        let stripped_tags: Vec<String> = ["#travel", "#avignon"]
             .iter()
             .map(|s| s.strip_prefix('#').unwrap_or(s).to_string())
             .collect();
@@ -3944,7 +3944,7 @@ mod tests {
         let engine = Arc::new(PlexusEngine::with_store(store));
         let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_adapter(Arc::new(ExtractionCoordinator::new()));
         pipeline.register_integration(
@@ -3985,7 +3985,7 @@ mod tests {
 
         let engine = Arc::new(PlexusEngine::new());
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
@@ -4016,7 +4016,7 @@ mod tests {
         let engine = Arc::new(PlexusEngine::with_store(store));
         let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ExtractionCoordinator::new()));
 
         // Simulate MCP transport: data arrives as serde_json::Value
@@ -4049,7 +4049,7 @@ mod tests {
         let engine = Arc::new(PlexusEngine::with_store(store.clone()));
         let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
@@ -4114,7 +4114,7 @@ mod tests {
         let engine = Arc::new(PlexusEngine::with_store(store));
         let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
@@ -4174,7 +4174,7 @@ mod tests {
         let engine = Arc::new(PlexusEngine::with_store(store));
         let ctx_id = engine.upsert_context(Context::new("test")).unwrap();
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_integration(
             Arc::new(ProvenanceAdapter::new()),
@@ -4282,7 +4282,7 @@ emit:
         let adapter = DeclarativeAdapter::from_yaml(yaml).unwrap()
             .with_llm_client(client);
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(adapter));
 
         // Verify input_kind is registered
@@ -4336,7 +4336,7 @@ emit:
         engine.upsert_context(Context::new("test")).unwrap();
         let cid = "test";
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_integration(Arc::new(ProvenanceAdapter::new()), vec![]);
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
@@ -4370,7 +4370,7 @@ emit:
         engine.upsert_context(Context::new("test")).unwrap();
         let cid = "test";
 
-        let mut pipeline = IngestPipeline::new(engine.clone());
+        let pipeline = IngestPipeline::new(engine.clone());
         pipeline.register_adapter(Arc::new(ContentAdapter::new("content")));
         pipeline.register_integration(Arc::new(ProvenanceAdapter::new()), vec![]);
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
