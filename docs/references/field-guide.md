@@ -1,6 +1,6 @@
 # Field Guide: Plexus
 
-**Generated:** 2026-07-08 (post default-install cycle BUILD)
+**Generated:** 2026-07-08 (post-graduation engineering phase, v0.4.0)
 **Derived from:** System Design v1.3, current implementation
 
 ## How to Use This Guide
