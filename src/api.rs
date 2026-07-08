@@ -66,12 +66,22 @@ impl PlexusApi {
         data: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<Vec<OutboundEvent>, AdapterError> {
         let ctx_id = self
-            .engine
-            .resolve_by_name(context_name)
-            .ok_or_else(|| AdapterError::ContextNotFound(context_name.to_string()))?;
+            .resolve_for_ingest(context_name)?;
         self.pipeline
             .ingest_with_adapter(ctx_id.as_str(), adapter, data)
             .await
+    }
+
+    /// Ingest-side name resolution with the ADR-017 §2 coherence check —
+    /// ensures writes (and the enrichment loop they trigger) operate on a
+    /// cache that reflects other connections' committed state.
+    fn resolve_for_ingest(&self, context_name: &str) -> Result<ContextId, AdapterError> {
+        self.engine
+            .reload_if_changed()
+            .map_err(|e| AdapterError::Internal(format!("cache coherence reload failed: {}", e)))?;
+        self.engine
+            .resolve_by_name(context_name)
+            .ok_or_else(|| AdapterError::ContextNotFound(context_name.to_string()))
     }
 
     /// The single write endpoint (ADR-012).
@@ -85,10 +95,7 @@ impl PlexusApi {
         input_kind: &str,
         data: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<Vec<OutboundEvent>, AdapterError> {
-        let ctx_id = self
-            .engine
-            .resolve_by_name(context_name)
-            .ok_or_else(|| AdapterError::ContextNotFound(context_name.to_string()))?;
+        let ctx_id = self.resolve_for_ingest(context_name)?;
         self.pipeline.ingest(ctx_id.as_str(), input_kind, data).await
     }
 
@@ -655,7 +662,10 @@ impl PlexusApi {
                     Ok(vec![])
                 }
             }
-            None => Ok(self.engine.list_contexts()),
+            None => {
+                self.engine.reload_if_changed()?;
+                Ok(self.engine.list_contexts())
+            }
         }
     }
 
@@ -704,7 +714,13 @@ impl PlexusApi {
     // --- Internal ---
 
     /// Resolve a context name to its ContextId (O(1) via name index).
+    ///
+    /// Checks `data_version` first and reloads the cache if another
+    /// connection has modified the database (ADR-017 §2) — every read
+    /// and write path resolves through here, so this is the coherence
+    /// choke point for multi-process consumers.
     fn resolve(&self, name: &str) -> PlexusResult<ContextId> {
+        self.engine.reload_if_changed()?;
         self.engine
             .resolve_by_name(name)
             .ok_or_else(|| PlexusError::ContextNotFound(ContextId::from(name)))
@@ -887,6 +903,108 @@ mod tests {
         let pipeline = Arc::new(IngestPipeline::new(engine.clone()));
         let api = PlexusApi::new(engine.clone(), pipeline);
         (engine, api)
+    }
+
+    // === Cache coherence at the API surface (ADR-017 §2) ===
+    // "Each PlexusEngine checks PRAGMA data_version before reads."
+    // Two API instances over the same SQLite file: reads on one must see
+    // the other's committed writes without any manual reload call.
+
+    fn setup_shared_db(db_path: &std::path::Path) -> (Arc<PlexusEngine>, PlexusApi) {
+        use crate::storage::OpenStore;
+        let store: Arc<dyn crate::storage::GraphStore> =
+            Arc::new(crate::storage::SqliteStore::open(db_path).unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store));
+        engine.load_all().unwrap();
+        let pipeline = Arc::new(IngestPipeline::new(engine.clone()));
+        let api = PlexusApi::new(engine.clone(), pipeline);
+        (engine, api)
+    }
+
+    #[test]
+    fn api_reads_see_another_engines_committed_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("coherence.db");
+
+        let (_engine_a, api_a) = setup_shared_db(&db); // long-lived reader
+        let (engine_b, api_b) = setup_shared_db(&db); // writer
+
+        // B creates a context and commits a node after A hydrated
+        let ctx_id = api_b.context_create("mx").unwrap();
+        engine_b
+            .with_context_mut(&ctx_id, |ctx| {
+                let mut node = Node::new_in_dimension(
+                    "fragment",
+                    ContentType::Document,
+                    dimension::STRUCTURE,
+                );
+                node.id = NodeId::from("frag:from-b");
+                ctx.nodes.insert(node.id.clone(), node);
+            })
+            .unwrap();
+
+        // A resolves the context B created (name resolution before reads)
+        let ids = api_a.context_list(Some("mx")).unwrap();
+        assert_eq!(ids.len(), 1, "A must see the context B created");
+
+        // A's node reads see B's committed write
+        let result = api_a
+            .find_nodes("mx", FindQuery::new().with_node_type("fragment"))
+            .unwrap();
+        assert_eq!(
+            result.nodes.len(),
+            1,
+            "A's find_nodes must see B's committed node (ADR-017 §2)"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_ingest_writes_into_context_created_by_another_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("coherence-ingest.db");
+
+        let (engine_a, _api_a_unused) = setup_shared_db(&db);
+        // A's api needs a content adapter for this test's write
+        let pipeline_a = IngestPipeline::new(engine_a.clone());
+        pipeline_a.register_adapter(Arc::new(ContentAdapter::new("content")));
+        let api_a = PlexusApi::new(engine_a.clone(), Arc::new(pipeline_a));
+
+        let (_engine_b, api_b) = setup_shared_db(&db);
+
+        // B creates the context after A hydrated; A ingests into it by name
+        api_b.context_create("mx").unwrap();
+        let result = api_a
+            .ingest(
+                "mx",
+                "content",
+                Box::new(FragmentInput::new("written by A", vec![])),
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "A's ingest must resolve a context created by another engine \
+             (ADR-017 §2), got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn api_context_listing_sees_another_engines_new_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("coherence-list.db");
+
+        let (_engine_a, api_a) = setup_shared_db(&db);
+        let (_engine_b, api_b) = setup_shared_db(&db);
+
+        api_b.context_create("late-arrival").unwrap();
+
+        let all = api_a.context_list(None).unwrap();
+        assert_eq!(
+            all.len(),
+            1,
+            "unfiltered context_list must see contexts created by another engine"
+        );
     }
 
     // === Scenario: PlexusApi delegates provenance reads to ProvenanceApi ===
