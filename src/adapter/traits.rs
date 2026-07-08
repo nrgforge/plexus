@@ -79,3 +79,121 @@ pub trait Adapter: Send + Sync {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Outbound event contract (ADR-011), relocated from
+    //! adapter/integration_tests.rs.
+
+    use super::*;
+    use crate::graph::NodeId;
+
+    /// Minimal adapter that doesn't override transform_events.
+    struct MinimalAdapter;
+
+    #[async_trait::async_trait]
+    impl Adapter for MinimalAdapter {
+        fn id(&self) -> &str {
+            "minimal"
+        }
+        fn input_kind(&self) -> &str {
+            "test"
+        }
+        async fn process(
+            &self,
+            _input: &AdapterInput,
+            _sink: &dyn AdapterSink,
+        ) -> Result<(), AdapterError> {
+            Ok(())
+        }
+        // transform_events NOT overridden — uses default
+    }
+
+    // === Scenario: Default transform_events returns empty vec ===
+    #[test]
+    fn default_transform_events_returns_empty_vec() {
+        let adapter = MinimalAdapter;
+        let ctx = Context::new("test");
+        let events = vec![GraphEvent::NodesAdded {
+            node_ids: vec![NodeId::from_string("A")],
+            adapter_id: "test".to_string(),
+            context_id: "test".to_string(),
+        }];
+
+        let outbound = adapter.transform_events(&events, &ctx);
+        assert!(outbound.is_empty(), "default transform_events returns no outbound events");
+    }
+
+    /// Adapter that translates NodesAdded events to "concepts_detected" outbound events.
+    struct ConceptDetectingAdapter {
+        id: String,
+    }
+
+    impl ConceptDetectingAdapter {
+        fn new(id: &str) -> Self {
+            Self {
+                id: id.to_string(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Adapter for ConceptDetectingAdapter {
+        fn id(&self) -> &str {
+            &self.id
+        }
+        fn input_kind(&self) -> &str {
+            "fragment"
+        }
+        async fn process(
+            &self,
+            _input: &AdapterInput,
+            _sink: &dyn AdapterSink,
+        ) -> Result<(), AdapterError> {
+            Ok(())
+        }
+        fn transform_events(
+            &self,
+            events: &[GraphEvent],
+            _context: &Context,
+        ) -> Vec<OutboundEvent> {
+            let mut outbound = Vec::new();
+            for event in events {
+                if let GraphEvent::NodesAdded { node_ids, .. } = event {
+                    let concepts: Vec<String> = node_ids
+                        .iter()
+                        .filter(|id| id.to_string().starts_with("concept:"))
+                        .map(|id| id.to_string().strip_prefix("concept:").unwrap().to_string())
+                        .collect();
+                    if !concepts.is_empty() {
+                        outbound.push(OutboundEvent::new(
+                            "concepts_detected",
+                            concepts.join(", "),
+                        ));
+                    }
+                }
+            }
+            outbound
+        }
+    }
+
+    // === Scenario: Adapter translates graph events to domain-meaningful outbound events ===
+    #[test]
+    fn adapter_translates_graph_events_to_outbound_events() {
+        let adapter = ConceptDetectingAdapter::new("fragment-adapter");
+        let ctx = Context::new("test");
+        let events = vec![GraphEvent::NodesAdded {
+            node_ids: vec![
+                NodeId::from_string("concept:travel"),
+                NodeId::from_string("concept:avignon"),
+            ],
+            adapter_id: "fragment-adapter".to_string(),
+            context_id: "test".to_string(),
+        }];
+
+        let outbound = adapter.transform_events(&events, &ctx);
+        assert_eq!(outbound.len(), 1, "one outbound event produced for two concept nodes");
+        assert_eq!(outbound[0].kind, "concepts_detected", "outbound event kind is concepts_detected");
+        assert_eq!(outbound[0].detail, "travel, avignon", "outbound event detail lists detected concepts");
+    }
+}

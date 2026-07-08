@@ -1656,4 +1656,235 @@ mod tests {
         // Minimum > 0.0
         assert!(ab.combined_weight > 0.0, "A→B should be > 0.0 (ADR-005), got {}", ab.combined_weight);
     }
+
+    // ================================================================
+    // Progressive emission and engine-backed sink mechanics
+    // (relocated from adapter/integration_tests.rs)
+    // ================================================================
+
+    use crate::storage::{OpenStore, SqliteStore};
+
+    fn make_engine_sink(
+        engine: &Arc<PlexusEngine>,
+        ctx_id: &ContextId,
+        adapter_id: &str,
+    ) -> EngineSink {
+        EngineSink::for_engine(engine.clone(), ctx_id.clone())
+            .with_framework_context(FrameworkContext {
+                adapter_id: adapter_id.to_string(),
+                context_id: ctx_id.as_str().to_string(),
+                input_summary: None,
+            })
+    }
+
+    // === Scenario: Multiple emissions from one adapter, each commits independently ===
+    #[tokio::test]
+    async fn multiple_emissions_commit_independently() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = EngineSink::new(ctx.clone());
+
+        // E1: structural nodes
+        let e1 = Emission::new()
+            .with_node(node("file"))
+            .with_node(node("section-1"))
+            .with_node(node("section-2"));
+        let r1 = sink.emit(e1).await.unwrap();
+        assert_eq!(r1.nodes_committed, 3, "first emission commits 3 structural nodes");
+
+        // After E1: structural nodes exist
+        {
+            let ctx = ctx.lock().unwrap();
+            assert!(ctx.get_node(&NodeId::from_string("file")).is_some(), "file node exists after first emission");
+            assert!(ctx.get_node(&NodeId::from_string("section-1")).is_some(), "section-1 node exists after first emission");
+        }
+
+        // E2: semantic nodes + edges
+        let e2 = Emission::new()
+            .with_node(node("concept-sudden"))
+            .with_edge(edge("section-1", "concept-sudden"));
+        let r2 = sink.emit(e2).await.unwrap();
+        assert_eq!(r2.nodes_committed, 1, "second emission commits 1 semantic node");
+        assert_eq!(r2.edges_committed, 1, "second emission commits 1 edge");
+
+        // After E2: both structural and semantic exist
+        let ctx = ctx.lock().unwrap();
+        assert_eq!(ctx.node_count(), 4, "four nodes total after both emissions");
+        assert_eq!(ctx.edge_count(), 1, "one edge total after both emissions");
+    }
+
+    // === Scenario: Graph events fire per emission ===
+    #[tokio::test]
+    async fn graph_events_fire_per_emission() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = EngineSink::new(ctx.clone());
+
+        // E1: 3 nodes
+        let e1 = Emission::new()
+            .with_node(node("A"))
+            .with_node(node("B"))
+            .with_node(node("C"));
+        let r1 = sink.emit(e1).await.unwrap();
+
+        let nodes_event = r1.events.iter().find(|e| matches!(e, GraphEvent::NodesAdded { .. }));
+        assert!(nodes_event.is_some(), "NodesAdded event fired for first emission");
+        if let Some(GraphEvent::NodesAdded { node_ids, .. }) = nodes_event {
+            assert_eq!(node_ids.len(), 3, "NodesAdded event contains 3 node ids");
+        }
+
+        // E2: 2 edges
+        let e2 = Emission::new()
+            .with_edge(edge("A", "B"))
+            .with_edge(edge("B", "C"));
+        let r2 = sink.emit(e2).await.unwrap();
+
+        let edges_event = r2.events.iter().find(|e| matches!(e, GraphEvent::EdgesAdded { .. }));
+        assert!(edges_event.is_some(), "EdgesAdded event fired for second emission");
+        if let Some(GraphEvent::EdgesAdded { edge_ids, .. }) = edges_event {
+            assert_eq!(edge_ids.len(), 2, "EdgesAdded event contains 2 edge ids");
+        }
+    }
+
+    // === Scenario: Early emissions visible to queries before later emissions ===
+    #[tokio::test]
+    async fn early_emissions_visible_before_later() {
+        let ctx = Arc::new(Mutex::new(Context::new("test")));
+        let sink = EngineSink::new(ctx.clone());
+
+        // E1: node A
+        sink.emit(Emission::new().with_node(node("A"))).await.unwrap();
+
+        // Node A is visible immediately
+        {
+            let ctx = ctx.lock().unwrap();
+            assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A visible after first emission");
+            // E2 not yet emitted — concept-X doesn't exist
+            assert!(ctx.get_node(&NodeId::from_string("concept-X")).is_none(), "concept-X absent before second emission");
+        }
+
+        // E2: concept-X
+        sink.emit(Emission::new().with_node(node("concept-X"))).await.unwrap();
+
+        // Now both exist
+        let ctx = ctx.lock().unwrap();
+        assert!(ctx.get_node(&NodeId::from_string("A")).is_some(), "node A still visible after second emission");
+        assert!(ctx.get_node(&NodeId::from_string("concept-X")).is_some(), "concept-X visible after second emission");
+    }
+
+    // === Scenario: Emission through engine-backed sink reaches storage ===
+    #[tokio::test]
+    async fn emission_through_engine_backed_sink_reaches_storage() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("provence-research");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
+
+        // Create engine-backed sink
+        let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone());
+
+        // Emit a single node
+        let result = sink.emit(Emission::new().with_node(node("concept:travel"))).await.unwrap();
+        assert_eq!(result.nodes_committed, 1, "single node committed via engine-backed sink");
+
+        // Node exists in engine's in-memory context
+        let ctx = engine.get_context(&ctx_id).unwrap();
+        assert!(ctx.get_node(&NodeId::from_string("concept:travel")).is_some(), "node exists in in-memory context");
+
+        // After restarting (new engine from same store, hydrate from storage)
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+        assert!(ctx2.get_node(&NodeId::from_string("concept:travel")).is_some(), "node survives storage round-trip");
+    }
+
+    // === Scenario: Emission through engine-backed sink persists edges with contributions ===
+    #[tokio::test]
+    async fn emission_persists_edges_with_contributions() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("provence-research");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
+
+        // Pre-populate two nodes
+        {
+            let mut ctx = engine.get_context(&ctx_id).unwrap();
+            ctx.add_node(node("concept:travel"));
+            ctx.add_node(node("concept:avignon"));
+            engine.upsert_context(ctx).unwrap();
+        }
+
+        // Create engine-backed sink with adapter identity
+        let sink = make_engine_sink(&engine, &ctx_id, "fragment-manual");
+
+        // Emit an edge with contribution value 0.75
+        let mut e = edge("concept:travel", "concept:avignon");
+        e.combined_weight = 0.75;
+        let result = sink.emit(Emission::new().with_edge(e)).await.unwrap();
+        assert_eq!(result.edges_committed, 1, "edge committed via engine-backed sink");
+
+        // After restarting, edge exists with correct contribution
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+        assert_eq!(ctx2.edges.len(), 1, "one edge survives storage round-trip");
+        assert_eq!(
+            ctx2.edges[0].contributions.get("fragment-manual"),
+            Some(&0.75),
+            "contribution should survive persistence round-trip"
+        );
+    }
+
+    // === Scenario: Emission to a non-existent context returns an error ===
+    #[tokio::test]
+    async fn emission_to_nonexistent_context_returns_error() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        // No context "does-not-exist" created
+        let sink = EngineSink::for_engine(engine.clone(), ContextId::from("does-not-exist"));
+
+        let result = sink.emit(Emission::new().with_node(node("concept:travel"))).await;
+        assert!(result.is_err(), "emission to missing context returns an error");
+        assert!(
+            matches!(result.unwrap_err(), AdapterError::ContextNotFound(_)),
+            "should be ContextNotFound error"
+        );
+
+        // No data persisted
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        assert_eq!(engine2.context_count(), 0, "no contexts persisted when emission failed");
+    }
+
+    // === Scenario: Persist-per-emission writes once per emit call ===
+    #[tokio::test]
+    async fn persist_per_emission_multi_item() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let engine = Arc::new(PlexusEngine::with_store(store.clone()));
+
+        let ctx_id = ContextId::from("provence-research");
+        engine.upsert_context(Context::with_id(ctx_id.clone(), "provence-research")).unwrap();
+
+        let sink = EngineSink::for_engine(engine.clone(), ctx_id.clone());
+
+        // Emit 3 nodes and 2 edges in one emission
+        let emission = Emission::new()
+            .with_node(node("A"))
+            .with_node(node("B"))
+            .with_node(node("C"))
+            .with_edge(edge("A", "B"))
+            .with_edge(edge("B", "C"));
+
+        let result = sink.emit(emission).await.unwrap();
+        assert_eq!(result.nodes_committed, 3, "three nodes committed in one emission");
+        assert_eq!(result.edges_committed, 2, "two edges committed in one emission");
+
+        // All survive a restart (single persist, not per-item)
+        let engine2 = PlexusEngine::with_store(store);
+        engine2.load_all().unwrap();
+        let ctx2 = engine2.get_context(&ctx_id).unwrap();
+        assert_eq!(ctx2.node_count(), 3, "three nodes survive storage round-trip");
+        assert_eq!(ctx2.edge_count(), 2, "two edges survive storage round-trip");
+    }
 }
