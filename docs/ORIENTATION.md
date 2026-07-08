@@ -25,7 +25,7 @@ Full vocabulary and all 62 invariants: [`invariants.md`](invariants.md) — code
 [`../README.md`](../README.md) → [`references/spec-author-guide.md`](references/spec-author-guide.md) → worked example at `examples/specs/embedding-activation.yaml`
 
 **Understand the architecture** →
-[`system-design.md`](system-design.md) (modules, responsibilities, dependency rules, amendment log) → [`references/field-guide.md`](references/field-guide.md) (module-to-code map) → [`invariants.md`](invariants.md)
+[`system-design.md`](system-design.md) (modules, responsibilities, dependency rules, amendment log) → [`references/field-guide.md`](references/field-guide.md) (module-to-code map) → [`references/flows.md`](references/flows.md) (weight pipeline, ingest/enrichment/lens flow, explain_edge — as diagrams) → [`invariants.md`](invariants.md)
 
 **Why is it built this way?** →
 [`decisions/`](decisions/) (43 ADRs, 000–042, immutable) → [`archive/`](archive/) (essays, domain model with amendment history, product discovery, PLAY field notes)
