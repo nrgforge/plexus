@@ -93,10 +93,11 @@ consumer-side the same day: the **re-embed sweep** (read the context via
 `find_nodes`, re-ingest as one embedding batch — documented in the
 spec-author guide, proven by `play.py latent`). All three engineered
 latent bridges formed across consumers and both lenses translated them,
-so **both cross-pollination mechanisms are now proven.** Residual gap:
-lens reactivity doesn't span processes — translations happen only in
-processes whose pipeline holds the spec, so coverage is
-eventually-consistent with activity (#10).
+so **both cross-pollination mechanisms are now proven.** The residual
+lens-reactivity gap (#10) was closed the same day: pipelines now sync
+lens enrichments from the specs table at ingest time, so Invariant 62
+holds per-context, not per-process. Remaining low-stakes asymmetry:
+`unload_spec` doesn't propagate to other live processes (#11).
 
 **M2 — Close the gaps M1 exposes.** Candidates, ordered by what the
 flywheel shows matters: lens coverage over background extraction, the
