@@ -602,6 +602,208 @@ def scenario_extract_background(binary, db_path):
     return report.emit()
 
 
+def _count_result(mcp_result):
+    """Count entries in a tool result of unknown shape (list or keyed dict)."""
+    if isinstance(mcp_result, list):
+        return len(mcp_result)
+    if isinstance(mcp_result, dict):
+        for key in ("events", "nodes", "results", "items", "tags", "concepts", "contexts", "shared"):
+            if key in mcp_result and isinstance(mcp_result[key], list):
+                return len(mcp_result[key])
+        if "count" in mcp_result:
+            return mcp_result["count"]
+    return None
+
+
+def matrix_write(client):
+    """Writer actions for the consistency matrix: two contexts + a late one."""
+    client.call("set_context", {"name": "mx"})
+    client.call("ingest", {"data": {"text": "alpha beta fragment", "tags": ["alpha", "beta"]}})
+    client.call("ingest", {"data": {"text": "plain untagged fragment"}})
+    client.call("set_context", {"name": "mx2"})
+    client.call("ingest", {"data": {"text": "alpha again in a second context", "tags": ["alpha"]}})
+    client.call("set_context", {"name": "mx-late"})
+    client.call("ingest", {"data": {"text": "context created after the reader started"}})
+
+
+def matrix_read(client, db_path, report, topology):
+    """Reader-side cells: each read surface classified LIVE / STALE / ERROR
+    against SQLite ground truth."""
+    client.call("set_context", {"name": "mx"})  # known: does not invalidate cache
+
+    ctx_id = db_context_id(db_path, "mx")
+    disk_frags = len(db_nodes(db_path, ctx_id, node_type="fragment"))
+    disk_mbr_nodes = len({n for s, t in db_edges(db_path, ctx_id, "may_be_related") for n in (s, t)})
+    disk_events = db_query(db_path, "SELECT COUNT(*) FROM events WHERE context_id = ?", (ctx_id,))[0][0]
+
+    def classify(name, observed, expected):
+        if observed is None:
+            status = "ERROR"
+        elif observed == expected:
+            status = "LIVE"
+        elif isinstance(observed, int) and observed < expected:
+            status = "STALE"
+        else:
+            status = f"?({observed})"
+        report.observe(f"[{topology}] {name}", f"{status} (reader={observed}, disk={expected})")
+        return status
+
+    cells = {}
+
+    try:
+        obs = node_count(client.call("find_nodes", {"node_type": "fragment"}))
+    except McpError:
+        obs = None
+    cells["node reads (find_nodes)"] = classify("node reads (find_nodes)", obs, disk_frags)
+
+    try:
+        obs = node_count(client.call("find_nodes", {"relationship_prefix": "may_be_related"}))
+    except McpError:
+        obs = None
+    cells["edge reads (prefix filter)"] = classify("edge reads (prefix filter)", obs, disk_mbr_nodes)
+
+    try:
+        obs = _count_result(client.call("list_tags", {}))
+    except McpError:
+        obs = None
+    cells["list_tags"] = classify("list_tags", obs, 2)  # alpha + beta on disk
+
+    try:
+        obs = _count_result(client.call("shared_concepts", {"context_a": "mx", "context_b": "mx2"}))
+    except McpError:
+        obs = None
+    cells["shared_concepts(mx, mx2)"] = classify("shared_concepts(mx, mx2)", obs, 1)  # concept:alpha
+
+    try:
+        obs = _count_result(client.call("changes_since", {"cursor": 0}))
+    except McpError:
+        obs = None
+    cells["changes_since (event cursor)"] = classify("changes_since (event cursor)", obs, disk_events)
+
+    try:
+        ctxs = client.call("context_list", {})
+        text = json.dumps(ctxs)
+        obs = 1 if "mx-late" in text else 0
+    except McpError:
+        obs = None
+    cells["context_list sees late context"] = classify("context_list sees late context", obs, 1)
+
+    return cells
+
+
+def scenario_matrix(binary, db_path):
+    """M0 consistency matrix (GitHub issue #1): process topologies × read
+    surfaces. Classifies each cell LIVE (reader sees writer's data) or
+    STALE against SQLite ground truth. Purely observational — no
+    pass/fail beyond 'the baseline topology must be fully LIVE'.
+
+    Topologies:
+      same-process   — writer and reader are one process (baseline)
+      restart        — writer exits; a fresh reader process hydrates
+      concurrent     — reader starts first and stays alive; writer is a
+                       second process (the vision's multi-client shape)
+    """
+    report = Report("matrix")
+    workdir = os.path.dirname(db_path)
+    grid = {}
+
+    # T1 — same process
+    db1 = os.path.join(workdir, "matrix-same.db")
+    c = spawn(binary, db1, "mx-same")
+    try:
+        matrix_write(c)
+        grid["same-process"] = matrix_read(c, db1, report, "same-process")
+    finally:
+        c.close()
+
+    # T2 — restart (one-shot writer, fresh reader)
+    db2 = os.path.join(workdir, "matrix-restart.db")
+    w = spawn(binary, db2, "mx-restart-w")
+    try:
+        matrix_write(w)
+    finally:
+        w.close()
+    r = spawn(binary, db2, "mx-restart-r")
+    try:
+        grid["restart"] = matrix_read(r, db2, report, "restart")
+    finally:
+        r.close()
+
+    # T3 — concurrent long-lived reader + separate writer
+    db3 = os.path.join(workdir, "matrix-concurrent.db")
+    reader = spawn(binary, db3, "mx-conc-r")
+    try:
+        reader.call("set_context", {"name": "mx"})  # reader alive before any writes
+        writer = spawn(binary, db3, "mx-conc-w")
+        try:
+            matrix_write(writer)
+        finally:
+            writer.close()
+        grid["concurrent"] = matrix_read(reader, db3, report, "concurrent")
+    finally:
+        reader.close()
+
+    # Render the matrix
+    surfaces = list(next(iter(grid.values())).keys())
+    col_w = max(len(s) for s in surfaces) + 2
+    print("\n  CONSISTENCY MATRIX (reader's view of writer's data)")
+    header = " " * col_w + "".join(f"{t:>14}" for t in grid)
+    print("  " + header)
+    for s in surfaces:
+        row = f"{s:<{col_w}}" + "".join(f"{grid[t][s]:>14}" for t in grid)
+        print("  " + row)
+    print()
+
+    report.check(
+        "baseline: same-process topology fully LIVE",
+        all(v == "LIVE" for v in grid["same-process"].values()),
+        grid["same-process"],
+    )
+    report.check(
+        "restart topology fully LIVE (hydration works)",
+        all(v == "LIVE" for v in grid["restart"].values()),
+        grid["restart"],
+    )
+    report.observe("concurrent topology (the M0 question)", grid["concurrent"])
+
+    # Write-write probe: does a stale writer clobber the other's rows on
+    # persist? A writes f1; B (fresh, hydrated) writes f2; A writes f3
+    # from its stale cache. If save_context persists the whole cached
+    # context, f2 is erased from disk.
+    db4 = os.path.join(workdir, "matrix-ww.db")
+    a = spawn(binary, db4, "mx-ww-a")
+    try:
+        a.call("set_context", {"name": "ww"})
+        a.call("ingest", {"data": {"text": "f1 from A"}})
+        b = spawn(binary, db4, "mx-ww-b")
+        try:
+            b.call("set_context", {"name": "ww"})
+            b.call("ingest", {"data": {"text": "f2 from B"}})
+        finally:
+            b.close()
+        a.call("ingest", {"data": {"text": "f3 from A, stale cache"}})
+    finally:
+        a.close()
+    ww_ctx = db_context_id(db4, "ww")
+    ww_frags = [n["properties"].get("text", n["id"]) for n in db_nodes(db4, ww_ctx, node_type="fragment")]
+    lost = len(ww_frags) < 3
+    report.check(
+        "write-write: no data loss under interleaved writers (3 fragments survive)",
+        not lost,
+        f"{len(ww_frags)}/3 on disk: {ww_frags}" + (" — STALE WRITER CLOBBERED THE OTHER'S ROWS" if lost else ""),
+    )
+    pivotal = grid["concurrent"].get("changes_since (event cursor)")
+    report.observe(
+        "PIVOTAL CELL: changes_since across live processes",
+        f"{pivotal} — " + (
+            "the event log IS a cross-process sync channel (reads bypass the cache, straight to SQLite)"
+            if pivotal == "LIVE"
+            else "the event log does NOT cross processes; invalidation contract or daemon needed"
+        ),
+    )
+    return report.emit()
+
+
 SCENARIOS = {
     "crawl": scenario_crawl,
     "walk": scenario_walk,
@@ -609,6 +811,7 @@ SCENARIOS = {
     "stale": scenario_stale,
     "extract-fg": scenario_extract_foreground,
     "extract-bg": scenario_extract_background,
+    "matrix": scenario_matrix,
 }
 
 
