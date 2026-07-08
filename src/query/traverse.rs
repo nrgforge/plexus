@@ -79,6 +79,7 @@ impl TraverseQuery {
 
         // BFS traversal
         let mut visited: HashSet<NodeId> = HashSet::new();
+        let mut seen_edges: HashSet<crate::graph::EdgeId> = HashSet::new();
         let mut current_level: Vec<NodeId> = vec![self.origin.clone()];
         visited.insert(self.origin.clone());
 
@@ -110,17 +111,22 @@ impl TraverseQuery {
                         &edge.source
                     };
 
-                    // Skip if already visited
+                    // Record every matching edge exactly once — parallel
+                    // edges to an already-visited neighbor are evidence,
+                    // not duplicates (issue #12: the first-edge-wins skip
+                    // hid similar_to and lens edges behind temporal ones).
+                    if seen_edges.insert(edge.id.clone()) {
+                        result.edges.push(edge.clone());
+                    }
+
+                    // Each node still joins the frontier only once
                     if visited.contains(neighbor_id) {
                         continue;
                     }
-
-                    // Get the neighbor node
                     if let Some(neighbor) = context.get_node(neighbor_id) {
                         visited.insert(neighbor_id.clone());
                         next_level.push(neighbor_id.clone());
                         level_nodes.push(neighbor.clone());
-                        result.edges.push(edge.clone());
                     }
                 }
             }
@@ -206,6 +212,30 @@ impl<'a> EdgeIndex<'a> {
 mod tests {
     use super::*;
     use crate::graph::{ContentType, Edge, Node, NodeId};
+
+    // === Scenario: parallel edges are all reported (issue #12) ===
+    // Both M3 blinded probes found unfiltered traverse showing only the
+    // first edge to a neighbor, hiding parallel similar_to and lens edges.
+    #[test]
+    fn traverse_reports_all_parallel_edges_to_a_neighbor() {
+        let mut ctx = Context::new("test");
+        let a = ctx.add_node(Node::new("fragment", ContentType::Document));
+        let b = ctx.add_node(Node::new("fragment", ContentType::Document));
+        ctx.add_edge(Edge::new(a.clone(), b.clone(), "temporal_proximity"));
+        ctx.add_edge(Edge::new(a.clone(), b.clone(), "similar_to"));
+        ctx.add_edge(Edge::new(a.clone(), b.clone(), "lens:trellis:latent_pair"));
+
+        let result = TraverseQuery::from(a.clone()).depth(1).execute(&ctx);
+
+        let rels: Vec<&str> = result.edges.iter().map(|e| e.relationship.as_str()).collect();
+        assert_eq!(
+            result.edges.len(),
+            3,
+            "all parallel edges must be reported, got {:?}",
+            rels
+        );
+        assert_eq!(result.levels[1].len(), 1, "neighbor appears once");
+    }
 
     fn create_test_graph() -> Context {
         let mut ctx = Context::new("test");
