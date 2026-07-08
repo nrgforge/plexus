@@ -14,8 +14,8 @@ use plexus::NodeId;
 /// And that edge's contributions contain key `lens:trellis:thematic_connection:may_be_related`
 #[tokio::test]
 async fn lens_creates_translated_edges_from_matching_source_relationships() {
-    use plexus::adapter::Enrichment;
     use plexus::adapter::lens::LensEnrichment;
+    use plexus::adapter::Enrichment;
     use plexus::adapter::declarative::{LensSpec, TranslationRule};
     use plexus::adapter::GraphEvent;
     use plexus::EdgeId;

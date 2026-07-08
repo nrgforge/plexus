@@ -208,7 +208,7 @@ fn cmd_context_rename(engine: &PlexusEngine, old: &str, new: &str) -> i32 {
     }
 }
 
-fn cmd_context_add_source(engine: &PlexusEngine, name: &str, path: &PathBuf) -> i32 {
+fn cmd_context_add_source(engine: &PlexusEngine, name: &str, path: &std::path::Path) -> i32 {
     let id = match find_context_by_name(engine, name) {
         Some(id) => id,
         None => {
@@ -241,7 +241,7 @@ fn cmd_context_add_source(engine: &PlexusEngine, name: &str, path: &PathBuf) -> 
     }
 }
 
-fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &PathBuf) -> i32 {
+fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &std::path::Path) -> i32 {
     let id = match find_context_by_name(engine, name) {
         Some(id) => id,
         None => {

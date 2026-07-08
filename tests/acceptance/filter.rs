@@ -637,7 +637,7 @@ async fn full_pull_workflow_ingest_cursor_filtered_query() {
         adapter_id: Some("lens:trellis:thematic_connection".into()),
         ..Default::default()
     };
-    let changeset = api
+    let _changeset = api
         .changes_since(ctx_name, 0, Some(&lens_cursor_filter))
         .expect("cursor query");
 

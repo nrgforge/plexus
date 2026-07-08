@@ -1,7 +1,6 @@
 //! Shared test utilities for acceptance tests.
 
-use plexus::adapter::{IngestPipeline, PipelineBuilder};
-use plexus::llm_orc::{LlmOrcClient, MockClient};
+use plexus::adapter::PipelineBuilder;
 use plexus::storage::{OpenStore, SqliteStore};
 use plexus::{Context, ContextId, PlexusApi, PlexusEngine};
 use std::path::{Path, PathBuf};
@@ -13,21 +12,14 @@ use std::sync::Arc;
 pub struct TestEnv {
     pub engine: Arc<PlexusEngine>,
     pub store: Arc<SqliteStore>,
-    pub pipeline: Arc<IngestPipeline>,
     pub api: PlexusApi,
     pub context_id: ContextId,
     pub context_name: String,
 }
 
 impl TestEnv {
-    /// Default env with `MockClient::unavailable()` — semantic extraction skips gracefully.
+    /// Default env — no llm-orc client wired; semantic extraction skips gracefully.
     pub fn new() -> Self {
-        let client = Arc::new(MockClient::unavailable());
-        Self::with_mock_client(client)
-    }
-
-    /// Env with a custom mock llm-orc client.
-    pub fn with_mock_client(client: Arc<dyn LlmOrcClient>) -> Self {
         let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory SQLite"));
         let engine = Arc::new(PlexusEngine::with_store(store.clone()));
 
@@ -50,7 +42,6 @@ impl TestEnv {
         Self {
             engine,
             store,
-            pipeline,
             api,
             context_id,
             context_name,

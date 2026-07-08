@@ -16,7 +16,7 @@ use crate::helpers::TestEnv;
 /// the lens enrichment is extracted and registered.
 #[tokio::test]
 async fn builder_with_persisted_specs_rehydrates_lens_only() {
-    use plexus::adapter::{Enrichment, PipelineBuilder};
+    use plexus::adapter::PipelineBuilder;
     use plexus::storage::{OpenStore, PersistedSpec, SqliteStore};
     use plexus::PlexusEngine;
     use std::sync::Arc;
@@ -79,7 +79,7 @@ emit:
 /// continues with remaining specs.
 #[tokio::test]
 async fn builder_with_persisted_specs_skips_malformed() {
-    use plexus::adapter::{Enrichment, PipelineBuilder};
+    use plexus::adapter::PipelineBuilder;
     use plexus::storage::{OpenStore, PersistedSpec, SqliteStore};
     use plexus::PlexusEngine;
     use std::sync::Arc;

@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use crate::adapter::{
-    Adapter, AdapterError, AdapterSink, EngineSink, Enrichment, FrameworkContext,
+    Adapter, AdapterError, AdapterSink, EngineSink, FrameworkContext,
     IngestPipeline, OutboundEvent, ProvenanceInput,
 };
 use crate::adapter::declarative::DeclarativeAdapter;
