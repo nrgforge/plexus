@@ -28,7 +28,7 @@ Full vocabulary and all 62 invariants: [`invariants.md`](invariants.md) — code
 [`system-design.md`](system-design.md) (modules, responsibilities, dependency rules, amendment log) → [`references/field-guide.md`](references/field-guide.md) (module-to-code map) → [`references/flows.md`](references/flows.md) (weight pipeline, ingest/enrichment/lens flow, explain_edge — as diagrams) → [`invariants.md`](invariants.md)
 
 **Why is it built this way?** →
-[`decisions/`](decisions/) (43 ADRs, 000–042, immutable) → [`archive/`](archive/) (essays, domain model with amendment history, product discovery, PLAY field notes)
+[`decisions/`](decisions/) (44 ADRs, 000–043, immutable) → [`archive/`](archive/) (essays, domain model with amendment history, product discovery, PLAY field notes)
 
 **What's being worked on?** →
 [`vision.md`](vision.md) §Milestones + GitHub issues (the engineering queue)
