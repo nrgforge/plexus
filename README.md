@@ -20,7 +20,9 @@ infrastructure and delivers a well-defined baseline:
   tagged sources and emits `may_be_related` edges with per-source
   contribution tracking.
 - **TemporalProximityEnrichment** — emits `temporal_proximity` edges between
-  nodes created within a configurable time window (reads `created_at`
+  fragment nodes created within a configurable time window (fragment-scoped
+  by default since v0.4.0; broaden via the `enrichments:` spec config's
+  `node_types`) (reads `created_at`
   property, ISO-8601 UTC).
 - **Structural analysis for markdown** — extracts headings, section
   boundaries, and link targets via the built-in `MarkdownStructureModule`.
@@ -73,7 +75,7 @@ and `sqlite-vec` to the binary.
 
 ```toml
 [dependencies]
-plexus = { version = "0.2", features = ["embeddings"] }
+plexus = { version = "0.4", features = ["embeddings"] }
 ```
 
 Trade-off: larger binary (ONNX Runtime adds ~30 MB), model download on
