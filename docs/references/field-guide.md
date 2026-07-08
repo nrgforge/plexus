@@ -405,7 +405,7 @@ External LLM orchestration runs as a subprocess (ADR-024). The trait abstraction
 | Filter queries by provenance/corroboration | `query/filter.rs` — QueryFilter, RankBy |
 | Pull-based change queries | `query/cursor.rs` — PersistedEvent, ChangeSet, CursorFilter |
 | Understand provenance reads | `provenance/api.rs` |
-| Understand the MCP surface | `mcp/mod.rs` (17 tools: session, ingest, context CRUD, graph reads, load_spec/unload_spec) |
+| Understand the MCP surface | `mcp/mod.rs` (18 tools: session, ingest, context CRUD, graph reads incl. explain_edge, load_spec/unload_spec) |
 | Understand weight normalization | `graph/context.rs` (scale norm), `query/normalize.rs` (query-time norm) |
 | Understand evidence trail | `query/step.rs` (`evidence_trail()`), ADR-013 |
 | Understand contribution tracking | `graph/edge.rs` (contributions), `adapter/sink/engine_sink.rs` (emit phase 2), ADR-003 |

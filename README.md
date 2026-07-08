@@ -157,9 +157,9 @@ tag overlap).
   ([ADR-035](docs/decisions/035-event-cursor-persistence.md)).
 - **SQLite persistence** — WAL mode for concurrent reads, event-log
   persistence, spec-table durability.
-- **MCP server** — 17 tools expose the library to AI assistants over
+- **MCP server** — 18 tools expose the library to AI assistants over
   stdio: session (1), ingest (1), context operations (6), graph reads
-  (7), spec lifecycle (2).
+  (8, including `explain_edge`), spec lifecycle (2).
 
 ## Library usage
 
@@ -253,7 +253,7 @@ plexus/
 │   │   ├── pipeline/       # IngestPipeline + PipelineBuilder
 │   │   └── sink/           # EngineSink — commit + persist
 │   ├── provenance/         # Provenance API (chains, marks, links)
-│   ├── mcp/                # MCP server (rmcp, 17 tools)
+│   ├── mcp/                # MCP server (rmcp, 18 tools)
 │   ├── query/              # Find, traverse, path, filter, cursor
 │   ├── llm_orc.rs          # SubprocessClient + MockClient for llm-orc
 │   └── storage/            # SQLite persistence
