@@ -39,6 +39,11 @@ pub struct IngestPipeline {
     /// the builder. Stored as a single Option so all consumers of the
     /// pipeline see the same client without duplication.
     pub(crate) llm_client: Option<Arc<dyn LlmOrcClient>>,
+    /// Spec rows already examined by `sync_spec_lenses`, keyed by
+    /// `(context_id, adapter_id, loaded_at)` — a re-loaded spec (new
+    /// `loaded_at`) is re-examined, but unchanged rows are not re-parsed
+    /// on every ingest.
+    synced_specs: RwLock<std::collections::HashSet<(String, String, String)>>,
 }
 
 impl IngestPipeline {
@@ -49,6 +54,81 @@ impl IngestPipeline {
             adapters: RwLock::new(Vec::new()),
             enrichments: RwLock::new(Arc::new(EnrichmentRegistry::empty())),
             llm_client: None,
+            synced_specs: RwLock::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// Sync lens enrichments from the context's specs table before an
+    /// ingest (Invariant 62 across processes). A spec loaded by another
+    /// consumer in another process persists a row this pipeline has never
+    /// seen; without this sync, that consumer's lens would not fire on
+    /// emissions from this process. Lens-only, mirroring rehydration
+    /// (`with_persisted_specs`): adapter wiring stays transient to the
+    /// loading consumer's own process.
+    ///
+    /// Failures are logged and non-fatal — the same availability-over-
+    /// strictness stance as rehydration.
+    fn sync_spec_lenses(&self, context_id: &str) {
+        use crate::adapter::declarative::DeclarativeAdapter;
+
+        let specs = match self.engine.query_specs_for_context(context_id) {
+            Ok(specs) => specs,
+            Err(e) => {
+                tracing::warn!(context_id, error = %e, "spec-lens sync: query failed, skipping");
+                return;
+            }
+        };
+
+        for spec in specs {
+            let marker = (
+                spec.context_id.clone(),
+                spec.adapter_id.clone(),
+                spec.loaded_at.clone(),
+            );
+            if self
+                .synced_specs
+                .read()
+                .expect("synced_specs lock poisoned")
+                .contains(&marker)
+            {
+                continue;
+            }
+
+            match DeclarativeAdapter::from_yaml(&spec.spec_yaml) {
+                Ok(adapter) => {
+                    if let Some(lens) = adapter.lens() {
+                        let mut lock =
+                            self.enrichments.write().expect("enrichments lock poisoned");
+                        let already = lock.enrichments().iter().any(|e| e.id() == lens.id());
+                        if !already {
+                            tracing::info!(
+                                context_id = %spec.context_id,
+                                adapter_id = %spec.adapter_id,
+                                lens_id = %lens.id(),
+                                "spec-lens sync: registered lens loaded by another consumer"
+                            );
+                            let mut all: Vec<Arc<dyn Enrichment>> = lock.enrichments().to_vec();
+                            all.push(lens);
+                            *lock = Arc::new(EnrichmentRegistry::new(all));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        context_id = %spec.context_id,
+                        adapter_id = %spec.adapter_id,
+                        error = %e,
+                        "spec-lens sync: failed to parse persisted spec, skipping"
+                    );
+                }
+            }
+
+            // Mark examined either way — a parse failure won't heal by
+            // re-parsing the same row on every ingest.
+            self.synced_specs
+                .write()
+                .expect("synced_specs lock poisoned")
+                .insert(marker);
         }
     }
 
@@ -139,6 +219,9 @@ impl IngestPipeline {
             return Err(AdapterError::ContextNotFound(context_id.to_string()));
         }
 
+        // Invariant 62 across processes — same sync as `ingest()`.
+        self.sync_spec_lenses(context_id);
+
         let input = AdapterInput::from_boxed(adapter.input_kind(), data, context_id);
 
         // Step 1: Process the adapter
@@ -199,6 +282,10 @@ impl IngestPipeline {
         if self.engine.get_context(&ctx_id).is_none() {
             return Err(AdapterError::ContextNotFound(context_id.to_string()));
         }
+
+        // Invariant 62 across processes: pick up lenses other consumers
+        // loaded onto this context since this pipeline was constructed.
+        self.sync_spec_lenses(context_id);
 
         let input = AdapterInput::from_boxed(input_kind, data, context_id);
 

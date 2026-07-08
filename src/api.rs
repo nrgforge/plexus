@@ -989,6 +989,79 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn ingest_runs_lens_loaded_by_another_engine() {
+        // Invariant 62: lens translation rules persist on the context,
+        // "reactive to all future emissions by any consumer" — including
+        // emissions from a process whose pipeline predates the load_spec.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("coherence-lens.db");
+
+        // Stack A: constructed FIRST, before any spec exists
+        let (engine_a, _unused) = setup_shared_db(&db);
+        let pipeline_a = IngestPipeline::new(engine_a.clone());
+        pipeline_a.register_adapter(Arc::new(ContentAdapter::new("content")));
+        let api_a = PlexusApi::new(engine_a.clone(), Arc::new(pipeline_a));
+
+        // Stack B: loads a lens spec onto the shared context
+        let (_engine_b, api_b) = setup_shared_db(&db);
+        api_b.context_create("studio").unwrap();
+        api_b
+            .load_spec(
+                "studio",
+                r#"
+adapter_id: probe-spec
+input_kind: probe.noop
+input_schema:
+  - name: text
+    type: string
+    required: true
+lens:
+  consumer: probe
+  translations:
+    - from: [tagged_with]
+      to: labeled
+emit:
+  - create_node:
+      id: "noop:probe"
+      type: fragment
+      dimension: structure
+      properties:
+        text: "{input.text}"
+"#,
+            )
+            .await
+            .expect("load_spec on B");
+
+        // A ingests tagged content; B's lens must translate A's edges
+        api_a
+            .ingest(
+                "studio",
+                "content",
+                Box::new(FragmentInput::new("fragment text", vec!["alpha".into()])),
+            )
+            .await
+            .expect("ingest on A");
+
+        let ctx_id = api_a.context_list(Some("studio")).unwrap()[0].clone();
+        let ctx = engine_a.get_context(&ctx_id).unwrap();
+        let translated = ctx
+            .edges
+            .iter()
+            .filter(|e| e.relationship == "lens:probe:labeled")
+            .count();
+        assert!(
+            translated >= 1,
+            "lens loaded by another engine must translate edges from A's \
+             ingest (Invariant 62 across processes) — got 0 lens:probe:labeled \
+             edges among {:?}",
+            ctx.edges
+                .iter()
+                .map(|e| e.relationship.as_str())
+                .collect::<std::collections::HashSet<_>>()
+        );
+    }
+
     #[test]
     fn api_context_listing_sees_another_engines_new_context() {
         let dir = tempfile::tempdir().unwrap();
