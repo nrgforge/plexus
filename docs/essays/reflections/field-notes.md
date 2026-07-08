@@ -294,3 +294,32 @@ This is a real shape of the decision, not a flaw in the guide. But the guide cou
 ### Lens-example drift fix applied (2026-07-07)
 
 The 2026-04-29 finding on spec-author-guide lens-example drift is addressed: silent-idle section now covers lens from-lists with a relationship→producer→precondition table; the anatomy example includes `temporal_proximity`. ADR-041 left untouched (ADRs are immutable; the guide is the living document).
+
+---
+
+## Harness-run results: crawl→walk→run executed programmatically (2026-07-07)
+
+**Instrument:** `tools/play-harness/play.py` — MCP-over-stdio driver against the shipped Homebrew v0.3.0 binary, fresh SQLite per scenario, dual MCP/disk assertions. This is release-fidelity evidence (the binary consumers install), produced by a scripted consumer rather than inhabitation. Findings below are evidence for the cycle's claims, not phenomenological observations.
+
+### Crawl — all lean-baseline claims hold on the shipped binary
+
+3 untagged fragments → exactly n(n-1)=6 `temporal_proximity` edges; every fragment carries `properties.created_at` (ADR-039); zero `similar_to`/`may_be_related`/`discovery_gap`; tagged ingest lights up CoOccurrence. The README's "what does not deliver" section is now executable and green.
+
+**New observation:** concept nodes also carry `created_at` and pair temporally with fragments (4 fragments + 2 concepts → 30 temporal edges, full n(n-1) over all six nodes). Whether concept↔fragment temporal pairs are signal or noise is undecided. **Feeds back to:** MODEL/DECIDE (does `temporal_proximity` intend "content ingested together" or "any nodes born together"? Node-type scoping may belong in the enrichment's parameterization).
+
+### Walk — tautology threshold reproduced against the release binary
+
+14 docs (8 ci + 6 pds), single batch ingest through the worked-example spec: 70 `similar_to` edges, **zero cross-corpus at 0.72**, within-corpus clustering in both corpora (ci 44, pds 26). DiscoveryGap activated (70 edges) the moment a `similar_to` producer existed — ADR-040's activation story confirmed end-to-end. April BUILD's T12 result now holds at release fidelity, not just in the dev tree.
+
+### Run — composition-shape evidence for ADR-041, with a saturation finding
+
+Two lens consumers (`lens:trellis:thematic_connection` named-register, `lens:scout:latent_pair` structural-register), identical `from: [similar_to, temporal_proximity]`, loaded after ingest (initial-sweep path): **182 lens edges each, identical topology**. Register choice is purely vocabulary; topology is invariant. Both consumers' vocabularies visible in one unfiltered query (Invariant 56).
+
+**Saturation finding:** 182 = the `temporal_proximity` count, not 182+70. ADR-033's many-to-one merge collapses pairs having both source relationships into one lens edge with two contribution keys. Because batch ingest makes `temporal_proximity` full-bipartite (every doc within the 24h window), a from-list containing it translates *every pair* — the lens surface is saturated and the discovery signal (`similar_to`) is invisible at the edge level. It survives only in contribution keys: `min_corroboration: 2` recovers exactly the doubly-evidenced pairs. Two implications:
+
+1. **Batch ingest degrades `temporal_proximity` to noise.** The enrichment's semantic ("contemporaneous capture") assumes trickle ingestion; import-style ingestion makes every pair contemporaneous. **Feeds back to:** spec-author guide (warn that from-lists mixing promiscuous and selective relationships saturate the merged lens output) and DECIDE (is corroboration-aware lens translation — e.g. per-rule `min_corroboration` — worth a grammar extension?).
+2. **The corroboration machinery is the recovery path.** The composable-filter surface (ADR-034) already distinguishes what the merge hides. This is the first empirical case where lens merge + corroboration filters interact as a designed pair.
+
+### Stale — bug pinned deterministically
+
+Long-lived process A sees 1 of 3 fragments on disk after process B's writes; re-calling `set_context` does not invalidate the cache. Scenario is expected-fail-inverted in the harness: it goes red the day a cache-invalidation contract fixes it. **Feeds back to:** DECIDE (cache-invalidation candidate ADR, already routed 2026-04-29 — now with an executable repro).
