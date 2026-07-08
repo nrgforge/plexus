@@ -190,3 +190,87 @@ Had I ingested realistic prose (an essay, a paper abstract, a captured fragment 
 4. **The "consumers own specs" narrative needs a companion "consumers need X wired for specs to add value"** — currently, spec-authoring documentation treats the lens as if it'll translate rich structure, but the rich structure depends on infrastructure most first-time users won't have. The spec is necessary but not sufficient.
 
 These are substantive, consequential findings about the gap between Plexus's advertised behavior and its default-install behavior. None of them were visible from the first ceremonial crawl. Real crawl earns real findings.
+
+---
+
+# Field Notes
+
+**Play session:** 2026-04-29
+**Practitioner:** Nathan (inhabiting Consumer Application Developer; practitioner-as-builder PLAY, partial-fidelity acknowledged)
+**Cycle:** Default-Install Experience and Lens Design Principles (BUILD complete 2026-04-24; PLAY this session)
+
+## Stakeholder: Consumer Application Developer
+
+**Super-Objective:** Ingest domain-specific data into a knowledge graph, receive structural signals in domain vocabulary, and act on those signals — without learning graph internals.
+
+**Domain inhabited (carried from 2026-04-16):** Shared writing context with Trellis (creative-writing fragments, latent-connection surfacing) and Carrel (research aggregation, thesis-finding, publishing). This session: Trellis spec authored against the public-domain-stories corpus; Carrel pending.
+
+**Point of Concentration:** Re-inhabit the prior session's circumstances (fresh consumer, set_context → load_spec → ingest → query) but encountering the surface as it stands after WP-A through WP-E landed.
+
+**Spec authored:** minimum-viable Trellis spec (`/tmp/play-2026-04-28/trellis.yaml`) — adapter + lens (`from: [may_be_related, similar_to]` → `to: latent_pair`, structural-predicate register per ADR-041), `dimension: structure` to match ContentAdapter shipped convention. No ensemble, no embedding activation. Six PG short stories ingested via MCP (`a-vendetta`, `desirees-baby`, `gift-of-the-magi`, `lottery-ticket`, `tell-tale-heart`, `the-open-window`).
+
+---
+
+### TemporalProximity has gone from silently dead to firing — the lean baseline is no longer as bare as the prior PLAY found
+
+**Observation:** The 2026-04-16 PLAY documented TemporalProximityEnrichment as "installed but reading a non-existent property" (Finding 1). After WP-A's coordinated four-site `created_at` fix, the situation has flipped. Loading the minimum-viable Trellis spec and ingesting six untagged stories produced 30 `temporal_proximity` edges (full bipartite, weight 1.0, 24-hour window). The enrichment fires automatically because `create_node` writes `created_at` into `properties` per ADR-039, and TemporalProximity reads it. No spec change needed; the consumer doesn't have to know this happened.
+
+The "three of four enrichments silently dead" finding from the prior PLAY now holds for two of four (EmbeddingSimilarity feature-gated off; DiscoveryGap idle without `similar_to` producer). TemporalProximity has moved into the working column. CoOccurrence still requires consumer-supplied tagged content.
+
+This is a positive default-install change since the prior PLAY. A new consumer ingesting prose into the lean baseline gets pairwise temporal-proximity edges between contemporaneously-ingested fragments — small structure, not nothing. Whether that small structure is *useful* without being interpreted depends on the consumer's lens (see next note).
+
+---
+
+### The spec-author guide's lens example assumes enrichments that the lean baseline doesn't run
+
+**Observation:** The spec-author guide (and ADR-041's worked example) shows `from: [may_be_related, similar_to]` as the canonical lens-translation source. The Trellis spec used this list verbatim. Result: lens fires on every emission and translates zero edges, because no enrichment in the lean baseline produces either of those relationships. The actually-firing enrichment in the lean baseline (TemporalProximity) emits `temporal_proximity`, which is not in the example's from-list.
+
+A consumer following the spec-author guide will write a lens whose `from` list reflects an older state-of-the-system where CoOccurrence (consumer-tag-driven) and EmbeddingSimilarity (now feature-gated off / external) were "the main edge producers." Post-WP-A, the most lean-baseline-relevant from-relationship is `temporal_proximity` — which neither the guide nor ADR-041 mentions in lens examples.
+
+This is not a bug in any single artifact; it's drift. The lens grammar layer (what relationships to translate) and the enrichment layer (what relationships are actually being produced) are described in separate ADRs and separate guide sections, and the canonical example tying them together didn't update when WP-A changed what the baseline actually emits.
+
+The consumer's encounter is silent: the spec validates, loads, ingests succeed, lens registers — but `find_nodes(relationship_prefix='lens:trellis')` returns 0 and there's no error to diagnose against. This is precisely the "silent-idle failure mode" the spec-author guide warns about for property reads, but the same failure mode exists at the lens-from-list layer and is not similarly named.
+
+**Feeds back to:** spec-author guide (extend the silent-idle failure mode discussion to cover lens from-lists; update the canonical lens example to include `temporal_proximity` so the lean baseline produces visible lens output); ADR-041 (its scaffolding example may benefit from a "what enrichments produce what relationships" cross-reference).
+
+---
+
+### Two MCP processes against the same SQLite produce stale-cache reads in the longer-lived one
+
+**Observation:** This session ran ingests through two MCP processes — Claude Code's long-lived `plexus mcp --transport stdio` (started at session beginning) and a one-shot `plexus mcp` spawned by a Python batch helper to send the bulk of the ingest payloads. Both processes pointed at the same SQLite (`~/Library/Application Support/plexus/plexus.db`). The batch process's writes persisted to disk correctly (verified via direct SQLite query: 6 fragments, 30 edges, 1 spec, 11 events). But Claude Code's MCP cached the context state after its first 2 ingests and did not see the batch process's 4 additional writes, even after re-calling `set_context` (which returned success but evidently did not invalidate the in-memory DashMap cache).
+
+The architectural premise documented in memory and in Invariant 41 is "Plexus is a library; multiple processes against the same SQLite share state." That premise is true at the persistence layer (writes succeeded) but not at the read layer for a long-lived consumer process. The first process's cache is the source of truth for its own reads, and there is no cache-invalidation hook on `set_context` (or anything else exposed at the API).
+
+**Practical consequence for multi-consumer scenarios:** If Trellis and Carrel are two separate processes both connected via MCP to the same context (the prior PLAY's "apps as lenses on shared material" framing), one consumer's writes are silently invisible to the other consumer's reads until that other consumer restarts. The cross-pollination flywheel from the prior PLAY assumes shared visibility; the current implementation does not deliver it for long-lived processes.
+
+**Possible mitigations** (not for play to decide; just to surface):
+
+- A read-side cache-invalidation API the consumer can call before queries (`refresh_context`?).
+- Auto-refresh on every read — slow, defeats the in-memory cache.
+- Pub/sub between processes through SQLite triggers or filesystem notifications — heavier infrastructure.
+- Recommend consumers run a single long-lived process and serialize all access (single-process model — narrows the library framing).
+
+**Feeds back to:** DISCOVER (challenges the "library mode means multi-process consumers share state" assumption; surface as a value tension between long-lived consumer ergonomics and shared-context fidelity); DECIDE (potential ADR on cache-invalidation contract for multi-process consumers); domain model (Invariant 41 may need an amendment scoping "shared state" to writes-only vs. reads-only).
+
+---
+
+### Two SQLite files exist on this machine — `~/.local/share/plexus/plexus.db` (Feb-1, schema without events/specs) and `~/Library/Application Support/plexus/plexus.db` (Feb-18, current schema)
+
+**Observation:** Searching for the persistence file surfaced two databases with the same name in different XDG-derived locations: the older one in `XDG_DATA_HOME` (Linux convention path that exists on macOS), the current one in `~/Library/Application Support` (macOS native). The current `plexus 0.3.0` binary writes to the macOS-native path; the older Linux-convention DB is leftover from an earlier release and is no longer touched. Schema confirms: the older DB has only `(contexts, edges, nodes)` — no `events`, no `specs` — so it pre-dates the WP-A through WP-E persistence work.
+
+This is not currently a play-impacting issue (the live writes go to the right place), but the orphan DB is non-trivially large (15 MB) and contains older context data the user may have forgotten about. A consumer who knew about the Linux path and went looking would find a graph that hasn't been touched in months, with no indication that it's stale relative to the current canonical store.
+
+**Feeds back to:** RESEARCH/operational hygiene (a release-notes mention of the path migration would have surfaced this for the user; a `plexus context list` command's output could optionally cross-check known XDG locations and flag orphans). Low-priority; no decision pressure.
+
+---
+
+### Lens spec field naming reads as natural; dimension choice felt arbitrary
+
+**Observation while authoring the spec:** The `lens:` block (consumer name, translations with from-list and to-string) read naturally — close to the spec-author guide's example, easy to fill in. The ADR-041 per-job framing helped: choosing "structural predicates throughout because Trellis's job is discovery-oriented" was a single decision, not five micro-decisions.
+
+The `dimension` choice on `create_node` was a different shape. The spec-author guide gives two paths (match the convention or depart deliberately) and a table of shipped conventions, but the choice routes to *what queries you'll run later*, which the spec author may not yet know. I picked `structure` to match `ContentAdapter`. The worked-example spec deliberately picked `semantic`. Both are documented as valid. The decision did not feel meaningfully constrained by anything the guide could legibly tell me — it's a routing decision against future queries I haven't yet authored.
+
+This is a real shape of the decision, not a flaw in the guide. But the guide could probably name this more directly: "Dimension choice is a query-routing decision; if you don't yet know what dimension your queries will scope by, default to `structure` for content nodes and revisit when authoring queries."
+
+**Feeds back to:** spec-author guide (a paragraph in the dimension section noting that the choice is essentially a future-query-routing commitment, with default-when-uncertain guidance).
+
