@@ -38,8 +38,9 @@ enum Commands {
     Analyze {
         /// Name of the context to analyze
         name: String,
-        /// llm-orc ensemble name for external enrichment
-        #[arg(long, default_value = "graph-analysis")]
+        /// llm-orc ensemble name for external enrichment (must exist in
+        /// your project's .llm-orc/ensembles or the global library)
+        #[arg(long)]
         ensemble: String,
         /// Path to SQLite database file
         #[arg(long)]
