@@ -359,14 +359,14 @@ def scenario_run(binary, db_path):
 
 
 def scenario_stale(binary, db_path):
-    """Pins the 2026-04-29 multi-process cache-staleness finding.
+    """Multi-process read coherence regression (ADR-017 §2).
 
-    EXPECTED TO FAIL until a cache-invalidation contract exists. The
-    harness inverts the exit code: reproducing the bug is 'success',
-    and this scenario going green means the bug got fixed (update it
-    to a plain assertion then).
+    Originally an expected-fail repro of the 2026-04-29 staleness
+    finding. Flipped to a positive assertion 2026-07-07 when the fix
+    landed (PlexusApi wires reload_if_changed into name resolution).
+    Fails against binaries older than the fix (<= v0.3.0).
     """
-    report = Report("stale (expected-fail repro)")
+    report = Report("stale (coherence regression)")
     ctx = "play-stale"
     a = spawn(binary, db_path, "stale-a")
     try:
@@ -388,11 +388,10 @@ def scenario_stale(binary, db_path):
 
         report.observe("fragments on disk", disk)
         report.observe("fragments visible to long-lived process A", seen_by_a)
-        bug_reproduced = seen_by_a < disk
         report.check(
-            "staleness bug reproduces (A blind to B's writes)",
-            bug_reproduced,
-            f"A sees {seen_by_a}/{disk}" + ("" if bug_reproduced else " — bug seems FIXED; flip this assertion"),
+            "long-lived process sees another process's writes (ADR-017 §2)",
+            seen_by_a == disk,
+            f"A sees {seen_by_a}/{disk}",
         )
     finally:
         a.close()
