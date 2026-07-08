@@ -1062,6 +1062,77 @@ emit:
         );
     }
 
+    #[tokio::test]
+    async fn ingest_stops_running_lens_unloaded_by_another_engine() {
+        // issue #11: unload_spec must propagate — the mirror of #10.
+        // Durable vocabulary edges remain (Invariant 62), but NEW
+        // translations stop once the spec row is gone.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("coherence-unload.db");
+
+        let (engine_a, _unused) = setup_shared_db(&db);
+        let pipeline_a = IngestPipeline::new(engine_a.clone());
+        pipeline_a.register_adapter(Arc::new(ContentAdapter::new("content")));
+        let api_a = PlexusApi::new(engine_a.clone(), Arc::new(pipeline_a));
+
+        let (_engine_b, api_b) = setup_shared_db(&db);
+        api_b.context_create("studio").unwrap();
+        let spec = r#"
+adapter_id: probe-spec
+input_kind: probe.noop
+input_schema:
+  - name: text
+    type: string
+    required: true
+lens:
+  consumer: probe
+  translations:
+    - from: [tagged_with]
+      to: labeled
+emit:
+  - create_node:
+      id: "noop:probe"
+      type: fragment
+      dimension: structure
+      properties:
+        text: "{input.text}"
+"#;
+        api_b.load_spec("studio", spec).await.expect("load_spec");
+
+        // A ingests — B's lens translates (issue #10 behavior)
+        api_a
+            .ingest("studio", "content", Box::new(FragmentInput::new("first", vec!["alpha".into()])))
+            .await
+            .unwrap();
+
+        let ctx_id = api_a.context_list(Some("studio")).unwrap()[0].clone();
+        let count_translations = |engine: &Arc<PlexusEngine>| {
+            engine
+                .get_context(&ctx_id)
+                .unwrap()
+                .edges
+                .iter()
+                .filter(|e| e.relationship == "lens:probe:labeled")
+                .count()
+        };
+        let before_unload = count_translations(&engine_a);
+        assert!(before_unload >= 1, "precondition: lens translated A's first ingest");
+
+        // B unloads; A's NEXT ingest must not produce new translations
+        api_b.unload_spec("studio", "probe-spec").expect("unload_spec");
+        api_a
+            .ingest("studio", "content", Box::new(FragmentInput::new("second", vec!["beta".into()])))
+            .await
+            .unwrap();
+
+        let after_unload = count_translations(&engine_a);
+        assert_eq!(
+            after_unload, before_unload,
+            "unload must propagate: no NEW translations from A's process \
+             (durable edges remain per Invariant 62)"
+        );
+    }
+
     #[test]
     fn api_context_listing_sees_another_engines_new_context() {
         let dir = tempfile::tempdir().unwrap();

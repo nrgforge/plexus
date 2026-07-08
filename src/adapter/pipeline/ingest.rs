@@ -40,10 +40,13 @@ pub struct IngestPipeline {
     /// pipeline see the same client without duplication.
     pub(crate) llm_client: Option<Arc<dyn LlmOrcClient>>,
     /// Spec rows already examined by `sync_spec_lenses`, keyed by
-    /// `(context_id, adapter_id, loaded_at)` — a re-loaded spec (new
-    /// `loaded_at`) is re-examined, but unchanged rows are not re-parsed
-    /// on every ingest.
-    synced_specs: RwLock<std::collections::HashSet<(String, String, String)>>,
+    /// `(context_id, adapter_id, loaded_at)` and mapping to the lens id
+    /// the row contributed (None if the spec had no lens or failed to
+    /// parse). A re-loaded spec (new `loaded_at`) is re-examined;
+    /// unchanged rows are not re-parsed on every ingest; a vanished row
+    /// (unload_spec in another process, issue #11) deregisters its lens
+    /// when no other examined row still references it.
+    synced_specs: RwLock<std::collections::HashMap<(String, String, String), Option<String>>>,
 }
 
 impl IngestPipeline {
@@ -54,7 +57,7 @@ impl IngestPipeline {
             adapters: RwLock::new(Vec::new()),
             enrichments: Arc::new(RwLock::new(Arc::new(EnrichmentRegistry::empty()))),
             llm_client: None,
-            synced_specs: RwLock::new(std::collections::HashSet::new()),
+            synced_specs: RwLock::new(std::collections::HashMap::new()),
         }
     }
 
@@ -79,7 +82,12 @@ impl IngestPipeline {
             }
         };
 
-        for spec in specs {
+        let current: std::collections::HashSet<(String, String, String)> = specs
+            .iter()
+            .map(|s| (s.context_id.clone(), s.adapter_id.clone(), s.loaded_at.clone()))
+            .collect();
+
+        for spec in &specs {
             let marker = (
                 spec.context_id.clone(),
                 spec.adapter_id.clone(),
@@ -89,14 +97,16 @@ impl IngestPipeline {
                 .synced_specs
                 .read()
                 .expect("synced_specs lock poisoned")
-                .contains(&marker)
+                .contains_key(&marker)
             {
                 continue;
             }
 
+            let mut lens_id: Option<String> = None;
             match DeclarativeAdapter::from_yaml(&spec.spec_yaml) {
                 Ok(adapter) => {
                     if let Some(lens) = adapter.lens() {
+                        lens_id = Some(lens.id().to_string());
                         let mut lock =
                             self.enrichments.write().expect("enrichments lock poisoned");
                         let already = lock.enrichments().iter().any(|e| e.id() == lens.id());
@@ -128,7 +138,41 @@ impl IngestPipeline {
             self.synced_specs
                 .write()
                 .expect("synced_specs lock poisoned")
-                .insert(marker);
+                .insert(marker, lens_id);
+        }
+
+        // Reverse direction (issue #11): rows for this context that we
+        // examined earlier but no longer exist were unloaded elsewhere.
+        // Deregister their lenses unless another examined row (any
+        // context) still references the same lens id.
+        let vanished: Vec<((String, String, String), Option<String>)> = {
+            let markers = self.synced_specs.read().expect("synced_specs lock poisoned");
+            markers
+                .iter()
+                .filter(|(k, _)| k.0 == context_id && !current.contains(*k))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        };
+        if !vanished.is_empty() {
+            let mut markers = self.synced_specs.write().expect("synced_specs lock poisoned");
+            for (key, _) in &vanished {
+                markers.remove(key);
+            }
+            for (key, lens_id) in vanished {
+                let Some(lens_id) = lens_id else { continue };
+                let still_referenced = markers.values().any(|v| v.as_deref() == Some(&lens_id));
+                if !still_referenced {
+                    tracing::info!(
+                        context_id = %key.0,
+                        adapter_id = %key.1,
+                        lens_id = %lens_id,
+                        "spec-lens sync: deregistered lens unloaded by another consumer"
+                    );
+                    drop(markers);
+                    self.deregister_enrichment(&lens_id);
+                    markers = self.synced_specs.write().expect("synced_specs lock poisoned");
+                }
+            }
         }
     }
 
