@@ -273,6 +273,35 @@ The worked example at
 demonstrates the full pattern: node creation from input, ensemble
 invocation, edge materialization from ensemble output.
 
+### The re-embed sweep (cross-batch and cross-consumer coverage)
+
+Ensemble invocation is **batch-local**: the ensemble sees only the docs
+in that one `ingest` call, so pairwise outputs (similarity, clustering)
+never span batches — and never span consumers ingesting separately into
+a shared context.
+
+The resolution is consumer-side and needs no special machinery: read
+the context back through the query surface, assemble a whole-context
+batch, and re-ingest it.
+
+1. `find_nodes` (e.g. `node_type: fragment`) returns full nodes
+   including `properties.text`.
+2. Build `docs: [{id: <existing node id>, text: <its text>}, ...]` from
+   the results.
+3. Ingest through the embedding-activation spec's input kind. Node
+   upserts make the re-ingest idempotent (`create_node` on an existing
+   id updates rather than duplicates); the ensemble computes pairs over
+   the full set, and the resulting `similar_to` edges bridge content
+   from every contributor — including other consumers.
+
+Any consumer (or a scheduled job) can perform the sweep; lenses then
+translate the new bridges into each consumer's vocabulary. Validated
+end-to-end by the `latent` harness scenario
+(`tools/play-harness/play.py latent`). One caveat: re-ingest refreshes
+each node's `created_at` (last-writer-wins upsert), so sweeps make
+`temporal_proximity` treat all swept content as contemporaneous —
+exclude `temporal_proximity` from lens from-lists on swept contexts.
+
 ## Common patterns
 
 ### Minimum-viable vs. minimum-useful

@@ -88,9 +88,15 @@ consumers. **Differential KPI, first reading: solo=2, shared=4,
 delta=2** — cohabitation doubled trellis's signal. Caveats routed to
 issues: convergence is exact-string, so morphological variants fragment
 the concept space (#8, the crowd pair missed on `mosh_pit` vs
-`mosh_pits`); the embedding mechanism is batch-local and structurally
-cannot bridge consumers in the default build (#9), so the flywheel's
-second mechanism remains unproven pending #9's resolution.
+`mosh_pits`); the embedding mechanism's batch-locality (#9) was resolved
+consumer-side the same day: the **re-embed sweep** (read the context via
+`find_nodes`, re-ingest as one embedding batch — documented in the
+spec-author guide, proven by `play.py latent`). All three engineered
+latent bridges formed across consumers and both lenses translated them,
+so **both cross-pollination mechanisms are now proven.** Residual gap:
+lens reactivity doesn't span processes — translations happen only in
+processes whose pipeline holds the spec, so coverage is
+eventually-consistent with activity (#10).
 
 **M2 — Close the gaps M1 exposes.** Candidates, ordered by what the
 flywheel shows matters: lens coverage over background extraction, the
