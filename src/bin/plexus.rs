@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 use plexus::{Context, ContextId, OpenStore, PlexusEngine, Source, SqliteStore};
 use plexus::adapter::{GraphAnalysisAdapter, IngestPipeline, run_analysis};
 use plexus::llm_orc::SubprocessClient;
+use plexus::mcp::{McpServerConfig, McpTransport};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, warn};
@@ -368,7 +369,10 @@ fn main() {
                 std::process::exit(1);
             }
             let db_path = db.unwrap_or_else(default_db_path);
-            let code = plexus::mcp::run_mcp_server(db_path);
+            let code = plexus::mcp::run_mcp_server(McpServerConfig {
+                db_path,
+                transport: McpTransport::Stdio,
+            });
             std::process::exit(code);
         }
         Commands::Analyze { name, ensemble, db } => {

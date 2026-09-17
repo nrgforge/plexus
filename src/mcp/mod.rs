@@ -17,6 +17,7 @@ use crate::api::PlexusApi;
 use crate::adapter::{PipelineBuilder, classify_input};
 use crate::graph::{NodeId, Source};
 use crate::query::{CursorFilter, Direction, FindQuery, PathQuery, QueryFilter, RankBy, TraverseQuery};
+use crate::llm_orc::LlmOrcClient;
 use crate::{OpenStore, PlexusEngine, SqliteStore};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -52,7 +53,14 @@ pub struct PlexusMcpServer {
 #[tool_router]
 impl PlexusMcpServer {
     pub fn new(engine: Arc<PlexusEngine>) -> Self {
-        let pipeline = PipelineBuilder::default_pipeline(engine.clone());
+        let client: Arc<dyn LlmOrcClient> = Arc::new(crate::llm_orc::SubprocessClient::new());
+        Self::with_client(engine, client)
+    }
+
+    /// Construct the server with an explicit llm-orc client (see
+    /// `PipelineBuilder::default_pipeline_with_client`).
+    pub fn with_client(engine: Arc<PlexusEngine>, client: Arc<dyn LlmOrcClient>) -> Self {
+        let pipeline = PipelineBuilder::default_pipeline_with_client(engine.clone(), client);
 
         let api = PlexusApi::new(engine.clone(), Arc::new(pipeline));
 
@@ -494,7 +502,22 @@ impl ServerHandler for PlexusMcpServer {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub fn run_mcp_server(db_path: PathBuf) -> i32 {
+/// How the MCP server is exposed.
+#[derive(Debug, Clone)]
+pub enum McpTransport {
+    /// JSON-RPC over stdin/stdout — one client, one session (the default).
+    Stdio,
+}
+
+/// Everything `run_mcp_server` needs; assembled by the CLI.
+#[derive(Debug, Clone)]
+pub struct McpServerConfig {
+    pub db_path: PathBuf,
+    pub transport: McpTransport,
+}
+
+pub fn run_mcp_server(config: McpServerConfig) -> i32 {
+    let McpServerConfig { db_path, transport } = config;
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -522,23 +545,29 @@ pub fn run_mcp_server(db_path: PathBuf) -> i32 {
 
         let server = PlexusMcpServer::new(Arc::new(engine));
 
-        tracing::info!("plexus mcp server starting on stdio...");
+        match transport {
+            McpTransport::Stdio => serve_stdio(server).await,
+        }
+    })
+}
 
-        let service = match server.serve(rmcp::transport::stdio()).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to start MCP server");
-                return 1;
-            }
-        };
+async fn serve_stdio(server: PlexusMcpServer) -> i32 {
+    tracing::info!("plexus mcp server starting on stdio...");
 
-        if let Err(e) = service.waiting().await {
-            tracing::error!(error = %e, "MCP server error");
+    let service = match server.serve(rmcp::transport::stdio()).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to start MCP server");
             return 1;
         }
+    };
 
-        0
-    })
+    if let Err(e) = service.waiting().await {
+        tracing::error!(error = %e, "MCP server error");
+        return 1;
+    }
+
+    0
 }
 
 // ---------------------------------------------------------------------------

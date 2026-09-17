@@ -242,8 +242,20 @@ impl PipelineBuilder {
     /// — `AdapterError::Skipped`); registration and structural analysis
     /// always complete.
     pub fn default_pipeline(engine: Arc<PlexusEngine>) -> IngestPipeline {
-        let persisted = gather_persisted_specs(&engine);
         let client: Arc<dyn LlmOrcClient> = Arc::new(crate::llm_orc::SubprocessClient::new());
+        Self::default_pipeline_with_client(engine, client)
+    }
+
+    /// `default_pipeline` with an explicit llm-orc client.
+    ///
+    /// Hosts that choose the client from configuration (e.g. the CLI's
+    /// `--llm-orc-url`) call this; everything else is identical to
+    /// `default_pipeline`.
+    pub fn default_pipeline_with_client(
+        engine: Arc<PlexusEngine>,
+        client: Arc<dyn LlmOrcClient>,
+    ) -> IngestPipeline {
+        let persisted = gather_persisted_specs(&engine);
         Self::new(engine)
             .with_default_adapters()
             .with_default_structural_modules()
