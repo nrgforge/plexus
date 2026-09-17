@@ -1,10 +1,10 @@
 //! Plexus CLI — knowledge graph engine with MCP server.
 //!
 //! Usage:
-//!   plexus mcp [--transport stdio] [--db path] [--llm-orc-url url]
+//!   plexus mcp [--transport stdio|http] [--bind addr] [--db path] [--llm-orc-url url]
 //!   plexus context <subcommand> [--db path]
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use plexus::{Context, ContextId, OpenStore, PlexusEngine, Source, SqliteStore};
 use plexus::adapter::{GraphAnalysisAdapter, IngestPipeline, run_analysis};
 use plexus::llm_orc::{resolve_url, HttpClient, LlmOrcClient, SubprocessClient};
@@ -28,9 +28,14 @@ struct Cli {
 enum Commands {
     /// Start the MCP (Model Context Protocol) server
     Mcp {
-        /// Transport type (currently only stdio)
-        #[arg(long, default_value = "stdio")]
-        transport: String,
+        /// Transport: stdio (one client per process) or http (MCP streamable
+        /// HTTP; many clients share one process, each with its own session)
+        #[arg(long, value_enum, default_value_t = TransportArg::Stdio)]
+        transport: TransportArg,
+        /// Address to listen on for --transport http. Loopback by default;
+        /// put a proxy or the tailnet in front rather than binding wider.
+        #[arg(long, default_value = "127.0.0.1:8766")]
+        bind: std::net::SocketAddr,
         /// Path to SQLite database file
         #[arg(long)]
         db: Option<PathBuf>,
@@ -65,6 +70,12 @@ enum Commands {
         #[arg(long, global = true)]
         db: Option<PathBuf>,
     },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TransportArg {
+    Stdio,
+    Http,
 }
 
 #[derive(Subcommand)]
@@ -385,15 +396,15 @@ fn main() {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Mcp { transport, db, llm_orc_url } => {
-            if transport != "stdio" {
-                error!("only 'stdio' transport is currently supported");
-                std::process::exit(1);
-            }
+        Commands::Mcp { transport, bind, db, llm_orc_url } => {
+            let transport = match transport {
+                TransportArg::Stdio => McpTransport::Stdio,
+                TransportArg::Http => McpTransport::Http { bind },
+            };
             let db_path = db.unwrap_or_else(default_db_path);
             let code = plexus::mcp::run_mcp_server(McpServerConfig {
                 db_path,
-                transport: McpTransport::Stdio,
+                transport,
                 llm_orc_url,
             });
             std::process::exit(code);

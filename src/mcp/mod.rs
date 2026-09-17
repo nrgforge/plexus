@@ -71,6 +71,20 @@ impl PlexusMcpServer {
         }
     }
 
+    /// A handler for one more MCP session on the same engine and pipeline.
+    ///
+    /// Shares `api` (engine, pipeline, loaded specs) with `self`; only the
+    /// active context is fresh. The HTTP transport calls this once per
+    /// `Mcp-Session-Id`, which is what makes `set_context` per-session
+    /// while the graph stays shared.
+    pub fn new_session(&self) -> Self {
+        Self {
+            api: self.api.clone(),
+            active_context: Arc::new(Mutex::new(None)),
+            tool_router: self.tool_router.clone(),
+        }
+    }
+
     // ── Session ─────────────────────────────────────────────────────────
 
     fn context(&self) -> Result<String, McpError> {
@@ -507,6 +521,10 @@ impl ServerHandler for PlexusMcpServer {
 pub enum McpTransport {
     /// JSON-RPC over stdin/stdout — one client, one session (the default).
     Stdio,
+    /// MCP streamable HTTP at `http://{bind}/mcp` — many clients, one
+    /// process; each `Mcp-Session-Id` gets its own `PlexusMcpServer` via
+    /// `new_session`, so `set_context` is per-session.
+    Http { bind: std::net::SocketAddr },
 }
 
 /// Everything `run_mcp_server` needs; assembled by the CLI.
@@ -551,8 +569,54 @@ pub fn run_mcp_server(config: McpServerConfig) -> i32 {
 
         match transport {
             McpTransport::Stdio => serve_stdio(server).await,
+            McpTransport::Http { bind } => serve_http(server, bind).await,
         }
     })
+}
+
+/// Serve MCP over streamable HTTP until ctrl-c.
+///
+/// No auth: bind loopback and let the tailnet / a reverse proxy be the
+/// boundary. Sessions live in memory (`LocalSessionManager`); a restart
+/// invalidates them and clients re-initialize.
+async fn serve_http(server: PlexusMcpServer, bind: std::net::SocketAddr) -> i32 {
+    use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+    use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+
+    let config = StreamableHttpServerConfig::default();
+    let cancel = config.cancellation_token.clone();
+    let service = StreamableHttpService::new(
+        move || Ok(server.new_session()),
+        Arc::new(LocalSessionManager::default()),
+        config,
+    );
+    let router = axum::Router::new().nest_service("/mcp", service);
+
+    let listener = match tokio::net::TcpListener::bind(bind).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(bind = %bind, error = %e, "failed to bind HTTP listener");
+            return 1;
+        }
+    };
+    let addr = listener.local_addr().unwrap_or(bind);
+    tracing::info!("plexus mcp server listening on http://{}/mcp", addr);
+
+    let shutdown = async move {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutdown requested; closing MCP sessions");
+        cancel.cancel();
+    };
+
+    if let Err(e) = axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown)
+        .await
+    {
+        tracing::error!(error = %e, "HTTP server error");
+        return 1;
+    }
+
+    0
 }
 
 async fn serve_stdio(server: PlexusMcpServer) -> i32 {

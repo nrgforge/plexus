@@ -46,3 +46,7 @@ mod llm_orc_wiring;
 mod outbound_events;
 #[path = "acceptance/llm_orc_http.rs"]
 mod llm_orc_http;
+#[path = "acceptance/mcp_http_harness.rs"]
+mod mcp_http_harness;
+#[path = "acceptance/mcp_http.rs"]
+mod mcp_http;
