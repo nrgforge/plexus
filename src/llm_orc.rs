@@ -448,13 +448,21 @@ impl LlmOrcClient for HttpClient {
     }
 }
 
+/// Resolve the llm-orc service URL: an explicit value (CLI flag) wins,
+/// otherwise `PLEXUS_LLM_ORC_URL`; empty strings count as unset.
+pub fn resolve_url(explicit: Option<String>) -> Option<String> {
+    explicit
+        .or_else(|| std::env::var(LLM_ORC_URL_ENV).ok())
+        .filter(|s| !s.trim().is_empty())
+}
+
 /// Choose the production llm-orc client from configuration.
 ///
-/// An explicit `url` (CLI flag) wins; otherwise `PLEXUS_LLM_ORC_URL` is
-/// consulted; when neither is set the local `SubprocessClient` is used, so
-/// existing installs keep their behavior.
+/// A resolved URL (see `resolve_url`) selects `HttpClient`; when none is
+/// configured the local `SubprocessClient` is used, so existing installs
+/// keep their behavior.
 pub fn select_client(url: Option<String>) -> Arc<dyn LlmOrcClient> {
-    match url.or_else(|| std::env::var(LLM_ORC_URL_ENV).ok().filter(|s| !s.is_empty())) {
+    match resolve_url(url) {
         Some(base) => {
             tracing::info!(url = %base, "llm-orc client: HTTP");
             Arc::new(HttpClient::new(base))

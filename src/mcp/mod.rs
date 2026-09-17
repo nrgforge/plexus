@@ -514,10 +514,13 @@ pub enum McpTransport {
 pub struct McpServerConfig {
     pub db_path: PathBuf,
     pub transport: McpTransport,
+    /// Base URL of a running `llm-orc serve`; `None` falls back to the
+    /// `PLEXUS_LLM_ORC_URL` env var, then to the local subprocess client.
+    pub llm_orc_url: Option<String>,
 }
 
 pub fn run_mcp_server(config: McpServerConfig) -> i32 {
-    let McpServerConfig { db_path, transport } = config;
+    let McpServerConfig { db_path, transport, llm_orc_url } = config;
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -543,7 +546,8 @@ pub fn run_mcp_server(config: McpServerConfig) -> i32 {
             eng
         };
 
-        let server = PlexusMcpServer::new(Arc::new(engine));
+        let client = crate::llm_orc::select_client(llm_orc_url);
+        let server = PlexusMcpServer::with_client(Arc::new(engine), client);
 
         match transport {
             McpTransport::Stdio => serve_stdio(server).await,

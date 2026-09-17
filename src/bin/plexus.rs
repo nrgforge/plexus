@@ -1,13 +1,13 @@
 //! Plexus CLI — knowledge graph engine with MCP server.
 //!
 //! Usage:
-//!   plexus mcp [--transport stdio] [--db path]
+//!   plexus mcp [--transport stdio] [--db path] [--llm-orc-url url]
 //!   plexus context <subcommand> [--db path]
 
 use clap::{Parser, Subcommand};
 use plexus::{Context, ContextId, OpenStore, PlexusEngine, Source, SqliteStore};
 use plexus::adapter::{GraphAnalysisAdapter, IngestPipeline, run_analysis};
-use plexus::llm_orc::SubprocessClient;
+use plexus::llm_orc::{resolve_url, HttpClient, LlmOrcClient, SubprocessClient};
 use plexus::mcp::{McpServerConfig, McpTransport};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,6 +34,11 @@ enum Commands {
         /// Path to SQLite database file
         #[arg(long)]
         db: Option<PathBuf>,
+        /// Base URL of a running `llm-orc serve` (e.g. http://127.0.0.1:8765).
+        /// Falls back to $PLEXUS_LLM_ORC_URL; when neither is set, llm-orc
+        /// is spawned as a local subprocess.
+        #[arg(long)]
+        llm_orc_url: Option<String>,
     },
     /// Run on-demand external enrichment on a context via llm-orc (ADR-024)
     Analyze {
@@ -46,6 +51,11 @@ enum Commands {
         /// Path to SQLite database file
         #[arg(long)]
         db: Option<PathBuf>,
+        /// Base URL of a running `llm-orc serve` (e.g. http://127.0.0.1:8765).
+        /// Falls back to $PLEXUS_LLM_ORC_URL; when neither is set, llm-orc
+        /// is spawned as a local subprocess.
+        #[arg(long)]
+        llm_orc_url: Option<String>,
     },
     /// Manage contexts
     Context {
@@ -289,7 +299,12 @@ fn cmd_context_remove_source(engine: &PlexusEngine, name: &str, path: &std::path
     }
 }
 
-async fn cmd_analyze(engine: Arc<PlexusEngine>, context_name: &str, ensemble: &str) -> i32 {
+async fn cmd_analyze(
+    engine: Arc<PlexusEngine>,
+    context_name: &str,
+    ensemble: &str,
+    llm_orc_url: Option<String>,
+) -> i32 {
     let ctx_id = match find_context_by_name(&engine, context_name) {
         Some(id) => id,
         None => {
@@ -313,12 +328,19 @@ async fn cmd_analyze(engine: Arc<PlexusEngine>, context_name: &str, ensemble: &s
         ctx.edge_count()
     );
 
-    let project_dir = std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let client = SubprocessClient::new().with_project_dir(project_dir);
+    // A remote llm-orc serves its own project; only the local subprocess
+    // needs to be pointed at the current directory.
+    let client: Arc<dyn LlmOrcClient> = match resolve_url(llm_orc_url) {
+        Some(url) => Arc::new(HttpClient::new(url)),
+        None => {
+            let project_dir = std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            Arc::new(SubprocessClient::new().with_project_dir(project_dir))
+        }
+    };
 
-    let results = match run_analysis(&client, ensemble, &ctx).await {
+    let results = match run_analysis(client.as_ref(), ensemble, &ctx).await {
         Ok(r) => r,
         Err(e) => {
             error!(error = %e, "operation failed");
@@ -363,7 +385,7 @@ fn main() {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Mcp { transport, db } => {
+        Commands::Mcp { transport, db, llm_orc_url } => {
             if transport != "stdio" {
                 error!("only 'stdio' transport is currently supported");
                 std::process::exit(1);
@@ -372,10 +394,11 @@ fn main() {
             let code = plexus::mcp::run_mcp_server(McpServerConfig {
                 db_path,
                 transport: McpTransport::Stdio,
+                llm_orc_url,
             });
             std::process::exit(code);
         }
-        Commands::Analyze { name, ensemble, db } => {
+        Commands::Analyze { name, ensemble, db, llm_orc_url } => {
             let engine = match open_engine(db) {
                 Ok(e) => e,
                 Err(e) => {
@@ -386,7 +409,7 @@ fn main() {
             let engine = Arc::new(engine);
             let code = tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(cmd_analyze(engine, &name, &ensemble));
+                .block_on(cmd_analyze(engine, &name, &ensemble, llm_orc_url));
             std::process::exit(code);
         }
         Commands::Context { action, db } => {

@@ -44,3 +44,5 @@ mod mcp_matrix_llm_orc;
 mod llm_orc_wiring;
 #[path = "acceptance/outbound_events.rs"]
 mod outbound_events;
+#[path = "acceptance/llm_orc_http.rs"]
+mod llm_orc_http;
