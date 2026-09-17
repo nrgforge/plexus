@@ -37,7 +37,7 @@ use crate::query::{
     self, EvidenceTrailResult, FindQuery, PathQuery, PathResult, QueryFilter, QueryResult,
     RankBy, TraversalResult, TraverseQuery,
 };
-use crate::storage::PersistedSpec;
+use crate::storage::{CheckpointResult, PersistedSpec};
 
 /// Single entry point for all consumer-facing operations.
 #[derive(Clone)]
@@ -709,6 +709,17 @@ impl PlexusApi {
             self.engine.remove_source(&ctx_id, source)?;
         }
         Ok(())
+    }
+
+    // --- Maintenance ---
+
+    /// Checkpoint the store's write-ahead log (`GraphStore::checkpoint`).
+    ///
+    /// Database-level, not context-scoped. Exposed so a consumer of the
+    /// HTTP transport can reclaim WAL space without shell access to the
+    /// database host (ADR-017 shared-database case).
+    pub fn db_checkpoint(&self) -> PlexusResult<CheckpointResult> {
+        self.engine.checkpoint()
     }
 
     // --- Internal ---

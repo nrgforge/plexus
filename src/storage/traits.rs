@@ -67,6 +67,16 @@ pub trait GraphStore: Send + Sync {
         Ok(0)
     }
 
+    /// Flush the write-ahead log into the main database file and truncate
+    /// it (SQLite: `PRAGMA wal_checkpoint(TRUNCATE)`).
+    ///
+    /// Lets a remote consumer reclaim WAL space on a long-lived process
+    /// without shell access to the database host. Backends without a WAL
+    /// return `CheckpointResult::default()`.
+    fn checkpoint(&self) -> StorageResult<CheckpointResult> {
+        Ok(CheckpointResult::default())
+    }
+
     // === Event Cursor Operations (ADR-035) ===
 
     /// Persist a graph event to the event log.
@@ -142,6 +152,19 @@ pub struct PersistedSpec {
     pub adapter_id: String,
     pub spec_yaml: String,
     pub loaded_at: String,
+}
+
+/// Outcome of `GraphStore::checkpoint`, mirroring SQLite's
+/// `PRAGMA wal_checkpoint` row `(busy, log, checkpointed)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct CheckpointResult {
+    /// Another connection held the database, so the checkpoint could not
+    /// run to completion; retry later.
+    pub busy: bool,
+    /// Pages in the WAL before the checkpoint (0 when there is no WAL).
+    pub wal_pages: i64,
+    /// Pages written back into the main database file (0 when there is no WAL).
+    pub checkpointed_pages: i64,
 }
 
 /// Extension trait for opening stores from paths

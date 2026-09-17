@@ -1,6 +1,6 @@
 //! MCP server for Plexus — knowledge graph engine via the Model Context Protocol.
 //!
-//! Tools: 18 total (1 session + 1 ingest + 6 context + 8 graph read + 2 spec lifecycle: load + unload).
+//! Tools: 19 total (1 session + 1 ingest + 6 context + 8 graph read + 2 spec lifecycle: load + unload + 1 maintenance: db_checkpoint).
 //!
 //! The single graph-data write path is `ingest` (ADR-028), which routes to
 //! adapters by input_kind (explicit or auto-classified from JSON shape).
@@ -120,6 +120,16 @@ impl PlexusMcpServer {
             data: None,
         })? = Some(p.name.clone());
         ok_text(format!("active context set to '{}'", p.name))
+    }
+
+    // ── Maintenance ─────────────────────────────────────────────────────
+
+    #[tool(description = "Checkpoint the SQLite write-ahead log (PRAGMA wal_checkpoint(TRUNCATE)) and report {busy, wal_pages, checkpointed_pages}. Database-level, no active context needed. For consumers of a long-lived HTTP Plexus that have no shell on the database host; busy=true means another connection held the database and the call should be retried.")]
+    fn db_checkpoint(&self) -> Result<CallToolResult, McpError> {
+        match self.api.db_checkpoint() {
+            Ok(result) => ok_text(serde_json::to_string_pretty(&result).unwrap()),
+            Err(e) => err_text(e.to_string()),
+        }
     }
 
     // ── Ingest (single write path — ADR-028, Invariant 7) ────────────────
@@ -679,6 +689,21 @@ mod tests {
             )
             .await
             .expect("seed ingest");
+    }
+
+    #[tokio::test]
+    async fn db_checkpoint_reports_wal_state_without_active_context() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory sqlite"));
+        let server = PlexusMcpServer::new(Arc::new(PlexusEngine::with_store(store)));
+
+        // Deliberately no set_context: checkpointing is database-level.
+        let result = server.db_checkpoint().expect("db_checkpoint");
+
+        assert_ne!(result.is_error, Some(true), "{}", text_of(&result));
+        let json: serde_json::Value = serde_json::from_str(&text_of(&result)).expect("json");
+        for key in ["busy", "wal_pages", "checkpointed_pages"] {
+            assert!(json.get(key).is_some(), "missing {key}: {json}");
+        }
     }
 
     #[tokio::test]

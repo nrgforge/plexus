@@ -1,6 +1,6 @@
 //! SQLite storage backend for Plexus
 
-use super::traits::{GraphStore, OpenStore, PersistedSpec, StorageError, StorageResult};
+use super::traits::{CheckpointResult, GraphStore, OpenStore, PersistedSpec, StorageError, StorageResult};
 use crate::graph::{Context, ContextId, Edge, Node, NodeId};
 use crate::query::{CursorFilter, PersistedEvent};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -704,6 +704,20 @@ impl GraphStore for SqliteStore {
         Ok(version as u64)
     }
 
+    fn checkpoint(&self) -> StorageResult<CheckpointResult> {
+        let conn = self.conn.lock().map_err(|e| StorageError::Internal(format!("mutex poisoned: {e}")))?;
+        let (busy, wal_pages, checkpointed_pages): (i64, i64, i64) = conn.query_row(
+            "PRAGMA wal_checkpoint(TRUNCATE)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        Ok(CheckpointResult {
+            busy: busy != 0,
+            wal_pages,
+            checkpointed_pages,
+        })
+    }
+
     fn persist_event(
         &self,
         context_id: &str,
@@ -970,6 +984,33 @@ mod tests {
             .unwrap();
 
         assert_eq!(journal_mode, "wal", "SqliteStore must enable WAL mode at connection time (ADR-017 §1)");
+    }
+
+    #[test]
+    fn test_checkpoint_truncates_wal() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test-checkpoint.db");
+        let store = SqliteStore::open(&db_path).unwrap();
+        store.save_context(&create_test_context()).unwrap();
+
+        let wal_path = dir.path().join("test-checkpoint.db-wal");
+        assert!(
+            std::fs::metadata(&wal_path).map(|m| m.len() > 0).unwrap_or(false),
+            "writes should land in the WAL first"
+        );
+
+        let result = store.checkpoint().unwrap();
+
+        assert!(!result.busy, "no other connection holds the database: {result:?}");
+        assert_eq!(
+            result.wal_pages, result.checkpointed_pages,
+            "every WAL page should be checkpointed: {result:?}"
+        );
+        assert_eq!(
+            std::fs::metadata(&wal_path).unwrap().len(),
+            0,
+            "TRUNCATE mode resets the WAL file to zero bytes"
+        );
     }
 
     #[test]

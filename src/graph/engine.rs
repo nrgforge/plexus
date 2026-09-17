@@ -5,7 +5,7 @@ use super::edge::Edge;
 use super::node::NodeId;
 use super::events::GraphEvent;
 use crate::query::{FindQuery, PathQuery, QueryResult, PathResult, TraversalResult, TraverseQuery};
-use crate::storage::{GraphStore, StorageError};
+use crate::storage::{CheckpointResult, GraphStore, StorageError};
 use chrono::Utc;
 use dashmap::DashMap;
 use std::collections::HashSet;
@@ -171,6 +171,15 @@ impl PlexusEngine {
     }
 
     /// List all context IDs
+    /// Checkpoint the backing store's write-ahead log (see
+    /// `GraphStore::checkpoint`). No store → nothing to checkpoint.
+    pub fn checkpoint(&self) -> PlexusResult<CheckpointResult> {
+        match self.store {
+            Some(ref store) => Ok(store.checkpoint()?),
+            None => Ok(CheckpointResult::default()),
+        }
+    }
+
     pub fn list_contexts(&self) -> Vec<ContextId> {
         self.contexts.iter().map(|r| r.key().clone()).collect()
     }
