@@ -1,8 +1,8 @@
 # System Design: Plexus
 
-**Version:** 1.3
-**Status:** Current (Retrofit + MCP consumer interaction amendment + Default-install deployment-class amendment)
-**Last amended:** 2026-04-22
+**Version:** 1.4
+**Status:** Current (Retrofit + MCP consumer interaction amendment + Default-install deployment-class amendment + Remote transports amendment)
+**Last amended:** 2026-09-16
 
 ## Architectural Drivers
 
@@ -191,17 +191,17 @@ A consumer-scoped enrichment that translates cross-domain graph content into one
 **Spec lifecycle ownership (ADR-037):** `PlexusApi::load_spec(context_id, spec_yaml)` orchestrates the three-effect model — validate → parse → register → persist → run lens over existing content. The operation is fail-fast (Invariant 60): if validation fails, no pipeline mutation, no storage write, no graph mutation. `unload_spec(context_id, adapter_id)` reverses (b) and (c) — deregister the lens enrichment and the adapter, delete the specs table row — but NOT (a): vocabulary edges remain in the graph as durable data (Invariant 62). Startup rehydration happens at `PipelineBuilder` construction time (see adapter/pipeline), NOT through an `api`-level reload method — this avoids host-side ceremony and eliminates the "forgot to call reload" failure mode.
 
 ### Module: mcp
-**Purpose:** MCP transport — thin shell that forwards requests to PlexusApi. 16 tools total after ADR-036 expansion (9 prior + 7 new).
-**Provenance:** Invariant 38 (transports are thin shells); ADR-028, ADR-036
-**Owns:** PlexusMcpServer, 16 MCP tool handlers (prior: `set_context`, `ingest`, 6 context lifecycle, `evidence_trail`; new: `load_spec`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`), MCP params. All 7 new tools use flat optional parameter fields (no nested objects) — LLM consumers construct flat JSON more reliably.
+**Purpose:** MCP transport — thin shell that forwards requests to PlexusApi, served over stdio (one client per process) or streamable HTTP (many clients, one process). 19 tools total.
+**Provenance:** Invariant 38 (transports are thin shells); ADR-017 (shared database — the HTTP process is the long-lived writer), ADR-028, ADR-036
+**Owns:** PlexusMcpServer, 19 MCP tool handlers (`set_context`, `ingest`, 6 context lifecycle, `evidence_trail`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`, `explain_edge`, `load_spec`, `unload_spec`, `db_checkpoint`), MCP params, `McpServerConfig` / `McpTransport`. Tools use flat optional parameter fields (no nested objects) — LLM consumers construct flat JSON more reliably. Over HTTP, `PlexusMcpServer::new_session()` yields one handler per `Mcp-Session-Id`: active context is per-session, engine + pipeline + loaded specs are shared.
 **Depends on:** api, adapter (PipelineBuilder, classify_input), graph (Source), storage (OpenStore, SqliteStore — initialization; host code also reads specs table before pipeline construction)
 **Depended on by:** (binary entry point)
 
 ### Module: llm_orc
-**Purpose:** Client for the llm-orc subprocess — invokes external LLM ensembles.
+**Purpose:** Client for llm-orc — invokes external LLM ensembles, either through a spawned subprocess or a running `llm-orc serve` over HTTP.
 **Provenance:** ADR-024; Essay 25
-**Owns:** LlmOrcClient (trait), SubprocessClient
-**Depends on:** (external process)
+**Owns:** LlmOrcClient (trait), SubprocessClient, HttpClient, `select_client` (configuration → client)
+**Depends on:** (external process or service)
 **Depended on by:** adapter/adapters (SemanticAdapter, DeclarativeAdapter)
 
 ## Pipeline Flow
@@ -215,7 +215,7 @@ flowchart TD
     end
 
     subgraph Transport["Transport (thin shell)"]
-        mcp["MCP Server"]
+        mcp["MCP Server (stdio | streamable HTTP)"]
         grpc["gRPC (future)"]
         embed["Direct embedding"]
     end
@@ -474,7 +474,7 @@ Available enrichment types for declaration: `co_occurrence`, `discovery_gap`, `t
 | ChainView, MarkView, ChainStatus | provenance | ADR-013 |
 | PlexusApi | api | ADR-014 |
 | PlexusMcpServer | mcp | ADR-028 |
-| LlmOrcClient (trait), SubprocessClient | llm_orc | ADR-024 |
+| LlmOrcClient (trait), SubprocessClient, HttpClient | llm_orc | ADR-024 |
 | LensSpec, TranslationRule, NodePredicate | adapter/adapters | ADR-033 |
 | DeclarativeAdapter::lens() | adapter/adapters | ADR-033 |
 | LensEnrichment | adapter/enrichments | ADR-033 |
@@ -569,7 +569,7 @@ flowchart TD
 **Layering rules:**
 1. **Inner → Outer prohibited:** graph never imports adapter, provenance, api, or mcp. Exception: graph imports query (PlexusEngine provides find/traverse/path as facade methods).
 2. **Sibling isolation:** adapter/adapters and adapter/enrichments never import each other
-3. **Transport wiring shell:** mcp imports api for routing, adapter for pipeline construction (PipelineBuilder, classify_input), and graph/storage for initialization. Pipeline construction happens inside `PlexusMcpServer::new()`.
+3. **Transport wiring shell:** mcp imports api for routing, adapter for pipeline construction (PipelineBuilder, classify_input), and graph/storage for initialization. Pipeline construction happens inside `PlexusMcpServer::new()` / `with_client()`; the HTTP transport shares that one pipeline across sessions via `new_session()`.
 4. **Query is read-only:** query never imports adapter or storage
 5. **Enrichment contract is separate from adapter contract:** adapter/enrichment does not import adapter/traits
 

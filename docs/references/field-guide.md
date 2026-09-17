@@ -116,14 +116,14 @@ The enrichment contract is deliberately separate from the adapter contract (ADR-
 | with_enrichment | `PipelineBuilder::with_enrichment(Arc<dyn Enrichment>)` — custom enrichment (e.g. lens) | `src/adapter/pipeline/builder.rs` |
 | with_llm_client | wires `SemanticAdapter` onto coordinator AND stores client so `load_spec` can propagate it to declarative adapters with `ensemble:` fields | `src/adapter/pipeline/builder.rs` |
 | with_persisted_specs | rehydrates lens enrichments at construction (ADR-037 §2) | `src/adapter/pipeline/builder.rs` |
-| default_pipeline | wires default adapters + structural modules + enrichments + `SubprocessClient` llm-orc + persisted specs | `src/adapter/pipeline/builder.rs` |
+| default_pipeline | wires default adapters + structural modules + enrichments + `SubprocessClient` llm-orc + persisted specs; `default_pipeline_with_client` takes the client explicitly | `src/adapter/pipeline/builder.rs` |
 | gather_persisted_specs | `pub fn gather_persisted_specs(engine)` — iterates contexts, reads specs table | `src/adapter/pipeline/builder.rs` |
 | classify_input, ClassifyError | input-kind auto-detection | `src/adapter/pipeline/router.rs` |
 | Input routing (Invariant 17) | fan-out in `IngestPipeline::ingest()` | `src/adapter/pipeline/ingest.rs` |
 
 ### Design Rationale
 
-`IngestPipeline::ingest()` is the single write path (Invariant 34). All mutations enter here. `PipelineBuilder` was extracted from MCP to make pipeline construction transport-neutral — MCP and CLI both call `PipelineBuilder::default_pipeline(engine)`.
+`IngestPipeline::ingest()` is the single write path (Invariant 34). All mutations enter here. `PipelineBuilder` was extracted from MCP to make pipeline construction transport-neutral — MCP and CLI both call `PipelineBuilder::default_pipeline(engine)`, or `default_pipeline_with_client(engine, client)` when the llm-orc client is chosen from configuration (`--llm-orc-url` / `PLEXUS_LLM_ORC_URL` → `HttpClient`, otherwise `SubprocessClient`; see `llm_orc::select_client`).
 
 `sync_spec_lenses()` closes the cross-process gap in Invariant 62: before each ingest it reads the context's specs table, registers lenses loaded by other processes, and (reverse direction) deregisters lenses whose spec row vanished (unload_spec elsewhere). The `synced_specs` memo keyed by `(context_id, adapter_id, loaded_at)` keeps unchanged rows from being re-parsed per ingest. Lens-only — adapter wiring stays transient to the loading consumer's own process. Failures log and skip, mirroring rehydration's availability-over-strictness stance.
 
@@ -341,20 +341,23 @@ Every method takes a context *name*; `resolve` / `resolve_for_ingest` are the co
 
 | Concept | Code Manifestation | Location |
 |---------|-------------------|----------|
-| PlexusMcpServer | `pub struct PlexusMcpServer` (constructed via `::new(engine)`; internal `default_pipeline` wiring) | `src/mcp/mod.rs` |
-| 17 MCP tools | `#[tool(...)]` methods on `PlexusMcpServer` | `src/mcp/mod.rs` |
-| run_mcp_server | `pub fn run_mcp_server(db_path) -> i32` | `src/mcp/mod.rs` |
+| PlexusMcpServer | `pub struct PlexusMcpServer` (constructed via `::new(engine)` or `::with_client(engine, client)`; `new_session()` clones a handler with a fresh active context) | `src/mcp/mod.rs` |
+| 19 MCP tools | `#[tool(...)]` methods on `PlexusMcpServer` | `src/mcp/mod.rs` |
+| run_mcp_server | `pub fn run_mcp_server(McpServerConfig) -> i32`; `McpTransport::{Stdio, Http { bind }}` | `src/mcp/mod.rs` |
 
 ### Design Rationale
 
 MCP is a thin transport shell (Invariant 38). It delegates all logic to `PlexusApi`. The only non-delegation code is `set_context` (session state) and `classify_input` routing in `ingest`.
 
-The 17-tool surface:
+Two transports serve the same handler. `Stdio` is one client, one session. `Http { bind }` mounts rmcp's `StreamableHttpService` at `/mcp` on an axum listener; the service factory calls `PlexusMcpServer::new_session()` once per `Mcp-Session-Id`, so the active context is per-session while the engine, pipeline, and loaded specs are shared. Sessions are in-memory (`LocalSessionManager`); no auth — bind loopback and let the network boundary (tailnet, reverse proxy) do the gating.
+
+The 19-tool surface:
 - 1 session: `set_context`
 - 1 data write: `ingest`
 - 6 context management: `context_list`, `context_create`, `context_delete`, `context_rename`, `context_add_sources`, `context_remove_sources`
-- 7 graph read: `evidence_trail`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`
+- 8 graph read: `evidence_trail`, `find_nodes`, `traverse`, `find_path`, `changes_since`, `list_tags`, `shared_concepts`, `explain_edge`
 - 2 spec lifecycle: `load_spec`, `unload_spec`
+- 1 maintenance: `db_checkpoint` — `PRAGMA wal_checkpoint(TRUNCATE)` via `PlexusApi::db_checkpoint` → `GraphStore::checkpoint`; database-level, no active context; exists so a consumer of the HTTP transport can reclaim WAL space without a shell on the database host
 
 `load_spec` and `unload_spec` route through `PlexusApi::load_spec` / `unload_spec`, which enforce the three-effect model and durable-vocabulary contracts (ADR-037, Invariant 62). `unload_spec` deregisters the adapter and lens and deletes the specs table row; vocabulary edges previously written remain queryable. The MCP handlers themselves are thin-wrapper delegation + JSON marshalling.
 
@@ -377,15 +380,17 @@ The 17-tool surface:
 |---------|-------------------|----------|
 | LlmOrcClient | `pub trait LlmOrcClient` | `src/llm_orc.rs` |
 | SubprocessClient | `pub struct SubprocessClient` | `src/llm_orc.rs` |
+| HttpClient | `pub struct HttpClient` — `GET {base}/health`, `POST {base}/api/ensembles/{name}/execute` | `src/llm_orc.rs` |
+| select_client / resolve_url | `pub fn select_client(Option<String>) -> Arc<dyn LlmOrcClient>` | `src/llm_orc.rs` |
 
 ### Design Rationale
 
-External LLM orchestration runs as a subprocess (ADR-024). The trait abstraction allows SemanticAdapter tests to use mock clients without invoking real llm-orc. `SubprocessClient` invokes the `llm-orc` CLI with JSON stdin/stdout.
+External LLM orchestration runs out of process (ADR-024). The trait abstraction allows SemanticAdapter tests to use mock clients without invoking real llm-orc. `SubprocessClient` spawns `llm-orc m serve --transport stdio` and speaks MCP over stdin/stdout; `HttpClient` talks to an already-running `llm-orc serve` over its REST surface (one JSON envelope per execute, mapped onto the same `InvokeResponse`; 404 → `EnsembleNotFound`, 5xx → `Unavailable`, non-JSON → `ParseError`; no overall request timeout because ensembles can legitimately run for many minutes). `select_client` picks HTTP when `--llm-orc-url` or `PLEXUS_LLM_ORC_URL` is set and the subprocess otherwise.
 
 ### Key Integration Points
 
 - **adapter/adapters** — `SemanticAdapter` and `DeclarativeAdapter` use `LlmOrcClient` for ensemble invocation.
-- **bin/plexus** — CLI `analyze` command uses `SubprocessClient` directly.
+- **bin/plexus** — `mcp` and `analyze` both take `--llm-orc-url`; `analyze` keeps `SubprocessClient::with_project_dir` for the local case.
 
 ---
 
@@ -405,7 +410,7 @@ External LLM orchestration runs as a subprocess (ADR-024). The trait abstraction
 | Filter queries by provenance/corroboration | `query/filter.rs` — QueryFilter, RankBy |
 | Pull-based change queries | `query/cursor.rs` — PersistedEvent, ChangeSet, CursorFilter |
 | Understand provenance reads | `provenance/api.rs` |
-| Understand the MCP surface | `mcp/mod.rs` (18 tools: session, ingest, context CRUD, graph reads incl. explain_edge, load_spec/unload_spec) |
+| Understand the MCP surface | `mcp/mod.rs` (19 tools: session, ingest, context CRUD, graph reads incl. explain_edge, load_spec/unload_spec, db_checkpoint; stdio + streamable HTTP transports) |
 | Understand weight normalization | `graph/context.rs` (scale norm), `query/normalize.rs` (query-time norm) |
 | Understand evidence trail | `query/step.rs` (`evidence_trail()`), ADR-013 |
 | Understand contribution tracking | `graph/edge.rs` (contributions), `adapter/sink/engine_sink.rs` (emit phase 2), ADR-003 |

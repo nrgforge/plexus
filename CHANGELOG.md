@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.6.0 - 2026-09-16
+
+Remote-hosting release: reach llm-orc over HTTP, serve MCP over HTTP.
+No breaking changes; stdio and the local llm-orc subprocess remain the
+defaults.
+
+### Added
+
+- **`plexus mcp --transport http --bind <addr>`** — the same tool set
+  over MCP streamable HTTP at `http://<bind>/mcp` (default bind
+  `127.0.0.1:8766`; `--bind 127.0.0.1:0` picks a free port and logs
+  `listening on <url>`). Many clients share one process. No auth: bind
+  loopback and let a reverse proxy or the tailnet be the boundary.
+  - **Session semantics:** each `Mcp-Session-Id` gets its own active
+    context. `set_context` in one client never affects another; the
+    graph, loaded specs, and lenses are shared across sessions. Sessions
+    are in-memory, so a restart invalidates them and clients
+    re-initialize. An unknown session id is answered with HTTP 401.
+- **`--llm-orc-url <base>` / `PLEXUS_LLM_ORC_URL`** on `plexus mcp` and
+  `plexus analyze` — `HttpClient` talks to a running `llm-orc serve`
+  (`GET /health`, `POST /api/ensembles/{name}/execute`) instead of
+  spawning `llm-orc` locally. The flag wins over the env var; unset
+  keeps `SubprocessClient`. No overall request timeout (long ensembles
+  are normal); 10 s connect timeout; 404 → ensemble not found, 5xx →
+  unavailable (extraction degrades gracefully, Invariant 47).
+- **`db_checkpoint`** (19th MCP tool + `PlexusApi::db_checkpoint` +
+  `GraphStore::checkpoint`) — runs `PRAGMA wal_checkpoint(TRUNCATE)` and
+  returns `{busy, wal_pages, checkpointed_pages}`. Database-level, no
+  active context needed; `busy: true` means another connection held the
+  database, retry later.
+- Library: `PipelineBuilder::default_pipeline_with_client`,
+  `PlexusMcpServer::with_client` / `new_session`, `McpServerConfig`,
+  `McpTransport`, `llm_orc::{HttpClient, select_client, resolve_url}`.
+
+### Shared database (ADR-017) — what a consumer may rely on
+
+A long-lived HTTP process plus an occasional stdio process on one
+SQLite file is the ADR-017 shared-DB case. The store opens in WAL mode;
+every connection has a 5 s busy timeout (rusqlite default), so
+concurrent writers wait rather than fail; each persist is one short
+transaction (persist-per-emission, Invariant 30), so no writer holds
+the lock for the length of an ingest. Readers never block on writers.
+SQLite auto-checkpoints at 1000 WAL pages; `db_checkpoint` forces a
+full truncating checkpoint on demand.
+
+### Dependencies
+
+- `reqwest` (rustls) for `HttpClient`; `axum` and the rmcp
+  `transport-streamable-http-server` feature for the HTTP transport.
+
 ## 0.5.0 - 2026-07-08
 
 Consumer-trust release: weights you can display, evidence you can query.

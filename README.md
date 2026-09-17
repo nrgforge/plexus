@@ -157,9 +157,10 @@ tag overlap).
   ([ADR-035](docs/decisions/035-event-cursor-persistence.md)).
 - **SQLite persistence** — WAL mode for concurrent reads, event-log
   persistence, spec-table durability.
-- **MCP server** — 18 tools expose the library to AI assistants over
-  stdio: session (1), ingest (1), context operations (6), graph reads
-  (8, including `explain_edge`), spec lifecycle (2).
+- **MCP server** — 19 tools expose the library to AI assistants over
+  stdio or streamable HTTP: session (1), ingest (1), context operations
+  (6), graph reads (8, including `explain_edge`), spec lifecycle (2),
+  maintenance (1, `db_checkpoint`).
 
 ## Library usage
 
@@ -189,7 +190,21 @@ api.load_spec("my-context", &spec_yaml).await?;
 cargo build --bin plexus
 plexus mcp                        # stdio transport, default XDG path
 plexus mcp --db /path/to/data.db  # custom database path
+
+# One shared process for many clients (MCP streamable HTTP at /mcp).
+# Binds loopback by default; put a reverse proxy or tailnet in front —
+# there is no auth.
+plexus mcp --transport http --bind 127.0.0.1:8766 --db /path/to/data.db
+
+# Reach a running `llm-orc serve` over HTTP instead of spawning llm-orc
+# locally (flag or PLEXUS_LLM_ORC_URL; unset → local subprocess).
+plexus mcp --llm-orc-url http://127.0.0.1:8765
 ```
+
+Over HTTP each MCP session (one `Mcp-Session-Id`) has its own active
+context: `set_context` in one client never changes another's, while the
+graph, loaded specs, and lenses are shared by everyone on the process.
+Sessions live in memory, so a restart means clients re-initialize.
 
 Default database location: `~/.local/share/plexus/plexus.db` (Linux) or
 `~/Library/Application Support/plexus/plexus.db` (macOS), following XDG
@@ -208,7 +223,20 @@ Configure in your MCP client (e.g. Claude Code `settings.json`):
 }
 ```
 
-### MCP tools (17)
+Or point at a shared HTTP instance:
+
+```json
+{
+  "mcpServers": {
+    "plexus": {
+      "type": "http",
+      "url": "http://127.0.0.1:8766/mcp"
+    }
+  }
+}
+```
+
+### MCP tools (19)
 
 **Session (1):** `set_context`
 
@@ -219,10 +247,13 @@ pipeline (Invariant 34)
 `context_delete`, `context_rename`, `context_add_sources`,
 `context_remove_sources`
 
-**Graph reads (7):** `find_nodes`, `traverse`, `find_path`,
+**Graph reads (8):** `find_nodes`, `traverse`, `find_path`, `explain_edge`,
 `evidence_trail`, `shared_concepts`, `list_tags`, `changes_since`
 
 **Spec lifecycle (2):** `load_spec`, `unload_spec`
+
+**Maintenance (1):** `db_checkpoint` — `PRAGMA wal_checkpoint(TRUNCATE)`;
+for consumers of a shared HTTP instance with no shell on the database host
 
 All writes go through `ingest` → adapter pipeline → enrichment loop.
 There are no tools for direct graph-primitive manipulation.
@@ -253,9 +284,9 @@ plexus/
 │   │   ├── pipeline/       # IngestPipeline + PipelineBuilder
 │   │   └── sink/           # EngineSink — commit + persist
 │   ├── provenance/         # Provenance API (chains, marks, links)
-│   ├── mcp/                # MCP server (rmcp, 18 tools)
+│   ├── mcp/                # MCP server (rmcp, 19 tools; stdio + streamable HTTP)
 │   ├── query/              # Find, traverse, path, filter, cursor
-│   ├── llm_orc.rs          # SubprocessClient + MockClient for llm-orc
+│   ├── llm_orc.rs          # SubprocessClient + HttpClient + MockClient for llm-orc
 │   └── storage/            # SQLite persistence
 ├── tests/acceptance/       # End-to-end behavior tests
 ├── examples/specs/         # Worked-example declarative adapter specs
